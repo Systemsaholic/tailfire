@@ -1,0 +1,121 @@
+name: Deploy to Prod
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  PROD_PROJECT_REF: ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
+
+jobs:
+  deploy-api-migrations:
+    name: Deploy API Migrations (Drizzle)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Drizzle migrations
+        working-directory: apps/api
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: pnpm drizzle-kit push
+
+  deploy-ota-migrations:
+    name: Deploy OTA Migrations (Supabase)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to Prod project
+        working-directory: apps/ota
+        run: supabase link --project-ref $PROD_PROJECT_REF
+
+      - name: Push OTA migrations
+        working-directory: apps/ota
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+        run: |
+          # FDW migration will NO-OP in Prod (local catalog schema exists)
+          # Guard logic: IF has_catalog AND NOT has_foreign_catalog THEN RETURN
+          # This keeps supabase_migrations table in sync across environments
+          supabase db push --linked
+
+      - name: Verify catalog access
+        working-directory: apps/ota
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+        run: |
+          # Hard gate: fail pipeline if catalog access is broken
+          supabase db query "SELECT 1 FROM catalog.cruise_lines LIMIT 1"
+
+      - name: Log migration result
+        run: echo "OTA migration completed - FDW no-ops in Prod via guard logic"
+
+  deploy-admin:
+    name: Deploy Admin App
+    runs-on: ubuntu-latest
+    needs: [deploy-api-migrations, deploy-ota-migrations]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy Admin to Vercel (Prod)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_ADMIN_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: ./apps/admin
+
+  deploy-ota:
+    name: Deploy OTA App
+    runs-on: ubuntu-latest
+    needs: [deploy-api-migrations, deploy-ota-migrations]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy OTA to Vercel (Prod)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_OTA_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: ./apps/ota
+
+  deploy-client:
+    name: Deploy Client App
+    runs-on: ubuntu-latest
+    needs: [deploy-api-migrations, deploy-ota-migrations]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy Client to Vercel (Prod)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_CLIENT_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: ./apps/client
