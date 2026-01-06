@@ -1,0 +1,29 @@
+{
+  "name": "@tailfire/database",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared Drizzle ORM database layer for Tailfire Beta",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "db:generate": "echo '❌ Run migrations from apps/api only: cd apps/api && pnpm db:generate' && exit 1",
+    "db:migrate": "echo '❌ Run migrations from apps/api only: cd apps/api && pnpm db:migrate' && exit 1",
+    "db:reset": "echo '❌ Run database reset from apps/api only: cd apps/api && pnpm db:reset' && exit 1",
+    "db:seed": "echo '❌ Run database seed from apps/api only: cd apps/api && pnpm db:seed' && exit 1",
+    "db:studio": "drizzle-kit studio",
+    "typecheck": "tsc --noEmit",
+    "migrations:validate": "tsx scripts/validate-migrations.ts",
+    "migrations:list": "find src/migrations -maxdepth 1 -name '*.sql' -type f | sort"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.33.0",
+    "postgres": "^3.4.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "drizzle-kit": "^0.24.0",
+    "typescript": "^5.4.5"
+  }
+}

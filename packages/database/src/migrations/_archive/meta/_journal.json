@@ -1,0 +1,265 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1763045221403,
+      "tag": "0000_aberrant_mikhail_rasputin",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1763045295108,
+      "tag": "0001_polite_piledriver",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1731526800000,
+      "tag": "0002_add_bidirectional_relationship_constraint",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1731528000000,
+      "tag": "0003_make_agency_id_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1731610800000,
+      "tag": "0004_identity_and_inclusive_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1731611400000,
+      "tag": "0005_lifecycle_and_status_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1731612000000,
+      "tag": "0006_marketing_compliance",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1731612600000,
+      "tag": "0007_travel_credentials_and_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1731613200000,
+      "tag": "0008_trip_reference_number_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1731613800000,
+      "tag": "0009_trip_status_workflow_validation",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1763166217631,
+      "tag": "0010_shiny_silver_sable",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1763176747362,
+      "tag": "0011_charming_rhino",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1763223219307,
+      "tag": "0012_thick_black_bird",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1763237364302,
+      "tag": "0013_tags_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1763247914547,
+      "tag": "0014_blue_the_fury",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1763261977945,
+      "tag": "0015_brief_forgotten_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1763264666406,
+      "tag": "0016_gigantic_sunfire",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1763264767567,
+      "tag": "0017_low_kingpin",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1763264821046,
+      "tag": "0018_tranquil_ricochet",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1763328000000,
+      "tag": "0019_payment_schedule_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1731974400000,
+      "tag": "0020_create_lodging_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1732060800000,
+      "tag": "0021_create_transportation_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1763561100869,
+      "tag": "0022_create_component_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1763561101000,
+      "tag": "0023_create_dining_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1763561102000,
+      "tag": "20251118230207_create_port_info_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1763561103000,
+      "tag": "20251119000000_create_options_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1763561104000,
+      "tag": "20251119100000_create_custom_cruise_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1763561105000,
+      "tag": "20251119200000_create_cruise_reference_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1763561106000,
+      "tag": "20251119210000_add_port_ids_to_cruise_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1763561107000,
+      "tag": "20251119220000_add_line_ship_region_ids_to_cruise_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1763644082411,
+      "tag": "0030_aromatic_slayback",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1763820347059,
+      "tag": "0031_stale_landau",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1763929260630,
+      "tag": "0032_light_wallow",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1763986958579,
+      "tag": "0033_adorable_sebastian_shaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1764017718456,
+      "tag": "0034_mysterious_firebird",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1764018258005,
+      "tag": "0035_many_whizzer",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1764021743344,
+      "tag": "0036_elite_stellaris",
+      "breakpoints": true
+    }
+  ]
+}

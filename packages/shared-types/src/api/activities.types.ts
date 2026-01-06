@@ -1,0 +1,445 @@
+/**
+ * Activities API Types
+ *
+ * TypeScript definitions for activity management endpoints.
+ * Shared between API (NestJS) and client (React/Next.js).
+ */
+
+// =============================================================================
+// Imports from Zod Schemas (source of truth)
+// =============================================================================
+
+import type {
+  ActivityType,
+  ActivityStatus,
+  PricingType,
+  PortType,
+  Coordinates,
+  Photo,
+  CreateActivityDto,
+  UpdateActivityDto,
+} from '../schemas'
+
+// Re-export for external consumers
+export type { ActivityType, ActivityStatus, PricingType, PortType, Coordinates, Photo, CreateActivityDto, UpdateActivityDto }
+
+// =============================================================================
+// Package Type Aliases (for backward compatibility)
+// =============================================================================
+
+/**
+ * Package status type alias (packages use ActivityStatus)
+ */
+export type PackageStatus = ActivityStatus
+
+/**
+ * Package payment status type
+ */
+export type PackagePaymentStatus = 'unpaid' | 'deposit_paid' | 'paid' | 'refunded' | 'partially_refunded'
+
+/**
+ * Package pricing type alias (packages use PricingType)
+ */
+export type PackagePricingType = PricingType
+
+// Re-export schemas for validation use
+export {
+  activityTypeSchema,
+  activityStatusSchema,
+  pricingTypeSchema,
+  portTypeSchema,
+  coordinatesSchema,
+  photoSchema,
+  createActivityDtoSchema,
+  updateActivityDtoSchema,
+} from '../schemas'
+
+// =============================================================================
+// Supporting Types (kept for reference - actual types come from schemas)
+// =============================================================================
+
+/**
+ * Activity Pricing DTO
+ * Represents pricing data from activity_pricing table
+ */
+export type ActivityPricingDto = {
+  totalPriceCents: number
+  currency: string
+  pricingType: PricingType | null
+  // Extended fields for taxes and commission
+  taxesAndFeesCents?: number | null
+  commissionTotalCents?: number | null
+  commissionSplitPercentage?: number | null
+}
+
+// =============================================================================
+// Response DTOs
+// =============================================================================
+
+/**
+ * Activity Response DTO
+ * Represents a single activity within an itinerary day
+ */
+export type ActivityResponseDto = {
+  id: string
+  itineraryDayId: string | null // Nullable for floating packages
+
+  // Parent activity reference (for cruise → port_info relationship, and package children)
+  parentActivityId: string | null
+
+  // Core fields
+  activityType: ActivityType
+  componentType: ActivityType // Polymorphic discriminator
+  name: string
+  description: string | null
+  sequenceOrder: number
+
+  // Timing: ISO 8601 strings with timezone
+  // Fallback chain: activity.timezone → trip.timezone → browser timezone
+  startDatetime: string | null // ISO 8601 with timezone
+  endDatetime: string | null // ISO 8601 with timezone
+  timezone: string | null // IANA timezone identifier (e.g., 'America/New_York')
+
+  // Location
+  location: string | null
+  address: string | null
+  coordinates: Coordinates | null
+
+  // Details
+  notes: string | null
+  confirmationNumber: string | null
+  status: ActivityStatus
+
+  // Booking tracking
+  isBooked: boolean
+  bookingDate: string | null // ISO 8601 date when booking was confirmed
+
+  // Package reference (for linking activities to packages)
+  packageId: string | null
+
+  // Pricing (from activity_pricing table)
+  pricing: ActivityPricingDto | null
+  pricingType: PricingType | null // Display hint (kept for backward compatibility)
+  currency: string // 3-letter currency code (default: 'USD')
+
+  // Media (deferred - kept nullable for future photo uploads)
+  photos: Photo[] | null
+
+  // Thumbnail URL (first media image from activity_media or photos)
+  thumbnail: string | null
+
+  // Audit fields
+  createdAt: string
+  updatedAt: string
+}
+
+// =============================================================================
+// Request DTOs
+// =============================================================================
+
+// CreateActivityDto and UpdateActivityDto are now re-exported from ../schemas
+// See the re-exports section at the top of this file
+
+/**
+ * Reorder Activities DTO
+ * Used for drag-and-drop reordering within a day
+ */
+export type ReorderActivitiesDto = {
+  activityOrders: Array<{
+    id: string
+    sequenceOrder: number
+  }>
+}
+
+/**
+ * Move Activity DTO
+ * Move activity to a different day
+ */
+export type MoveActivityDto = {
+  targetDayId: string
+  sequenceOrder?: number
+}
+
+/**
+ * Activity Filter DTO
+ * Query parameters for listing activities
+ */
+export type ActivityFilterDto = {
+  itineraryDayId?: string // Filter by day
+  activityType?: ActivityType // Filter by type
+  status?: ActivityStatus // Filter by status
+  sortBy?: 'sequenceOrder' | 'startDatetime' | 'createdAt'
+  sortOrder?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
+}
+
+// =============================================================================
+// Booking Status Types (for dedicated booking status endpoint)
+// =============================================================================
+
+import type { ExpectedPaymentStatus, CommissionStatus } from './payment-schedules.types.js'
+
+/**
+ * Activity Booking Status DTO
+ * Aggregated payment and commission status for a single activity
+ */
+export type ActivityBookingStatusDto = {
+  activityId: string
+  paymentStatus: ExpectedPaymentStatus | null
+  paymentPaidCents: number
+  paymentTotalCents: number
+  paymentRemainingCents: number
+  commissionStatus: CommissionStatus | null
+  commissionTotalCents: number
+  hasPaymentSchedule: boolean
+  nextDueDate: string | null // ISO date string
+}
+
+/**
+ * Trip Booking Status Response DTO
+ * Aggregated booking status for all activities in a trip
+ */
+export type TripBookingStatusResponseDto = {
+  tripId: string
+  activities: Record<string, ActivityBookingStatusDto> // Map of activityId -> status
+  summary: {
+    totalActivities: number
+    activitiesWithPaymentSchedule: number
+    totalExpectedCents: number
+    totalPaidCents: number
+    totalRemainingCents: number
+    overdueCount: number
+    upcomingDueCount: number
+  }
+}
+
+// =============================================================================
+// Package Activity Types (packages are now activities with activityType='package')
+// =============================================================================
+
+/**
+ * Package Summary DTO (for list views)
+ * Represents a package activity with aggregated info
+ */
+export type PackageSummaryDto = {
+  id: string
+  tripId: string
+  name: string
+  status: ActivityStatus
+  paymentStatus: 'unpaid' | 'deposit_paid' | 'paid' | 'refunded' | 'partially_refunded'
+  supplierName: string | null
+  confirmationNumber: string | null
+  currency: string
+  totalPriceCents: number
+  activityCount: number
+  dateBooked: string | null // ISO date
+  itineraryIds: string[] // IDs of itineraries containing linked activities
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * Package Response DTO (full detail)
+ * Extended activity response with package-specific details and children
+ */
+export type PackageResponseDto = ActivityResponseDto & {
+  // Package-specific details (from package_details table)
+  packageDetails: PackageDetailsDto | null
+  // Child activities linked to this package
+  activities: PackageLinkedActivityDto[]
+  // Travelers linked to this package
+  travelers: PackageTravelerDto[]
+  // Financial totals
+  totalPriceCents: number
+  totalPaidCents: number
+  totalUnpaidCents: number
+  // Trip context
+  tripId: string
+}
+
+/**
+ * Package Details DTO
+ * Data from the package_details table
+ */
+export type PackageDetailsDto = {
+  supplierId: string | null
+  supplierName: string | null
+  paymentStatus: 'unpaid' | 'deposit_paid' | 'paid' | 'refunded' | 'partially_refunded'
+  pricingType: PricingType | null
+  cancellationPolicy: string | null
+  cancellationDeadline: string | null // ISO date
+  termsAndConditions: string | null
+  groupBookingNumber: string | null
+}
+
+/**
+ * Package Linked Activity DTO
+ * Activity summary for display within a package
+ */
+export type PackageLinkedActivityDto = {
+  id: string
+  name: string
+  activityType: ActivityType
+  status: ActivityStatus
+  dayNumber: number | null
+  dayDate: string | null // ISO date
+  parentActivityId: string | null // For nested relationships (e.g., port_info under cruise)
+  sequenceOrder: number
+  totalPriceCents: number | null
+}
+
+/**
+ * Package Traveler DTO
+ * Traveler linked to a package
+ */
+export type PackageTravelerDto = {
+  id: string
+  tripTravelerId: string
+  travelerName: string
+  createdAt: string
+}
+
+/**
+ * Package List Response DTO
+ * Paginated list of packages
+ */
+export type PackageListResponseDto = {
+  data: PackageSummaryDto[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+/**
+ * Trip Package Totals DTO
+ * Aggregated financial totals for all packages in a trip
+ */
+export type TripPackageTotalsDto = {
+  totalPackages: number
+  grandTotalCents: number
+  totalCollectedCents: number
+  outstandingCents: number
+  expectedCommissionCents: number
+  pendingCommissionCents: number
+}
+
+/**
+ * Unlinked Activity DTO
+ * Activity not linked to any package
+ */
+export type UnlinkedActivityDto = {
+  id: string
+  name: string
+  activityType: ActivityType
+  itineraryId: string
+  itineraryDayId: string
+  dayNumber: number | null
+  date: string | null // ISO date
+  sequenceOrder: number
+  totalPriceCents: number | null
+  parentActivityId: string | null
+}
+
+/**
+ * Unlinked Activities Response DTO
+ */
+export type UnlinkedActivitiesResponseDto = {
+  activities: UnlinkedActivityDto[]
+  total: number
+}
+
+/**
+ * Package Filter DTO
+ * Query parameters for listing packages
+ */
+export type PackageFilterDto = {
+  tripId?: string
+  page?: number
+  pageSize?: number
+  search?: string
+  status?: ActivityStatus
+  paymentStatus?: 'unpaid' | 'deposit_paid' | 'paid' | 'refunded' | 'partially_refunded'
+  supplierId?: string
+  sortBy?: 'name' | 'createdAt' | 'totalPriceCents' | 'status'
+  sortOrder?: 'asc' | 'desc'
+}
+
+/**
+ * Create Package DTO
+ * Data for creating a new package activity
+ */
+export type CreatePackageDto = {
+  tripId: string
+  name: string
+  itineraryDayId?: string | null // Optional - packages can float
+  status?: ActivityStatus
+  confirmationNumber?: string | null
+  notes?: string | null
+  currency?: string
+  // Pricing fields
+  totalPriceCents?: number
+  taxesCents?: number
+  pricingType?: 'flat_rate' | 'per_person'
+  commissionTotalCents?: number | null
+  commissionSplitPercentage?: number | null
+  paymentStatus?: PackagePaymentStatus
+  // Package-specific
+  supplierId?: string | null
+  supplierName?: string | null
+  cancellationPolicy?: string | null
+  cancellationDeadline?: string | null
+  termsAndConditions?: string | null
+  groupBookingNumber?: string | null
+  // Activities to link immediately
+  activityIds?: string[]
+}
+
+/**
+ * Update Package DTO
+ * Data for updating an existing package
+ */
+export type UpdatePackageDto = {
+  name?: string
+  status?: ActivityStatus
+  confirmationNumber?: string | null
+  notes?: string | null
+  currency?: string
+  // Pricing fields
+  totalPriceCents?: number
+  taxesCents?: number
+  pricingType?: 'flat_rate' | 'per_person'
+  commissionTotalCents?: number | null
+  commissionSplitPercentage?: number | null
+  // Package-specific
+  supplierId?: string | null
+  supplierName?: string | null
+  paymentStatus?: 'unpaid' | 'deposit_paid' | 'paid' | 'refunded' | 'partially_refunded'
+  cancellationPolicy?: string | null
+  cancellationDeadline?: string | null
+  termsAndConditions?: string | null
+  groupBookingNumber?: string | null
+}
+
+/**
+ * Link Activities to Package DTO
+ */
+export type LinkActivitiesToPackageDto = {
+  activityIds: string[]
+}
+
+/**
+ * Unlink Activities from Package DTO
+ */
+export type UnlinkActivitiesFromPackageDto = {
+  activityIds: string[]
+}
+
+/**
+ * Mark Package as Booked DTO
+ */
+export type MarkPackageAsBookedDto = {
+  bookingDate?: string // ISO date, defaults to today
+  confirmationNumber?: string // Booking confirmation number
+  paymentStatus?: 'unpaid' | 'deposit_paid' | 'paid' | 'refunded' | 'partially_refunded'
+}
