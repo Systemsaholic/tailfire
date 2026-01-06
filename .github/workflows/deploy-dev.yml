@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build database package
+        run: pnpm --filter @tailfire/database build
+
       - name: Run Drizzle migrations
         working-directory: apps/api
         env:
