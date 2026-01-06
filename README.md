@@ -21,3 +21,7 @@ pnpm dev
 
 - **Dev**: Push to `develop` → GitHub Actions → Vercel Preview
 - **Prod**: Push to `main` → GitHub Actions → Vercel Production
+
+## CI/CD Status
+
+Pipeline configured: 2026-01-06
