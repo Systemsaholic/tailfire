@@ -1,0 +1,39 @@
+{
+  "name": "tailfire",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tailfire monorepo",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "prettier": "^3.2.5",
+    "turbo": "^2.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "react": "^18.3.1",
+      "react-dom": "^18.3.1",
+      "next": "^15.0.0",
+      "@types/react": "^18.3.23",
+      "@types/react-dom": "^18.3.7",
+      "eslint-config-next": "^15.0.0",
+      "eslint": "8.57.1",
+      "@typescript-eslint/eslint-plugin": "8.51.0",
+      "@typescript-eslint/parser": "8.51.0",
+      "@typescript-eslint/utils": "8.51.0",
+      "@typescript-eslint/type-utils": "8.51.0",
+      "@typescript-eslint/scope-manager": "8.51.0",
+      "@typescript-eslint/visitor-keys": "8.51.0"
+    }
+  }
+}
