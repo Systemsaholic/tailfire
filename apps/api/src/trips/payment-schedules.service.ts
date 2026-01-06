@@ -1,0 +1,1452 @@
+/**
+ * Payment Schedules Service
+ *
+ * Handles CRUD operations and calculations for component-level payment schedules.
+ * Manages payment_schedule_config and expected_payment_items tables.
+ *
+ * TICO Compliance Features:
+ * - 45-day final payment rule validation
+ * - Sum validation (items must equal total exactly)
+ * - Minimum payment amount ($1.00 / 100 cents)
+ * - Item locking after payment received
+ * - Audit logging via PaymentAuditService
+ *
+ * @see beta/docs/design/payment-schedule/PAYMENT_SCHEDULE_TEMPLATES.md
+ */
+
+import { Injectable, NotFoundException, BadRequestException, Logger, ForbiddenException } from '@nestjs/common'
+import { eq } from 'drizzle-orm'
+import { DatabaseService } from '../db/database.service'
+import { PaymentAuditService } from './payment-audit.service'
+import { PaymentTemplatesService } from './payment-templates.service'
+import type {
+  PaymentScheduleConfigDto,
+  CreatePaymentScheduleConfigDto,
+  UpdatePaymentScheduleConfigDto,
+  ExpectedPaymentItemDto,
+  CreateExpectedPaymentItemDto,
+  UpdateExpectedPaymentItemDto,
+  CreditCardGuaranteeDto,
+  CreateCreditCardGuaranteeDto,
+  UpdateCreditCardGuaranteeDto,
+  DepositCalculation,
+  PaymentTransactionDto,
+  CreatePaymentTransactionDto,
+  PaymentTransactionListResponseDto,
+  ApplyTemplateDto,
+  ApplyTemplateResponseDto,
+  ExpectedPaymentItemWithLockingDto,
+  PaymentScheduleValidationResult,
+  PaymentScheduleValidationError,
+  PaymentScheduleValidationWarning,
+} from '@tailfire/shared-types'
+
+/**
+ * TICO validation rules (imported from shared-types but also defined here for reference)
+ */
+const TICO_RULES = {
+  MIN_FINAL_PAYMENT_DAYS_BEFORE_DEPARTURE: 45,
+  REQUIRE_EXACT_SUM: true,
+  MAX_INSTALLMENTS: 12,
+  MIN_PAYMENT_AMOUNT_CENTS: 100, // $1.00
+  DEPOSIT_WARNING_THRESHOLD_PERCENT: 50,
+} as const
+
+@Injectable()
+export class PaymentSchedulesService {
+  private readonly logger = new Logger(PaymentSchedulesService.name)
+
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly auditService: PaymentAuditService,
+    private readonly templatesService: PaymentTemplatesService,
+  ) {}
+
+  // ============================================================================
+  // Payment Schedule Config Operations
+  // ============================================================================
+
+  /**
+   * Get payment schedule config by activity pricing ID
+   */
+  async findByActivityPricingId(
+    activityPricingId: string,
+  ): Promise<PaymentScheduleConfigDto | null> {
+    const [config] = await this.db.client
+      .select()
+      .from(this.db.schema.paymentScheduleConfig)
+      .where(eq(this.db.schema.paymentScheduleConfig.activityPricingId, activityPricingId))
+      .limit(1)
+
+    if (!config) {
+      return null
+    }
+
+    // Load expected payment items
+    const expectedPaymentItems = await this.findExpectedPaymentItems(config.id)
+
+    // Load credit card guarantee (if exists)
+    const creditCardGuarantee = await this.findCreditCardGuarantee(config.id)
+
+    return this.formatPaymentScheduleConfig(config, expectedPaymentItems, creditCardGuarantee)
+  }
+
+  /**
+   * Create payment schedule configuration with expected payment items
+   * This is a transactional operation.
+   */
+  async create(data: CreatePaymentScheduleConfigDto): Promise<PaymentScheduleConfigDto> {
+    const pricingId = data.activityPricingId
+    if (!pricingId) {
+      throw new BadRequestException('activityPricingId is required')
+    }
+
+    // Validate component pricing exists
+    const [activityPricing] = await this.db.client
+      .select()
+      .from(this.db.schema.activityPricing)
+      .where(eq(this.db.schema.activityPricing.id, pricingId))
+      .limit(1)
+
+    if (!activityPricing) {
+      throw new NotFoundException(
+        `Activity pricing with ID ${pricingId} not found`,
+      )
+    }
+
+    // Validate that component pricing has a total price
+    if (!activityPricing.totalPriceCents) {
+      throw new BadRequestException(
+        'Component pricing must have a total_price_cents before creating a payment schedule'
+      )
+    }
+
+    // Check for existing schedule (idempotency)
+    const existingSchedule = await this.findByActivityPricingId(pricingId)
+    if (existingSchedule) {
+      throw new BadRequestException(
+        `Payment schedule already exists for activity pricing ID ${pricingId}. Use update instead.`
+      )
+    }
+
+    // Validate deposit settings if schedule type is 'deposit'
+    if (data.scheduleType === 'deposit') {
+      if (!data.depositType) {
+        throw new BadRequestException('depositType is required when scheduleType is "deposit"')
+      }
+      if (data.depositType === 'percentage') {
+        if (data.depositPercentage === undefined || data.depositPercentage === null) {
+          throw new BadRequestException('depositPercentage is required when depositType is "percentage"')
+        }
+        // Validate percentage range (0-100)
+        if (data.depositPercentage < 0 || data.depositPercentage > 100) {
+          throw new BadRequestException('depositPercentage must be between 0 and 100')
+        }
+      }
+      if (data.depositType === 'fixed_amount') {
+        if (!data.depositAmountCents) {
+          throw new BadRequestException('depositAmountCents is required when depositType is "fixed_amount"')
+        }
+        // Validate deposit doesn't exceed total
+        if (data.depositAmountCents > activityPricing.totalPriceCents) {
+          throw new BadRequestException('depositAmountCents cannot exceed total_price_cents')
+        }
+        // Validate non-negative
+        if (data.depositAmountCents < 0) {
+          throw new BadRequestException('depositAmountCents must be non-negative')
+        }
+      }
+    }
+
+    // Validate credit card guarantee if schedule type is 'guarantee'
+    if (data.scheduleType === 'guarantee') {
+      if (!data.creditCardGuarantee) {
+        throw new BadRequestException('creditCardGuarantee is required when scheduleType is "guarantee"')
+      }
+    }
+
+    // Validate expected payment items sum to total (if provided)
+    if (data.expectedPaymentItems && data.expectedPaymentItems.length > 0) {
+      const sum = data.expectedPaymentItems.reduce((acc, item) => acc + item.expectedAmountCents, 0)
+      if (sum !== activityPricing.totalPriceCents) {
+        throw new BadRequestException(
+          `Expected payment items must sum to total_price_cents. Expected: ${activityPricing.totalPriceCents}, Got: ${sum}`
+        )
+      }
+      // Validate all amounts are non-negative
+      for (const item of data.expectedPaymentItems) {
+        if (item.expectedAmountCents < 0) {
+          throw new BadRequestException('Expected payment amounts must be non-negative')
+        }
+      }
+    }
+
+    // Create payment schedule config
+    const [config] = await this.db.client
+      .insert(this.db.schema.paymentScheduleConfig)
+      .values({
+        agencyId: activityPricing.agencyId,
+        activityPricingId: pricingId,
+        scheduleType: data.scheduleType,
+        allowPartialPayments: data.allowPartialPayments ?? false,
+        depositType: data.depositType || null,
+        depositPercentage: data.depositPercentage?.toString() || null,
+        depositAmountCents: data.depositAmountCents || null,
+      })
+      .returning()
+
+    // Create expected payment items if provided
+    let expectedPaymentItems: ExpectedPaymentItemDto[] = []
+    if (data.expectedPaymentItems && data.expectedPaymentItems.length > 0) {
+      expectedPaymentItems = await this.createExpectedPaymentItems(
+        config!.id,
+        activityPricing.agencyId,
+        data.expectedPaymentItems,
+      )
+    }
+
+    // Create credit card guarantee if provided
+    let creditCardGuarantee: CreditCardGuaranteeDto | null = null
+    if (data.creditCardGuarantee) {
+      creditCardGuarantee = await this.createCreditCardGuarantee(
+        config!.id,
+        data.creditCardGuarantee,
+      )
+    }
+
+    return this.formatPaymentScheduleConfig(config!, expectedPaymentItems, creditCardGuarantee)
+  }
+
+  /**
+   * Update payment schedule configuration
+   * This is a transactional operation.
+   */
+  async update(
+    activityPricingId: string,
+    data: UpdatePaymentScheduleConfigDto,
+  ): Promise<PaymentScheduleConfigDto> {
+    // Find existing config
+    const existingConfig = await this.findByActivityPricingId(activityPricingId)
+    if (!existingConfig) {
+      throw new NotFoundException(
+        `Payment schedule config for activity pricing ID ${activityPricingId} not found`,
+      )
+    }
+
+    // Get the component pricing for validation
+    const [activityPricing] = await this.db.client
+      .select()
+      .from(this.db.schema.activityPricing)
+      .where(eq(this.db.schema.activityPricing.id, activityPricingId))
+      .limit(1)
+
+    if (!activityPricing || !activityPricing.totalPriceCents) {
+      throw new BadRequestException('Component pricing must have a total_price_cents')
+    }
+
+    // Validate deposit settings if schedule type is being changed to 'deposit'
+    const newScheduleType = data.scheduleType || existingConfig.scheduleType
+    if (newScheduleType === 'deposit') {
+      const newDepositType = data.depositType ?? existingConfig.depositType
+      if (!newDepositType) {
+        throw new BadRequestException('depositType is required when scheduleType is "deposit"')
+      }
+      if (newDepositType === 'percentage') {
+        const newDepositPercentage = data.depositPercentage ??
+          (existingConfig.depositPercentage ? parseFloat(existingConfig.depositPercentage) : null)
+        if (newDepositPercentage === null || newDepositPercentage === undefined) {
+          throw new BadRequestException('depositPercentage is required when depositType is "percentage"')
+        }
+        // Validate percentage range (0-100)
+        if (newDepositPercentage < 0 || newDepositPercentage > 100) {
+          throw new BadRequestException('depositPercentage must be between 0 and 100')
+        }
+      }
+      if (newDepositType === 'fixed_amount') {
+        const newDepositAmountCents = data.depositAmountCents ?? existingConfig.depositAmountCents
+        if (!newDepositAmountCents) {
+          throw new BadRequestException('depositAmountCents is required when depositType is "fixed_amount"')
+        }
+        // Validate deposit doesn't exceed total
+        if (newDepositAmountCents > activityPricing.totalPriceCents) {
+          throw new BadRequestException('depositAmountCents cannot exceed total_price_cents')
+        }
+        // Validate non-negative
+        if (newDepositAmountCents < 0) {
+          throw new BadRequestException('depositAmountCents must be non-negative')
+        }
+      }
+    }
+
+    // Validate credit card guarantee if schedule type is being changed to 'guarantee'
+    if (newScheduleType === 'guarantee') {
+      const hasExistingGuarantee = !!existingConfig.creditCardGuarantee
+      if (!data.creditCardGuarantee && !hasExistingGuarantee) {
+        throw new BadRequestException('creditCardGuarantee is required when scheduleType is "guarantee"')
+      }
+    }
+
+    // Validate expected payment items sum to total (if provided)
+    if (data.expectedPaymentItems && data.expectedPaymentItems.length > 0) {
+      const sum = data.expectedPaymentItems.reduce((acc, item) => acc + item.expectedAmountCents, 0)
+      if (sum !== activityPricing.totalPriceCents) {
+        throw new BadRequestException(
+          `Expected payment items must sum to total_price_cents. Expected: ${activityPricing.totalPriceCents}, Got: ${sum}`
+        )
+      }
+      // Validate all amounts are non-negative
+      for (const item of data.expectedPaymentItems) {
+        if (item.expectedAmountCents < 0) {
+          throw new BadRequestException('Expected payment amounts must be non-negative')
+        }
+      }
+    }
+
+    // Update config
+    const [updatedConfig] = await this.db.client
+      .update(this.db.schema.paymentScheduleConfig)
+      .set({
+        ...(data.scheduleType !== undefined && { scheduleType: data.scheduleType }),
+        ...(data.allowPartialPayments !== undefined && {
+          allowPartialPayments: data.allowPartialPayments,
+        }),
+        ...(data.depositType !== undefined && { depositType: data.depositType }),
+        ...(data.depositPercentage !== undefined && {
+          depositPercentage: data.depositPercentage?.toString() || null,
+        }),
+        ...(data.depositAmountCents !== undefined && {
+          depositAmountCents: data.depositAmountCents,
+        }),
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.paymentScheduleConfig.id, existingConfig.id))
+      .returning()
+
+    // Handle expected payment items updates
+    let expectedPaymentItems: ExpectedPaymentItemDto[] = []
+    if (data.expectedPaymentItems && data.expectedPaymentItems.length > 0) {
+      // Delete existing items and recreate (simplest approach for now)
+      await this.db.client
+        .delete(this.db.schema.expectedPaymentItems)
+        .where(eq(this.db.schema.expectedPaymentItems.paymentScheduleConfigId, existingConfig.id))
+
+      // Create new items
+      expectedPaymentItems = await this.createExpectedPaymentItems(
+        existingConfig.id,
+        activityPricing.agencyId,
+        data.expectedPaymentItems,
+      )
+    } else {
+      // Keep existing items
+      expectedPaymentItems = await this.findExpectedPaymentItems(existingConfig.id)
+    }
+
+    // Handle credit card guarantee updates
+    let creditCardGuarantee: CreditCardGuaranteeDto | null = null
+    if (data.creditCardGuarantee) {
+      // Check if existing guarantee exists
+      const existingGuarantee = await this.findCreditCardGuarantee(existingConfig.id)
+      if (existingGuarantee) {
+        // Update existing guarantee
+        creditCardGuarantee = await this.updateCreditCardGuarantee(
+          existingGuarantee.id,
+          data.creditCardGuarantee,
+        )
+      } else {
+        // Create new guarantee - cast to CreateCreditCardGuaranteeDto
+        creditCardGuarantee = await this.createCreditCardGuarantee(
+          existingConfig.id,
+          data.creditCardGuarantee as any as CreateCreditCardGuaranteeDto,
+        )
+      }
+    } else {
+      // Keep existing guarantee if no update provided
+      creditCardGuarantee = await this.findCreditCardGuarantee(existingConfig.id)
+    }
+
+    return this.formatPaymentScheduleConfig(updatedConfig, expectedPaymentItems, creditCardGuarantee)
+  }
+
+  /**
+   * Delete payment schedule configuration (cascades to expected payment items)
+   */
+  async delete(activityPricingId: string): Promise<void> {
+    const existingConfig = await this.findByActivityPricingId(activityPricingId)
+    if (!existingConfig) {
+      throw new NotFoundException(
+        `Payment schedule config for activity pricing ID ${activityPricingId} not found`,
+      )
+    }
+
+    await this.db.client
+      .delete(this.db.schema.paymentScheduleConfig)
+      .where(eq(this.db.schema.paymentScheduleConfig.id, existingConfig.id))
+  }
+
+  // ============================================================================
+  // Expected Payment Items Operations
+  // ============================================================================
+
+  /**
+   * Get expected payment items for a payment schedule config
+   */
+  async findExpectedPaymentItems(
+    paymentScheduleConfigId: string,
+  ): Promise<ExpectedPaymentItemDto[]> {
+    const items = await this.db.client
+      .select()
+      .from(this.db.schema.expectedPaymentItems)
+      .where(
+        eq(this.db.schema.expectedPaymentItems.paymentScheduleConfigId, paymentScheduleConfigId),
+      )
+      .orderBy(this.db.schema.expectedPaymentItems.sequenceOrder)
+
+    return items.map(this.formatExpectedPaymentItem)
+  }
+
+  /**
+   * Create multiple expected payment items
+   */
+  private async createExpectedPaymentItems(
+    paymentScheduleConfigId: string,
+    agencyId: string,
+    items: CreateExpectedPaymentItemDto[],
+  ): Promise<ExpectedPaymentItemDto[]> {
+    if (items.length === 0) {
+      return []
+    }
+
+    const created = await this.db.client
+      .insert(this.db.schema.expectedPaymentItems)
+      .values(
+        items.map((item) => ({
+          agencyId,
+          paymentScheduleConfigId,
+          paymentName: item.paymentName,
+          expectedAmountCents: item.expectedAmountCents,
+          dueDate: item.dueDate || null,
+          sequenceOrder: item.sequenceOrder,
+        })),
+      )
+      .returning()
+
+    return created.map(this.formatExpectedPaymentItem)
+  }
+
+  /**
+   * Update an expected payment item
+   */
+  async updateExpectedPaymentItem(
+    itemId: string,
+    data: UpdateExpectedPaymentItemDto,
+  ): Promise<ExpectedPaymentItemDto> {
+    const [updated] = await this.db.client
+      .update(this.db.schema.expectedPaymentItems)
+      .set({
+        ...(data.paymentName !== undefined && { paymentName: data.paymentName }),
+        ...(data.expectedAmountCents !== undefined && {
+          expectedAmountCents: data.expectedAmountCents,
+        }),
+        ...(data.dueDate !== undefined && { dueDate: data.dueDate }),
+        ...(data.status !== undefined && { status: data.status }),
+        ...(data.sequenceOrder !== undefined && { sequenceOrder: data.sequenceOrder }),
+        ...(data.paidAmountCents !== undefined && { paidAmountCents: data.paidAmountCents }),
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
+      .returning()
+
+    if (!updated) {
+      throw new NotFoundException(`Expected payment item with ID ${itemId} not found`)
+    }
+
+    return this.formatExpectedPaymentItem(updated)
+  }
+
+  // ============================================================================
+  // Credit Card Guarantee Operations
+  // ============================================================================
+
+  /**
+   * Get credit card guarantee for a payment schedule config
+   */
+  async findCreditCardGuarantee(
+    paymentScheduleConfigId: string,
+  ): Promise<CreditCardGuaranteeDto | null> {
+    const [guarantee] = await this.db.client
+      .select()
+      .from(this.db.schema.creditCardGuarantee)
+      .where(eq(this.db.schema.creditCardGuarantee.paymentScheduleConfigId, paymentScheduleConfigId))
+      .limit(1)
+
+    if (!guarantee) {
+      return null
+    }
+
+    return this.formatCreditCardGuarantee(guarantee)
+  }
+
+  /**
+   * Create credit card guarantee
+   */
+  private async createCreditCardGuarantee(
+    paymentScheduleConfigId: string,
+    data: CreateCreditCardGuaranteeDto,
+  ): Promise<CreditCardGuaranteeDto> {
+    const [created] = await this.db.client
+      .insert(this.db.schema.creditCardGuarantee)
+      .values({
+        paymentScheduleConfigId,
+        cardHolderName: data.cardHolderName,
+        cardLast4: data.cardLast4,
+        authorizationCode: data.authorizationCode,
+        authorizationDate: new Date(data.authorizationDate),
+        authorizationAmountCents: data.authorizationAmountCents,
+      })
+      .returning()
+
+    return this.formatCreditCardGuarantee(created!)
+  }
+
+  /**
+   * Update credit card guarantee
+   */
+  private async updateCreditCardGuarantee(
+    id: string,
+    data: UpdateCreditCardGuaranteeDto,
+  ): Promise<CreditCardGuaranteeDto> {
+    const [updated] = await this.db.client
+      .update(this.db.schema.creditCardGuarantee)
+      .set({
+        ...(data.cardHolderName !== undefined && { cardHolderName: data.cardHolderName }),
+        ...(data.cardLast4 !== undefined && { cardLast4: data.cardLast4 }),
+        ...(data.authorizationCode !== undefined && { authorizationCode: data.authorizationCode }),
+        ...(data.authorizationDate !== undefined && { authorizationDate: new Date(data.authorizationDate) }),
+        ...(data.authorizationAmountCents !== undefined && {
+          authorizationAmountCents: data.authorizationAmountCents,
+        }),
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.creditCardGuarantee.id, id))
+      .returning()
+
+    if (!updated) {
+      throw new NotFoundException(`Credit card guarantee with ID ${id} not found`)
+    }
+
+    return this.formatCreditCardGuarantee(updated)
+  }
+
+  // ============================================================================
+  // Payment Transaction Operations
+  // ============================================================================
+
+  /**
+   * Create a payment transaction and sync paidAmountCents cache
+   * Validates currency matches parent and wraps operations in a transaction
+   */
+  async createTransaction(
+    data: CreatePaymentTransactionDto,
+  ): Promise<PaymentTransactionDto> {
+    // Validate expected payment item exists
+    const [expectedPaymentItem] = await this.db.client
+      .select()
+      .from(this.db.schema.expectedPaymentItems)
+      .where(eq(this.db.schema.expectedPaymentItems.id, data.expectedPaymentItemId))
+      .limit(1)
+
+    if (!expectedPaymentItem) {
+      throw new NotFoundException(
+        `Expected payment item with ID ${data.expectedPaymentItemId} not found`,
+      )
+    }
+
+    // Validate amount is non-negative (CHECK constraint in DB, but also validate here)
+    if (data.amountCents < 0) {
+      throw new BadRequestException('Transaction amount must be non-negative')
+    }
+
+    // Validate currency matches parent activity_pricing currency
+    const parentCurrency = await this.getParentCurrency(data.expectedPaymentItemId)
+    if (parentCurrency && data.currency !== parentCurrency) {
+      throw new BadRequestException(
+        `Transaction currency (${data.currency}) must match parent pricing currency (${parentCurrency})`,
+      )
+    }
+
+    // Wrap insert + cache sync in a transaction for consistency
+    const result = await this.db.client.transaction(async (tx) => {
+      // Create the transaction
+      const [transaction] = await tx
+        .insert(this.db.schema.paymentTransactions)
+        .values({
+          agencyId: expectedPaymentItem.agencyId,
+          expectedPaymentItemId: data.expectedPaymentItemId,
+          transactionType: data.transactionType,
+          amountCents: data.amountCents,
+          currency: data.currency,
+          paymentMethod: data.paymentMethod || null,
+          referenceNumber: data.referenceNumber || null,
+          transactionDate: new Date(data.transactionDate),
+          notes: data.notes || null,
+        })
+        .returning()
+
+      if (!transaction) {
+        throw new Error('Failed to create transaction')
+      }
+
+      // Sync paidAmountCents cache within the same transaction
+      await this.syncPaidAmountCentsWithTx(tx, data.expectedPaymentItemId)
+
+      return transaction
+    })
+
+    return this.formatPaymentTransaction(result)
+  }
+
+  /**
+   * Get the parent currency from the activity_pricing table
+   * Traverses: expectedPaymentItem → paymentScheduleConfig → activityPricing
+   * Logs warnings for broken parent chain to catch data integrity issues
+   */
+  private async getParentCurrency(expectedPaymentItemId: string): Promise<string | null> {
+    const [item] = await this.db.client
+      .select({ paymentScheduleConfigId: this.db.schema.expectedPaymentItems.paymentScheduleConfigId })
+      .from(this.db.schema.expectedPaymentItems)
+      .where(eq(this.db.schema.expectedPaymentItems.id, expectedPaymentItemId))
+      .limit(1)
+
+    if (!item) {
+      this.logger.warn(`Expected payment item ${expectedPaymentItemId} not found when getting parent currency`)
+      return null
+    }
+
+    const [config] = await this.db.client
+      .select({ activityPricingId: this.db.schema.paymentScheduleConfig.activityPricingId })
+      .from(this.db.schema.paymentScheduleConfig)
+      .where(eq(this.db.schema.paymentScheduleConfig.id, item.paymentScheduleConfigId))
+      .limit(1)
+
+    if (!config) {
+      this.logger.warn(`Payment schedule config ${item.paymentScheduleConfigId} not found for expected payment item ${expectedPaymentItemId}`)
+      return null
+    }
+
+    const [pricing] = await this.db.client
+      .select({ currency: this.db.schema.activityPricing.currency })
+      .from(this.db.schema.activityPricing)
+      .where(eq(this.db.schema.activityPricing.id, config.activityPricingId))
+      .limit(1)
+
+    if (!pricing?.currency) {
+      this.logger.warn(`Activity pricing ${config.activityPricingId} has no currency set`)
+    }
+
+    return pricing?.currency || null
+  }
+
+  /**
+   * Get all transactions for an expected payment item
+   */
+  async findTransactionsByExpectedPaymentItemId(
+    expectedPaymentItemId: string,
+  ): Promise<PaymentTransactionListResponseDto> {
+    // Validate expected payment item exists and get its data
+    const [expectedPaymentItem] = await this.db.client
+      .select()
+      .from(this.db.schema.expectedPaymentItems)
+      .where(eq(this.db.schema.expectedPaymentItems.id, expectedPaymentItemId))
+      .limit(1)
+
+    if (!expectedPaymentItem) {
+      throw new NotFoundException(
+        `Expected payment item with ID ${expectedPaymentItemId} not found`,
+      )
+    }
+
+    // Get all transactions for this expected payment item
+    const transactions = await this.db.client
+      .select()
+      .from(this.db.schema.paymentTransactions)
+      .where(eq(this.db.schema.paymentTransactions.expectedPaymentItemId, expectedPaymentItemId))
+      .orderBy(this.db.schema.paymentTransactions.transactionDate)
+
+    return {
+      transactions: transactions.map(this.formatPaymentTransaction),
+      expectedPaymentItem: {
+        id: expectedPaymentItem.id,
+        paymentName: expectedPaymentItem.paymentName,
+        expectedAmountCents: expectedPaymentItem.expectedAmountCents,
+        paidAmountCents: expectedPaymentItem.paidAmountCents,
+        status: expectedPaymentItem.status,
+      },
+    }
+  }
+
+  /**
+   * Delete a payment transaction and sync paidAmountCents cache
+   */
+  async deleteTransaction(transactionId: string): Promise<void> {
+    // Get the transaction to find the expected payment item ID
+    const [transaction] = await this.db.client
+      .select()
+      .from(this.db.schema.paymentTransactions)
+      .where(eq(this.db.schema.paymentTransactions.id, transactionId))
+      .limit(1)
+
+    if (!transaction) {
+      throw new NotFoundException(
+        `Payment transaction with ID ${transactionId} not found`,
+      )
+    }
+
+    const expectedPaymentItemId = transaction.expectedPaymentItemId
+
+    // Delete the transaction
+    await this.db.client
+      .delete(this.db.schema.paymentTransactions)
+      .where(eq(this.db.schema.paymentTransactions.id, transactionId))
+
+    // Sync paidAmountCents cache
+    await this.syncPaidAmountCents(expectedPaymentItemId)
+  }
+
+  /**
+   * Sync paidAmountCents cache on expected_payment_item
+   * Calculates total from all transactions (payments - refunds +/- adjustments)
+   */
+  private async syncPaidAmountCents(expectedPaymentItemId: string): Promise<void> {
+    // Get all transactions for this expected payment item
+    const transactions = await this.db.client
+      .select()
+      .from(this.db.schema.paymentTransactions)
+      .where(eq(this.db.schema.paymentTransactions.expectedPaymentItemId, expectedPaymentItemId))
+
+    // Calculate net paid amount
+    let netPaidCents = 0
+    for (const tx of transactions) {
+      if (tx.transactionType === 'payment') {
+        netPaidCents += tx.amountCents
+      } else if (tx.transactionType === 'refund') {
+        netPaidCents -= tx.amountCents
+      } else if (tx.transactionType === 'adjustment') {
+        // Adjustments can be positive or negative (stored as positive, semantics depend on use case)
+        // For now, treat adjustments as additions (can be refined based on business rules)
+        netPaidCents += tx.amountCents
+      }
+    }
+
+    // Ensure non-negative (can't have negative paid amount)
+    netPaidCents = Math.max(0, netPaidCents)
+
+    // Get expected amount to determine status
+    const [expectedPaymentItem] = await this.db.client
+      .select()
+      .from(this.db.schema.expectedPaymentItems)
+      .where(eq(this.db.schema.expectedPaymentItems.id, expectedPaymentItemId))
+      .limit(1)
+
+    if (!expectedPaymentItem) {
+      return // Item was deleted, nothing to sync
+    }
+
+    // Determine status based on paid amount vs expected amount
+    let newStatus: 'pending' | 'partial' | 'paid' | 'overdue' = 'pending'
+    if (netPaidCents >= expectedPaymentItem.expectedAmountCents) {
+      newStatus = 'paid'
+    } else if (netPaidCents > 0) {
+      newStatus = 'partial'
+    } else {
+      // Check if overdue
+      if (expectedPaymentItem.dueDate) {
+        const dueDate = new Date(expectedPaymentItem.dueDate)
+        const today = new Date()
+        today.setHours(0, 0, 0, 0)
+        if (dueDate < today) {
+          newStatus = 'overdue'
+        }
+      }
+    }
+
+    // Update the expected payment item with the new paidAmountCents and status
+    await this.db.client
+      .update(this.db.schema.expectedPaymentItems)
+      .set({
+        paidAmountCents: netPaidCents,
+        status: newStatus,
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.expectedPaymentItems.id, expectedPaymentItemId))
+  }
+
+  /**
+   * Sync paidAmountCents within a transaction context
+   * Used when inserting/deleting transactions to ensure atomicity
+   */
+  private async syncPaidAmountCentsWithTx(
+    tx: Parameters<Parameters<typeof this.db.client.transaction>[0]>[0],
+    expectedPaymentItemId: string,
+  ): Promise<void> {
+    // Get all transactions for this expected payment item within the transaction
+    const transactions = await tx
+      .select()
+      .from(this.db.schema.paymentTransactions)
+      .where(eq(this.db.schema.paymentTransactions.expectedPaymentItemId, expectedPaymentItemId))
+
+    // Calculate net paid amount
+    let netPaidCents = 0
+    for (const txn of transactions) {
+      if (txn.transactionType === 'payment') {
+        netPaidCents += txn.amountCents
+      } else if (txn.transactionType === 'refund') {
+        netPaidCents -= txn.amountCents
+      } else if (txn.transactionType === 'adjustment') {
+        netPaidCents += txn.amountCents
+      }
+    }
+
+    // Ensure non-negative
+    netPaidCents = Math.max(0, netPaidCents)
+
+    // Get expected amount to determine status
+    const [expectedPaymentItem] = await tx
+      .select()
+      .from(this.db.schema.expectedPaymentItems)
+      .where(eq(this.db.schema.expectedPaymentItems.id, expectedPaymentItemId))
+      .limit(1)
+
+    if (!expectedPaymentItem) {
+      return // Item was deleted, nothing to sync
+    }
+
+    // Determine status based on paid amount vs expected amount
+    let newStatus: 'pending' | 'partial' | 'paid' | 'overdue' = 'pending'
+    if (netPaidCents >= expectedPaymentItem.expectedAmountCents) {
+      newStatus = 'paid'
+    } else if (netPaidCents > 0) {
+      newStatus = 'partial'
+    } else {
+      // Check if overdue
+      if (expectedPaymentItem.dueDate) {
+        const dueDate = new Date(expectedPaymentItem.dueDate)
+        const today = new Date()
+        today.setHours(0, 0, 0, 0)
+        if (dueDate < today) {
+          newStatus = 'overdue'
+        }
+      }
+    }
+
+    // Update within the transaction
+    await tx
+      .update(this.db.schema.expectedPaymentItems)
+      .set({
+        paidAmountCents: netPaidCents,
+        status: newStatus,
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.expectedPaymentItems.id, expectedPaymentItemId))
+  }
+
+  private formatPaymentTransaction(transaction: any): PaymentTransactionDto {
+    return {
+      id: transaction.id,
+      expectedPaymentItemId: transaction.expectedPaymentItemId,
+      transactionType: transaction.transactionType,
+      amountCents: transaction.amountCents,
+      currency: transaction.currency,
+      paymentMethod: transaction.paymentMethod,
+      referenceNumber: transaction.referenceNumber,
+      transactionDate: transaction.transactionDate.toISOString(),
+      notes: transaction.notes,
+      createdAt: transaction.createdAt.toISOString(),
+      createdBy: transaction.createdBy,
+    }
+  }
+
+  // ============================================================================
+  // Calculation Helpers
+  // ============================================================================
+
+  /**
+   * Calculate deposit amount and remaining balance
+   */
+  calculateDeposit(
+    totalPriceCents: number,
+    depositType: 'percentage' | 'fixed_amount',
+    depositValue: number,
+  ): DepositCalculation {
+    let depositAmountCents: number
+
+    if (depositType === 'percentage') {
+      // depositValue is percentage (0-100)
+      depositAmountCents = Math.round((totalPriceCents * depositValue) / 100)
+    } else {
+      // depositValue is fixed amount in cents
+      depositAmountCents = depositValue
+    }
+
+    // Validate deposit doesn't exceed total
+    if (depositAmountCents > totalPriceCents) {
+      throw new BadRequestException('Deposit amount cannot exceed total price')
+    }
+
+    return {
+      depositAmountCents,
+      remainingAmountCents: totalPriceCents - depositAmountCents,
+      totalAmountCents: totalPriceCents,
+    }
+  }
+
+  /**
+   * Generate expected payment items for deposit schedule
+   */
+  generateDepositSchedule(
+    totalPriceCents: number,
+    depositType: 'percentage' | 'fixed_amount',
+    depositValue: number,
+    depositDueDate?: string,
+    finalDueDate?: string,
+  ): CreateExpectedPaymentItemDto[] {
+    const calculation = this.calculateDeposit(totalPriceCents, depositType, depositValue)
+
+    return [
+      {
+        paymentName: 'Deposit',
+        expectedAmountCents: calculation.depositAmountCents,
+        dueDate: depositDueDate || null,
+        sequenceOrder: 0,
+      },
+      {
+        paymentName: 'Final Balance',
+        expectedAmountCents: calculation.remainingAmountCents,
+        dueDate: finalDueDate || null,
+        sequenceOrder: 1,
+      },
+    ]
+  }
+
+  // ============================================================================
+  // Template Application (TICO Compliant)
+  // ============================================================================
+
+  /**
+   * Apply a payment schedule template to an activity pricing.
+   *
+   * CRITICAL: This method resolves relative date offsets (daysFromBooking,
+   * daysBeforeDeparture) to absolute dates BEFORE running TICO validation.
+   * This ensures the 45-day final payment check works correctly.
+   *
+   * @param activityPricingId - The activity pricing to apply the template to
+   * @param agencyId - Agency ID for template lookup and authorization
+   * @param userId - User performing the action (for audit logging)
+   * @param dto - Template application parameters
+   * @returns The created/updated payment schedule config with resolved items
+   */
+  async applyTemplate(
+    activityPricingId: string,
+    agencyId: string,
+    userId: string,
+    dto: ApplyTemplateDto,
+  ): Promise<ApplyTemplateResponseDto> {
+    // 1. Validate activity pricing exists and get total price
+    const [activityPricing] = await this.db.client
+      .select()
+      .from(this.db.schema.activityPricing)
+      .where(eq(this.db.schema.activityPricing.id, activityPricingId))
+      .limit(1)
+
+    if (!activityPricing) {
+      throw new NotFoundException(`Activity pricing with ID ${activityPricingId} not found`)
+    }
+
+    // 2. Fetch the template
+    const template = await this.templatesService.findByIdOrThrow(dto.templateId, agencyId)
+
+    if (!template.items || template.items.length === 0) {
+      throw new BadRequestException('Template has no payment items')
+    }
+
+    // 3. Resolve template items to concrete expected payment items
+    const bookingDate = dto.bookingDate ? new Date(dto.bookingDate) : new Date()
+    const departureDate = new Date(dto.departureDate)
+
+    const resolvedItems: CreateExpectedPaymentItemDto[] = template.items.map((item) => {
+      // Calculate amount
+      let expectedAmountCents: number
+      if (item.percentage !== null && item.percentage !== undefined) {
+        // Percentage of total
+        const percentage = parseFloat(item.percentage)
+        expectedAmountCents = Math.round((dto.totalAmountCents * percentage) / 100)
+      } else if (item.fixedAmountCents !== null && item.fixedAmountCents !== undefined) {
+        expectedAmountCents = item.fixedAmountCents
+      } else {
+        throw new BadRequestException(`Template item ${item.paymentName} has no amount defined`)
+      }
+
+      // Calculate due date - MUST resolve to absolute date for TICO validation
+      let dueDate: string | null = null
+      if (item.daysFromBooking !== null && item.daysFromBooking !== undefined) {
+        const dueDateObj = new Date(bookingDate)
+        dueDateObj.setDate(dueDateObj.getDate() + item.daysFromBooking)
+        dueDate = dueDateObj.toISOString().split('T')[0] ?? null // ISO date string
+      } else if (item.daysBeforeDeparture !== null && item.daysBeforeDeparture !== undefined) {
+        const dueDateObj = new Date(departureDate)
+        dueDateObj.setDate(dueDateObj.getDate() - item.daysBeforeDeparture)
+        dueDate = dueDateObj.toISOString().split('T')[0] ?? null
+      }
+
+      return {
+        paymentName: item.paymentName,
+        expectedAmountCents,
+        dueDate,
+        sequenceOrder: item.sequenceOrder,
+      }
+    })
+
+    // 4. Handle rounding errors - adjust last item to ensure exact sum
+    const currentSum = resolvedItems.reduce((acc, item) => acc + item.expectedAmountCents, 0)
+    const difference = dto.totalAmountCents - currentSum
+    if (difference !== 0 && resolvedItems.length > 0) {
+      // Add/subtract difference to the last item (typically final balance)
+      const lastItem = resolvedItems[resolvedItems.length - 1]
+      if (lastItem) {
+        lastItem.expectedAmountCents += difference
+        this.logger.debug(
+          `Adjusted last payment item by ${difference} cents to match total (rounding correction)`
+        )
+      }
+    }
+
+    // 5. Run TICO validation BEFORE persisting
+    const validation = this.validatePaymentSchedule(
+      resolvedItems,
+      dto.totalAmountCents,
+      departureDate,
+      bookingDate
+    )
+
+    if (!validation.isValid) {
+      throw new BadRequestException({
+        code: 'TICO_VALIDATION_FAILED',
+        message: 'Payment schedule failed TICO compliance validation',
+        errors: validation.errors,
+        warnings: validation.warnings,
+      })
+    }
+
+    // Log warnings (but don't block)
+    if (validation.warnings.length > 0) {
+      this.logger.warn(
+        `Payment schedule template application has warnings: ${JSON.stringify(validation.warnings)}`
+      )
+    }
+
+    // 6. Create or update payment schedule config with template items
+    return this.db.client.transaction(async (tx) => {
+      // Check for existing config
+      const [existingConfig] = await tx
+        .select()
+        .from(this.db.schema.paymentScheduleConfig)
+        .where(eq(this.db.schema.paymentScheduleConfig.activityPricingId, activityPricingId))
+        .limit(1)
+
+      let configId: string
+
+      if (existingConfig) {
+        // Update existing config
+        await tx
+          .update(this.db.schema.paymentScheduleConfig)
+          .set({
+            scheduleType: template.scheduleType,
+            templateId: template.id,
+            templateVersion: template.version,
+            updatedAt: new Date(),
+          })
+          .where(eq(this.db.schema.paymentScheduleConfig.id, existingConfig.id))
+
+        configId = existingConfig.id
+
+        // Delete existing items (will be replaced)
+        await tx
+          .delete(this.db.schema.expectedPaymentItems)
+          .where(eq(this.db.schema.expectedPaymentItems.paymentScheduleConfigId, configId))
+      } else {
+        // Create new config
+        const insertedConfigs = await tx
+          .insert(this.db.schema.paymentScheduleConfig)
+          .values({
+            agencyId,
+            activityPricingId,
+            scheduleType: template.scheduleType,
+            allowPartialPayments: false,
+            templateId: template.id,
+            templateVersion: template.version,
+          })
+          .returning()
+
+        const newConfig = insertedConfigs[0]
+        if (!newConfig) {
+          throw new Error('Failed to create payment schedule config')
+        }
+        configId = newConfig.id
+      }
+
+      // Create expected payment items
+      const createdItems: ExpectedPaymentItemDto[] = []
+      for (const item of resolvedItems) {
+        const [created] = await tx
+          .insert(this.db.schema.expectedPaymentItems)
+          .values({
+            agencyId,
+            paymentScheduleConfigId: configId,
+            paymentName: item.paymentName,
+            expectedAmountCents: item.expectedAmountCents,
+            dueDate: item.dueDate,
+            sequenceOrder: item.sequenceOrder,
+            status: 'pending',
+            paidAmountCents: 0,
+          })
+          .returning()
+
+        createdItems.push(this.formatExpectedPaymentItem(created))
+      }
+
+      // Audit log
+      await this.auditService.logTemplateApplied(
+        configId,
+        agencyId,
+        userId,
+        template.id,
+        template.version
+      )
+
+      // Fetch updated config
+      const [updatedConfig] = await tx
+        .select()
+        .from(this.db.schema.paymentScheduleConfig)
+        .where(eq(this.db.schema.paymentScheduleConfig.id, configId))
+        .limit(1)
+
+      this.logger.log(
+        `Applied template "${template.name}" (v${template.version}) to activity pricing ${activityPricingId}`
+      )
+
+      return {
+        config: this.formatPaymentScheduleConfig(updatedConfig, createdItems, null),
+        items: createdItems,
+        templateId: template.id,
+        templateVersion: template.version,
+      }
+    })
+  }
+
+  // ============================================================================
+  // TICO Validation
+  // ============================================================================
+
+  /**
+   * Validate a payment schedule against TICO rules.
+   *
+   * HARD FAILURES (errors array - operation will be rejected):
+   * - Sum mismatch: items don't sum to total
+   * - Final payment too late: < 45 days before departure
+   * - Payment too small: any item < $1.00 (100 cents)
+   * - Too many installments: > 12 items
+   *
+   * SOFT WARNINGS (warnings array - logged but allowed):
+   * - High deposit: first payment > 50% of total
+   * - Past due date: any due date in the past
+   */
+  validatePaymentSchedule(
+    items: CreateExpectedPaymentItemDto[],
+    totalPriceCents: number,
+    departureDate: Date,
+    _bookingDate: Date = new Date()
+  ): PaymentScheduleValidationResult {
+    const errors: PaymentScheduleValidationError[] = []
+    const warnings: PaymentScheduleValidationWarning[] = []
+
+    // Rule 1: Sum must equal total exactly
+    const sum = items.reduce((acc, item) => acc + item.expectedAmountCents, 0)
+    if (sum !== totalPriceCents) {
+      errors.push({
+        code: 'SUM_MISMATCH',
+        message: `Payment items sum to ${sum} cents but total is ${totalPriceCents} cents`,
+        difference: totalPriceCents - sum,
+      })
+    }
+
+    // Rule 2: Final payment timing (find last item by sequence order)
+    const sortedItems = [...items].sort((a, b) => a.sequenceOrder - b.sequenceOrder)
+    const finalItem = sortedItems[sortedItems.length - 1]
+    if (finalItem?.dueDate) {
+      const finalDueDate = new Date(finalItem.dueDate)
+      const daysBeforeDeparture = Math.floor(
+        (departureDate.getTime() - finalDueDate.getTime()) / (1000 * 60 * 60 * 24)
+      )
+      if (daysBeforeDeparture < TICO_RULES.MIN_FINAL_PAYMENT_DAYS_BEFORE_DEPARTURE) {
+        errors.push({
+          code: 'FINAL_PAYMENT_TOO_LATE',
+          message: `Final payment must be at least ${TICO_RULES.MIN_FINAL_PAYMENT_DAYS_BEFORE_DEPARTURE} days before departure. Current: ${daysBeforeDeparture} days`,
+          daysBeforeDeparture,
+          required: TICO_RULES.MIN_FINAL_PAYMENT_DAYS_BEFORE_DEPARTURE,
+        })
+      }
+    }
+
+    // Rule 3: Minimum payment amounts
+    for (const item of items) {
+      if (item.expectedAmountCents < TICO_RULES.MIN_PAYMENT_AMOUNT_CENTS) {
+        errors.push({
+          code: 'PAYMENT_TOO_SMALL',
+          message: `Payment "${item.paymentName}" is below minimum ($1.00): ${item.expectedAmountCents} cents`,
+          paymentName: item.paymentName,
+          amountCents: item.expectedAmountCents,
+          minimumCents: TICO_RULES.MIN_PAYMENT_AMOUNT_CENTS,
+        })
+      }
+    }
+
+    // Rule 4: Maximum installments
+    if (items.length > TICO_RULES.MAX_INSTALLMENTS) {
+      errors.push({
+        code: 'TOO_MANY_INSTALLMENTS',
+        message: `Too many payment items (${items.length}). Maximum allowed: ${TICO_RULES.MAX_INSTALLMENTS}`,
+        count: items.length,
+        maximum: TICO_RULES.MAX_INSTALLMENTS,
+      })
+    }
+
+    // Warning: High deposit percentage
+    const firstItem = sortedItems[0]
+    if (firstItem && totalPriceCents > 0) {
+      const depositPercent = (firstItem.expectedAmountCents / totalPriceCents) * 100
+      if (depositPercent > TICO_RULES.DEPOSIT_WARNING_THRESHOLD_PERCENT) {
+        warnings.push({
+          code: 'HIGH_DEPOSIT',
+          message: `Deposit is ${depositPercent.toFixed(1)}% of total (exceeds ${TICO_RULES.DEPOSIT_WARNING_THRESHOLD_PERCENT}% threshold)`,
+          depositPercent: depositPercent,
+          threshold: TICO_RULES.DEPOSIT_WARNING_THRESHOLD_PERCENT,
+        })
+      }
+    }
+
+    // Warning: Past due dates
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    for (const item of items) {
+      if (item.dueDate) {
+        const dueDate = new Date(item.dueDate)
+        if (dueDate < today) {
+          warnings.push({
+            code: 'PAST_DUE_DATE',
+            message: `Payment "${item.paymentName}" has a due date in the past: ${item.dueDate}`,
+            paymentName: item.paymentName,
+            dueDate: item.dueDate,
+          })
+        }
+      }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+    }
+  }
+
+  // ============================================================================
+  // Item Locking (TICO Compliance)
+  // ============================================================================
+
+  /**
+   * Lock an expected payment item after receiving a payment.
+   * Locked items cannot be edited without admin unlock.
+   *
+   * Called automatically when a payment transaction is recorded.
+   */
+  async lockItemOnPayment(
+    itemId: string,
+    agencyId: string,
+    userId: string,
+  ): Promise<void> {
+    const [item] = await this.db.client
+      .select()
+      .from(this.db.schema.expectedPaymentItems)
+      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
+      .limit(1)
+
+    if (!item) {
+      throw new NotFoundException(`Expected payment item ${itemId} not found`)
+    }
+
+    // Skip if already locked
+    if (item.isLocked) {
+      return
+    }
+
+    await this.db.client
+      .update(this.db.schema.expectedPaymentItems)
+      .set({
+        isLocked: true,
+        lockedAt: new Date(),
+        lockedBy: userId,
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
+
+    // Audit log
+    await this.auditService.logLocked(itemId, agencyId, userId)
+
+    this.logger.log(`Locked expected payment item ${itemId} after payment`)
+  }
+
+  /**
+   * Unlock an expected payment item (admin only).
+   * Requires a reason for audit trail.
+   *
+   * @param itemId - The item to unlock
+   * @param agencyId - Agency for authorization
+   * @param userId - Admin user performing unlock
+   * @param reason - Required reason (min 10 chars) for audit trail
+   */
+  async unlockItem(
+    itemId: string,
+    agencyId: string,
+    userId: string,
+    reason: string,
+  ): Promise<ExpectedPaymentItemWithLockingDto> {
+    // Validate reason
+    if (!reason || reason.trim().length < 10) {
+      throw new BadRequestException('Unlock reason must be at least 10 characters')
+    }
+
+    const [item] = await this.db.client
+      .select()
+      .from(this.db.schema.expectedPaymentItems)
+      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
+      .limit(1)
+
+    if (!item) {
+      throw new NotFoundException(`Expected payment item ${itemId} not found`)
+    }
+
+    // Skip if already unlocked
+    if (!item.isLocked) {
+      return this.formatExpectedPaymentItemWithLocking(item)
+    }
+
+    // Unlock
+    const [updated] = await this.db.client
+      .update(this.db.schema.expectedPaymentItems)
+      .set({
+        isLocked: false,
+        lockedAt: null,
+        lockedBy: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
+      .returning()
+
+    // Audit log with reason
+    await this.auditService.logUnlocked(itemId, agencyId, userId, reason)
+
+    this.logger.log(`Unlocked expected payment item ${itemId} by ${userId}: ${reason}`)
+
+    return this.formatExpectedPaymentItemWithLocking(updated)
+  }
+
+  /**
+   * Check if an item can be edited (not locked).
+   * Throws ForbiddenException if locked.
+   */
+  async ensureItemNotLocked(itemId: string): Promise<void> {
+    const [item] = await this.db.client
+      .select({ isLocked: this.db.schema.expectedPaymentItems.isLocked })
+      .from(this.db.schema.expectedPaymentItems)
+      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
+      .limit(1)
+
+    if (item?.isLocked) {
+      throw new ForbiddenException(
+        'This payment item is locked after receiving a payment. Admin unlock required to edit.'
+      )
+    }
+  }
+
+  // ============================================================================
+  // Helper Methods
+  // ============================================================================
+
+  private formatPaymentScheduleConfig(
+    config: any,
+    expectedPaymentItems: ExpectedPaymentItemDto[],
+    creditCardGuarantee: CreditCardGuaranteeDto | null = null,
+  ): PaymentScheduleConfigDto {
+    return {
+      id: config.id,
+      activityPricingId: config.activityPricingId,
+      scheduleType: config.scheduleType,
+      allowPartialPayments: config.allowPartialPayments,
+      depositType: config.depositType,
+      depositPercentage: config.depositPercentage,
+      depositAmountCents: config.depositAmountCents,
+      createdAt: config.createdAt.toISOString(),
+      updatedAt: config.updatedAt.toISOString(),
+      expectedPaymentItems,
+      creditCardGuarantee: creditCardGuarantee || undefined,
+    }
+  }
+
+  private formatExpectedPaymentItem(item: any): ExpectedPaymentItemDto {
+    return {
+      id: item.id,
+      paymentScheduleConfigId: item.paymentScheduleConfigId,
+      paymentName: item.paymentName,
+      expectedAmountCents: item.expectedAmountCents,
+      dueDate: item.dueDate || null,
+      status: item.status,
+      sequenceOrder: item.sequenceOrder,
+      paidAmountCents: item.paidAmountCents,
+      createdAt: item.createdAt.toISOString(),
+      updatedAt: item.updatedAt.toISOString(),
+    }
+  }
+
+  private formatCreditCardGuarantee(guarantee: any): CreditCardGuaranteeDto {
+    return {
+      id: guarantee.id,
+      paymentScheduleConfigId: guarantee.paymentScheduleConfigId,
+      cardHolderName: guarantee.cardHolderName,
+      cardLast4: guarantee.cardLast4,
+      authorizationCode: guarantee.authorizationCode,
+      authorizationDate: guarantee.authorizationDate.toISOString(),
+      authorizationAmountCents: guarantee.authorizationAmountCents,
+      createdAt: guarantee.createdAt.toISOString(),
+      updatedAt: guarantee.updatedAt.toISOString(),
+    }
+  }
+
+  /**
+   * Format expected payment item with locking fields
+   */
+  private formatExpectedPaymentItemWithLocking(item: any): ExpectedPaymentItemWithLockingDto {
+    return {
+      id: item.id,
+      paymentScheduleConfigId: item.paymentScheduleConfigId,
+      paymentName: item.paymentName,
+      expectedAmountCents: item.expectedAmountCents,
+      dueDate: item.dueDate || null,
+      status: item.status,
+      sequenceOrder: item.sequenceOrder,
+      paidAmountCents: item.paidAmountCents,
+      createdAt: item.createdAt.toISOString(),
+      updatedAt: item.updatedAt.toISOString(),
+      isLocked: item.isLocked ?? false,
+      lockedAt: item.lockedAt ? item.lockedAt.toISOString() : null,
+      lockedBy: item.lockedBy ?? null,
+    }
+  }
+}

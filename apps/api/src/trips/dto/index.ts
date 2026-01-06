@@ -1,0 +1,41 @@
+/**
+ * Barrel export for all Trip DTOs
+ */
+
+// Trip DTOs
+export { CreateTripDto } from './create-trip.dto'
+export { UpdateTripDto } from './update-trip.dto'
+export { TripFilterDto } from './trip-filter.dto'
+
+// Trip Traveler DTOs
+export { CreateTripTravelerDto, ContactSnapshotDto, EmergencyContactInlineDto } from './create-trip-traveler.dto'
+export { UpdateTripTravelerDto } from './update-trip-traveler.dto'
+export { TripTravelerFilterDto } from './trip-traveler-filter.dto'
+
+// Itinerary DTOs
+export { CreateItineraryDto } from './create-itinerary.dto'
+export { UpdateItineraryDto } from './update-itinerary.dto'
+export { ItineraryFilterDto } from './itinerary-filter.dto'
+
+// Traveler Group DTOs
+export { CreateTravelerGroupDto } from './create-traveler-group.dto'
+export { UpdateTravelerGroupDto } from './update-traveler-group.dto'
+export { TravelerGroupFilterDto } from './traveler-group-filter.dto'
+export { AddTravelerToGroupDto } from './add-traveler-to-group.dto'
+export { UpdateTravelerGroupMemberDto } from './update-traveler-group-member.dto'
+
+// Collaborator DTOs
+export { CreateTripCollaboratorDto } from './create-trip-collaborator.dto'
+export { UpdateTripCollaboratorDto } from './update-trip-collaborator.dto'
+
+// Bulk Operation DTOs
+export {
+  BulkDeleteTripsDto,
+  BulkArchiveTripsDto,
+  BulkChangeStatusDto,
+  type BulkTripOperationResult,
+  type TripFilterOptionsResponseDto,
+} from './bulk-trip-operations.dto'
+
+// Activity Bookings DTOs
+export { MarkActivityBookedDto, ActivityBookingsFilterDto } from './activity-bookings.dto'

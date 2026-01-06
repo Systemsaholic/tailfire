@@ -1,0 +1,20 @@
+@import "@tailfire/ui-public/globals.css";
+
+/* OTA-specific dashboard styles (if needed in future) */
+.dashboard-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dashboard-scrollbar::-webkit-scrollbar-track {
+  background: rgba(26, 26, 26, 0.2);
+}
+
+.dashboard-scrollbar::-webkit-scrollbar-thumb {
+  background: #c59746;
+  border-radius: 4px;
+}
+
+.dashboard-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #b1481a;
+}

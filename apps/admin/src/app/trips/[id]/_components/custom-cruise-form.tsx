@@ -1,0 +1,1882 @@
+'use client'
+
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { FormSuccessOverlay } from '@/components/ui/form-success-overlay'
+import { useActivityNavigation } from '@/hooks/use-activity-navigation'
+import { useActivityNameGenerator } from '@/hooks/use-activity-name-generator'
+import { useSearchParams } from 'next/navigation'
+import { useForm, useWatch } from 'react-hook-form'
+import { Ship, ChevronDown, ChevronUp, Sparkles, Loader2, Check, AlertCircle, DollarSign, FileText, ImageIcon, Calendar, Anchor, RefreshCw, CalendarCheck } from 'lucide-react'
+import { formatDistanceToNow } from 'date-fns'
+import type { ActivityResponseDto } from '@tailfire/shared-types/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useToast } from '@/hooks/use-toast'
+import { useCreateCustomCruise, useUpdateCustomCruise, useCustomCruise, useGenerateCruisePortSchedule, useCruisePortSchedule } from '@/hooks/use-custom-cruise'
+import { useMarkActivityBooked } from '@/hooks/use-activity-bookings'
+import { useIsChildOfPackage } from '@/hooks/use-is-child-of-package'
+import { useBookings } from '@/hooks/use-bookings'
+import { MarkActivityBookedModal, BookingStatusBadge } from '@/components/activities/mark-activity-booked-modal'
+import { ChildOfPackageBookingSection } from '@/components/activities/child-of-package-booking-section'
+import { EditTravelersDialog } from './edit-travelers-dialog'
+import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
+import { TimePicker } from '@/components/ui/time-picker'
+import { Combobox } from '@/components/ui/combobox'
+import { DocumentUploader } from '@/components/document-uploader'
+import { ComponentMediaTab } from '@/components/tern/shared'
+import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PaymentScheduleSection } from './payment-schedule-section'
+import { type PricingData } from '@/lib/pricing'
+import { Separator } from '@/components/ui/separator'
+import { useCruiseLineOptions, useCruiseShipOptions, useCruiseRegionOptions, useCruisePortOptions } from '@/hooks/use-traveltek-reference'
+import {
+  customCruiseFormSchema,
+  toCustomCruiseDefaults,
+  toCustomCruiseApiPayload,
+  CUSTOM_CRUISE_FORM_FIELDS,
+  type CustomCruiseFormData,
+} from '@/lib/validation/cruise-validation'
+import { mapServerErrors, scrollToFirstError, formatFieldLabel, type ServerFieldError } from '@/lib/validation/utils'
+import { TripDateWarning } from '@/components/ui/trip-date-warning'
+import { getDefaultMonthHint, findDayForDate, type DayInfo } from '@/lib/date-utils'
+
+interface CustomCruiseFormProps {
+  itineraryId: string
+  dayId: string
+  dayDate?: string | null
+  activity?: ActivityResponseDto
+  trip?: any
+  onSuccess?: () => void
+  onCancel?: () => void
+  /** When true, user must select a date to determine which day to assign activity to */
+  pendingDay?: boolean
+  /** Optional days list for day selection when dayId is empty */
+  days?: Array<{ id: string; dayNumber: number; date?: string | null; title?: string | null }>
+}
+
+const STATUSES = [
+  { value: 'proposed', label: 'Proposed' },
+  { value: 'confirmed', label: 'Confirmed' },
+  { value: 'cancelled', label: 'Cancelled' },
+] as const
+
+// Valid status values
+const VALID_STATUSES = ['proposed', 'confirmed', 'cancelled'] as const
+type FormStatus = (typeof VALID_STATUSES)[number]
+
+// Valid pricing types
+const VALID_PRICING_TYPES = ['per_person', 'per_room', 'flat_rate', 'per_night', 'per_group', 'fixed', 'total'] as const
+type FormPricingType = (typeof VALID_PRICING_TYPES)[number]
+
+// Coerce API status to form status
+function coerceStatus(status: string | undefined | null): FormStatus {
+  if (status && VALID_STATUSES.includes(status as FormStatus)) {
+    return status as FormStatus
+  }
+  return 'proposed'
+}
+
+// Coerce API pricing type to form pricing type
+function coercePricingType(type: string | undefined | null): FormPricingType {
+  if (type && VALID_PRICING_TYPES.includes(type as FormPricingType)) {
+    return type as FormPricingType
+  }
+  return 'per_person'
+}
+
+export function CustomCruiseForm({
+  itineraryId,
+  dayId,
+  dayDate,
+  activity,
+  trip,
+  onSuccess: _onSuccess,
+  onCancel,
+  pendingDay,
+  days = [],
+}: CustomCruiseFormProps) {
+  const { toast } = useToast()
+  const searchParams = useSearchParams()
+
+  const [isAiAssistOpen, setIsAiAssistOpen] = useState(false)
+  const [aiInput, setAiInput] = useState('')
+  const [showTravelersDialog, setShowTravelersDialog] = useState(false)
+  const [showSuccess, setShowSuccess] = useState(false)
+  const { returnToItinerary } = useActivityNavigation()
+  const [activeTab, setActiveTab] = useState(() => {
+    const tabParam = searchParams.get('tab')
+    // Map 'booking' to 'pricing' since the actual tab is named 'pricing'
+    return tabParam === 'booking' ? 'pricing' : 'general'
+  })
+
+  // Auto-determine dayId from departure date
+  // The cruise activity should be attached to the day matching its departure date
+  const [computedDayId, setComputedDayId] = useState<string>(dayId)
+  const [departureDateMismatch, setDepartureDateMismatch] = useState(false)
+
+  // Convert days prop to DayInfo[] for shared findDayForDate utility
+  const daysAsDayInfo: DayInfo[] = useMemo(
+    () => days.map((d) => ({ id: d.id, date: d.date ?? null, dayNumber: d.dayNumber })),
+    [days]
+  )
+
+  // Helper to find day by date using shared TZ-safe utility
+  const findDayByDate = useCallback(
+    (dateStr: string | null | undefined): string | null => {
+      const match = findDayForDate(dateStr, daysAsDayInfo)
+      return match?.dayId ?? null
+    },
+    [daysAsDayInfo]
+  )
+
+  // Effective dayId - use prop if provided, otherwise computed from departure date
+  // In edit mode (dayId provided), we lock to existing day; only auto-compute for new cruises
+  const effectiveDayId = dayId || computedDayId
+  const matchedDay = days.find((d) => d.id === computedDayId)
+  const effectiveDayDate = dayId
+    ? dayDate
+    : matchedDay?.date || null
+
+  // Track if we're in edit mode (has existing activity)
+  const isEditMode = !!activity?.id
+
+  // Reference data for comboboxes - track selected line UUID for ship filtering
+  const [selectedCruiseLineId, setSelectedCruiseLineId] = useState<string | undefined>(undefined)
+  const [isUploadingCabinImage, setIsUploadingCabinImage] = useState(false)
+  const cruiseLineOptions = useCruiseLineOptions()
+  const cruiseShipOptions = useCruiseShipOptions(selectedCruiseLineId)
+  const cruiseRegionOptions = useCruiseRegionOptions()
+  const cruisePortOptions = useCruisePortOptions()
+
+  // Track activity ID (for create->update transition)
+  const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
+
+  // Activity pricing ID (gated on this for payment schedule)
+  const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
+
+  // Package linkage state for PricingSection
+  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(activity?.packageId ?? null)
+  const { data: packagesData } = useBookings({ tripId: trip?.id })
+  const availablePackages = useMemo(
+    () => packagesData?.map(pkg => ({ id: pkg.id, name: pkg.name })) ?? [],
+    [packagesData]
+  )
+
+  // Check if this activity is a child of a package (pricing controlled by parent)
+  const { isChildOfPackage, parentPackageName, parentPackageId } = useIsChildOfPackage(activity)
+
+  // Booking status state
+  const [showBookingModal, setShowBookingModal] = useState(false)
+  const [activityIsBooked, setActivityIsBooked] = useState(activity?.isBooked ?? false)
+  const [activityBookingDate, setActivityBookingDate] = useState<string | null>(activity?.bookingDate ?? null)
+
+  // Auto-save state
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
+
+  // Fetch cruise data (for edit mode)
+  const { data: cruiseData } = useCustomCruise(activityId || '')
+
+  // Mutations - use effectiveDayId for cache invalidation
+  const createCustomCruise = useCreateCustomCruise(itineraryId, effectiveDayId)
+  const updateCustomCruise = useUpdateCustomCruise(itineraryId, effectiveDayId)
+  const generatePortSchedule = useGenerateCruisePortSchedule(itineraryId)
+
+  // Query for existing port schedule
+  const { data: portSchedule } = useCruisePortSchedule(activityId || undefined)
+
+  // Booking status mutation
+  const markActivityBooked = useMarkActivityBooked()
+
+  // Handler for marking cruise as booked
+  const handleMarkAsBooked = async (newBookingDate: string) => {
+    if (!activityId) {
+      throw new Error('Activity must be saved before marking as booked')
+    }
+
+    const result = await markActivityBooked.mutateAsync({
+      activityId,
+      data: { bookingDate: newBookingDate },
+    })
+
+    // Update local state - preserve YYYY-MM-DD format
+    setActivityIsBooked(true)
+    setActivityBookingDate(newBookingDate)
+
+    // Show warning if payment schedule is missing
+    if (result.paymentScheduleMissing) {
+      toast({
+        title: 'Payment schedule missing',
+        description: 'This activity is booked but has no payment schedule configured.',
+      })
+    }
+  }
+
+  // Trip month hint for date picker calendar default
+  const tripMonthHint = useMemo(
+    () => getDefaultMonthHint(trip?.startDate),
+    [trip?.startDate]
+  )
+
+  // ============================================================================
+  // react-hook-form setup with Zod validation
+  // ============================================================================
+
+  const {
+    control,
+    register,
+    reset,
+    setError,
+    clearErrors,
+    setValue,
+    getValues,
+    watch,
+    formState: { errors, isDirty, isSubmitting },
+  } = useForm<CustomCruiseFormData>({
+    // No resolver - we'll validate manually with trigger() and custom validation
+    // This prevents any validation from running during Controller registration
+    defaultValues: toCustomCruiseDefaults(
+      {
+        itineraryDayId: effectiveDayId,
+        status: coerceStatus(activity?.status),
+        pricingType: coercePricingType((activity as any)?.pricingType),
+        currency: trip?.currency || 'USD',
+      },
+      dayDate,
+      trip?.currency
+    ),
+    mode: 'onSubmit',
+    reValidateMode: 'onSubmit',
+    shouldUnregister: false,
+  })
+
+  // Ref to track loaded cruise ID (prevent re-seeding on same cruise)
+  const cruiseIdRef = useRef<string | null>(null)
+
+  // Ref to track last saved state to trigger auto-save only when values actually change
+  const lastSavedHash = useRef<string | null>(null)
+
+  // Counter to trigger auto-save effect when form changes
+  const [changeCounter, setChangeCounter] = useState(0)
+
+  // ============================================================================
+  // Reusable validation function
+  // ============================================================================
+
+  const validateFormData = useCallback((formData: CustomCruiseFormData): { isValid: boolean; firstError?: { field: string; message: string } } => {
+    const validationResult = customCruiseFormSchema.safeParse(formData)
+
+    if (!validationResult.success) {
+      // Clear previous errors and set new ones
+      clearErrors()
+      let firstError: { field: string; message: string } | undefined
+
+      validationResult.error.errors.forEach((err, index) => {
+        const path = err.path.join('.')
+        setError(path as any, { message: err.message })
+        // Capture first error for toast
+        if (index === 0) {
+          firstError = { field: path, message: err.message }
+        }
+      })
+
+      return { isValid: false, firstError }
+    }
+
+    // Clear all errors when validation passes
+    clearErrors()
+    return { isValid: true }
+  }, [setError, clearErrors])
+
+  // ============================================================================
+  // Hydrate form from server data when cruise loads
+  // ============================================================================
+
+  useEffect(() => {
+    if (cruiseData && cruiseData.id !== cruiseIdRef.current) {
+      cruiseIdRef.current = cruiseData.id
+      setActivityId(cruiseData.id)
+      setActivityPricingId(cruiseData.activityPricingId || null)
+
+      // Reset form with server data
+      // Note: coerce source to valid enum value, handle null/undefined dates
+      const serverDetails = cruiseData.customCruiseDetails
+      // For edit mode, use the existing activity's dayId; for new, compute from departure date
+      const loadedDayId = cruiseData.itineraryDayId || effectiveDayId
+
+      reset(
+        toCustomCruiseDefaults(
+          {
+            itineraryDayId: loadedDayId,
+            name: cruiseData.name,
+            description: cruiseData.description ?? undefined,
+            status: coerceStatus(cruiseData.status),
+            pricingType: coercePricingType(cruiseData.pricingType),
+            currency: cruiseData.currency || 'USD',
+            totalPriceCents: cruiseData.totalPriceCents,
+            taxesAndFeesCents: cruiseData.taxesAndFeesCents,
+            confirmationNumber: cruiseData.confirmationNumber || '',
+            commissionTotalCents: cruiseData.commissionTotalCents,
+            commissionSplitPercentage: cruiseData.commissionSplitPercentage ? parseFloat(cruiseData.commissionSplitPercentage) : null,
+            commissionExpectedDate: cruiseData.commissionExpectedDate ?? undefined,
+            // Booking details
+            termsAndConditions: cruiseData.termsAndConditions || '',
+            cancellationPolicy: cruiseData.cancellationPolicy || '',
+            supplier: cruiseData.supplier || '',
+            customCruiseDetails: serverDetails ? {
+              ...serverDetails,
+              // Coerce source to valid enum (API might return null/undefined)
+              source: (serverDetails.source === 'manual' || serverDetails.source === 'traveltek')
+                ? serverDetails.source
+                : 'manual',
+              // Ensure required array/object fields have defaults
+              portCallsJson: serverDetails.portCallsJson ?? [],
+              cabinPricingJson: serverDetails.cabinPricingJson ?? {},
+              shipContentJson: serverDetails.shipContentJson ?? {},
+              inclusions: serverDetails.inclusions ?? [],
+            } : undefined,
+          },
+          effectiveDayDate,
+          trip?.currency
+        ),
+        { keepDirty: false }
+      )
+
+      // Initialize ship filtering based on loaded cruise line
+      if (cruiseData.customCruiseDetails?.cruiseLineId) {
+        setSelectedCruiseLineId(cruiseData.customCruiseDetails.cruiseLineId)
+      }
+    }
+  }, [cruiseData, effectiveDayId, effectiveDayDate, reset, trip?.currency])
+
+  // ============================================================================
+  // Separate effect to subscribe to form changes and trigger auto-save counter
+  // This runs AFTER render is complete, avoiding the setState-during-render error
+  // ============================================================================
+
+  useEffect(() => {
+    // Skip the initial synchronous fire to avoid setState during render
+    let isFirst = true
+
+    // Subscribe to form changes using React Hook Form's watch API
+    const subscription = watch(() => {
+      if (isFirst) {
+        isFirst = false
+        return // skip the initial sync fire
+      }
+      // Increment counter to trigger auto-save effect
+      // This happens after render is complete, avoiding the Controller error
+      setChangeCounter((c) => c + 1)
+    })
+
+    return () => {
+      if (typeof subscription?.unsubscribe === 'function') {
+        subscription.unsubscribe()
+      }
+    }
+  }, [watch])
+
+  // ============================================================================
+  // Auto-update itineraryDayId when departure date changes (for new cruises only)
+  // In edit mode, we preserve the existing day association
+  // ============================================================================
+
+  // Watch departure date for auto-day computation
+  const watchedDepartureDate = watch('customCruiseDetails.departureDate')
+
+  // Watch custom component fields (Selects, DatePickers, TimePickers, Comboboxes, number inputs)
+  const statusValue = useWatch({ control, name: 'status' })
+  // Cruise line and ship
+  const cruiseLineNameValue = useWatch({ control, name: 'customCruiseDetails.cruiseLineName' })
+  const shipNameValue = useWatch({ control, name: 'customCruiseDetails.shipName' })
+  const shipImageUrlValue = useWatch({ control, name: 'customCruiseDetails.shipImageUrl' })
+
+  // Auto-generate activity name from cruise line and ship name
+  const { displayName, placeholder } = useActivityNameGenerator({
+    activityType: 'custom_cruise',
+    control,
+    setValue,
+    cruiseLineName: cruiseLineNameValue || undefined,
+    shipName: shipNameValue || undefined,
+  })
+  // Voyage details
+  const itineraryNameValue = useWatch({ control, name: 'customCruiseDetails.itineraryName' })
+  const regionValue = useWatch({ control, name: 'customCruiseDetails.region' })
+  const nightsValue = useWatch({ control, name: 'customCruiseDetails.nights' })
+  const seaDaysValue = useWatch({ control, name: 'customCruiseDetails.seaDays' })
+  // Departure
+  const departurePortValue = useWatch({ control, name: 'customCruiseDetails.departurePort' })
+  const departureDateValue = useWatch({ control, name: 'customCruiseDetails.departureDate' })
+  const departureTimeValue = useWatch({ control, name: 'customCruiseDetails.departureTime' })
+  const departureTimezoneValue = useWatch({ control, name: 'customCruiseDetails.departureTimezone' })
+  // Arrival
+  const arrivalPortValue = useWatch({ control, name: 'customCruiseDetails.arrivalPort' })
+  const arrivalDateValue = useWatch({ control, name: 'customCruiseDetails.arrivalDate' })
+  const arrivalTimeValue = useWatch({ control, name: 'customCruiseDetails.arrivalTime' })
+  const arrivalTimezoneValue = useWatch({ control, name: 'customCruiseDetails.arrivalTimezone' })
+  // Traveltek
+  const traveltekCruiseIdValue = useWatch({ control, name: 'customCruiseDetails.traveltekCruiseId' })
+  // Cabin details
+  const cabinCategoryValue = useWatch({ control, name: 'customCruiseDetails.cabinCategory' })
+  const cabinCodeValue = useWatch({ control, name: 'customCruiseDetails.cabinCode' })
+  const cabinNumberValue = useWatch({ control, name: 'customCruiseDetails.cabinNumber' })
+  const cabinDeckValue = useWatch({ control, name: 'customCruiseDetails.cabinDeck' })
+  const cabinImageUrlValue = useWatch({ control, name: 'customCruiseDetails.cabinImageUrl' })
+  const cabinDescriptionValue = useWatch({ control, name: 'customCruiseDetails.cabinDescription' })
+  // Booking details
+  const bookingNumberValue = useWatch({ control, name: 'customCruiseDetails.bookingNumber' })
+  const fareCodeValue = useWatch({ control, name: 'customCruiseDetails.fareCode' })
+  const bookingDeadlineValue = useWatch({ control, name: 'customCruiseDetails.bookingDeadline' })
+
+  useEffect(() => {
+    // Guard: cleanup flag to prevent microtask running after unmount
+    let cancelled = false
+
+    // Skip auto-compute in edit mode - preserve existing day association
+    if (isEditMode) {
+      setDepartureDateMismatch(false)
+      return
+    }
+
+    // Skip if dayId was explicitly provided via prop
+    if (dayId) {
+      setDepartureDateMismatch(false)
+      return
+    }
+
+    // If no departure date set yet, no mismatch to report
+    if (!watchedDepartureDate) {
+      setDepartureDateMismatch(false)
+      return
+    }
+
+    // If days array is empty, we can't compute - show mismatch warning
+    if (!days || days.length === 0) {
+      setDepartureDateMismatch(true)
+      return
+    }
+
+    const matchingDayId = findDayByDate(watchedDepartureDate)
+
+    if (matchingDayId) {
+      // Found a matching day
+      setDepartureDateMismatch(false)
+      if (matchingDayId !== computedDayId) {
+        setComputedDayId(matchingDayId)
+        // Defer setValue to avoid setState-during-render with Controllers
+        queueMicrotask(() => {
+          if (!cancelled) {
+            setValue('itineraryDayId', matchingDayId, { shouldDirty: false })
+          }
+        })
+      }
+    } else {
+      // No matching day for this departure date
+      setDepartureDateMismatch(true)
+      // Clear the computed dayId since there's no match
+      if (computedDayId) {
+        setComputedDayId('')
+        queueMicrotask(() => {
+          if (!cancelled) {
+            setValue('itineraryDayId', '', { shouldDirty: false })
+          }
+        })
+      }
+    }
+
+    // Cleanup: mark cancelled to prevent stale microtask execution
+    return () => {
+      cancelled = true
+    }
+  }, [watchedDepartureDate, days, dayId, isEditMode, findDayByDate, computedDayId, setValue])
+
+  // ============================================================================
+  // Auto-save effect with proper validation gating
+  // ============================================================================
+
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const mutationInProgress = createCustomCruise.isPending || updateCustomCruise.isPending
+
+  useEffect(() => {
+    // Clear pending timeout
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current)
+    }
+
+    // Basic gating: only auto-save when dirty and not currently saving
+    if (!isDirty || isSubmitting || mutationInProgress) {
+      return
+    }
+
+    // Debounce auto-save
+    autoSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        setAutoSaveStatus('saving')
+
+        const formData = getValues()
+        const currentHash = JSON.stringify(formData)
+
+        // Only trigger auto-save if values have actually changed
+        if (currentHash === lastSavedHash.current) {
+          setAutoSaveStatus('idle')
+          return
+        }
+
+        // Validate form data (clears previous errors and sets new ones if invalid)
+        const { isValid } = validateFormData(formData)
+
+        if (!isValid) {
+          setAutoSaveStatus('idle')
+          return
+        }
+
+        const payload = toCustomCruiseApiPayload(formData)
+
+        if (activityId) {
+          // Update existing - send full payload (not just customCruiseDetails)
+          await updateCustomCruise.mutateAsync({
+            id: activityId,
+            data: payload as any,
+          })
+        } else {
+          // Create new
+          const response = await createCustomCruise.mutateAsync(payload)
+          if (response.id) {
+            setActivityId(response.id)
+          }
+        }
+
+        setAutoSaveStatus('saved')
+        setLastSavedAt(new Date())
+        lastSavedHash.current = currentHash
+        reset(formData, { keepDirty: false })
+      } catch (err) {
+        setAutoSaveStatus('error')
+
+        // Map server errors to form fields
+        const apiError = err as any
+        if (apiError?.response?.data?.errors) {
+          const fieldErrors: ServerFieldError[] = Object.entries(apiError.response.data.errors).flatMap(
+            ([field, messages]) => (messages as string[]).map((message) => ({ field, message }))
+          )
+          mapServerErrors(fieldErrors, setError, CUSTOM_CRUISE_FORM_FIELDS)
+          scrollToFirstError(errors)
+        }
+
+        toast({
+          title: 'Auto-save failed',
+          description: apiError?.message || 'Please try again.',
+          variant: 'destructive',
+        })
+      }
+    }, 1500)
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current)
+      }
+    }
+  }, [
+    // Use changeCounter which is updated by subscription effect AFTER render
+    // This avoids the "Cannot update component while rendering" error
+    changeCounter,
+    isDirty,
+    isSubmitting,
+    mutationInProgress,
+    activityId,
+    getValues,
+    reset,
+    setError,
+    toast,
+    createCustomCruise,
+    updateCustomCruise,
+    validateFormData,
+    errors,
+  ])
+
+  // Force save handler
+  const forceSave = useCallback(async () => {
+    const formData = getValues()
+
+    // Special check for missing dayId with helpful message
+    if (!formData.itineraryDayId) {
+      const hasNoDays = days.length === 0
+      const tripDatesMissing = !trip?.startDate || !trip?.endDate
+      let description: string
+
+      if (tripDatesMissing) {
+        description = 'Please set trip start and end dates first, then generate itinerary days.'
+      } else if (hasNoDays) {
+        description = 'Please generate itinerary days first, then set a departure date that matches a day.'
+      } else {
+        description = 'Please set a departure date that matches an itinerary day, or generate more days.'
+      }
+
+      toast({
+        title: 'Cannot Save',
+        description,
+        variant: 'destructive',
+      })
+      // Scroll to departure date field
+      const departureDateEl = document.querySelector(
+        '[data-field="customCruiseDetails.departureDate"]'
+      ) as HTMLElement | null
+      if (departureDateEl) {
+        departureDateEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      return
+    }
+
+    // Validate before saving (same schema used by autosave)
+    const { isValid, firstError } = validateFormData(formData)
+    if (!isValid) {
+      // Show single toast with first error only
+      const fieldLabel = firstError ? formatFieldLabel(firstError.field) : 'Unknown field'
+      toast({
+        title: 'Validation Error',
+        description: firstError
+          ? `${fieldLabel}: ${firstError.message}`
+          : 'Please fix the errors before saving.',
+        variant: 'destructive',
+      })
+      // Scroll to and focus the first error field
+      if (firstError) {
+        const el = document.querySelector(
+          `[data-field="${firstError.field}"], [name="${firstError.field}"]`
+        ) as HTMLElement | null
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          setTimeout(() => el.focus?.(), 300)
+        }
+      }
+      return
+    }
+
+    const payload = toCustomCruiseApiPayload(formData)
+
+    try {
+      setAutoSaveStatus('saving')
+
+      if (activityId) {
+        // Update existing - send full payload (not just customCruiseDetails)
+        await updateCustomCruise.mutateAsync({
+          id: activityId,
+          data: payload as any,
+        })
+      } else {
+        const response = await createCustomCruise.mutateAsync(payload)
+        if (response.id) {
+          setActivityId(response.id)
+        }
+      }
+
+      setAutoSaveStatus('saved')
+      setLastSavedAt(new Date())
+      reset(formData, { keepDirty: false })
+
+      // Show success overlay and redirect
+      setShowSuccess(true)
+    } catch (err) {
+      setAutoSaveStatus('error')
+
+      const apiError = err as any
+      if (apiError?.response?.data?.errors) {
+        const fieldErrors: ServerFieldError[] = Object.entries(apiError.response.data.errors).flatMap(
+          ([field, messages]) => (messages as string[]).map((message) => ({ field, message }))
+        )
+        mapServerErrors(fieldErrors, setError, CUSTOM_CRUISE_FORM_FIELDS)
+        scrollToFirstError(errors)
+      }
+
+      toast({
+        title: 'Save failed',
+        description: apiError?.message || 'Please try again.',
+        variant: 'destructive',
+      })
+    }
+  }, [
+    activityId,
+    getValues,
+    reset,
+    toast,
+    createCustomCruise,
+    updateCustomCruise,
+    validateFormData,
+    errors,
+    days,
+    setError,
+    trip?.startDate,
+    trip?.endDate,
+  ])
+
+  const handleAiSubmit = () => {
+    toast({
+      title: 'AI Assist',
+      description: 'Processing cruise information...',
+    })
+    setAiInput('')
+  }
+
+  const handleFormSubmit = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    await forceSave()
+  }
+
+  // Save and generate port schedule in one step
+  const handleSaveAndGeneratePorts = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    const formData = getValues()
+
+    // Validate before saving
+    const { isValid, firstError } = validateFormData(formData)
+    if (!isValid) {
+      const fieldLabel = firstError ? formatFieldLabel(firstError.field) : 'Unknown field'
+      toast({
+        title: 'Validation Error',
+        description: firstError
+          ? `${fieldLabel}: ${firstError.message}`
+          : 'Please fix the errors before saving.',
+        variant: 'destructive',
+      })
+      if (firstError) {
+        const el = document.querySelector(
+          `[data-field="${firstError.field}"], [name="${firstError.field}"]`
+        ) as HTMLElement | null
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          setTimeout(() => el.focus?.(), 300)
+        }
+      }
+      return
+    }
+
+    const payload = toCustomCruiseApiPayload(formData)
+
+    try {
+      setAutoSaveStatus('saving')
+      let savedId = activityId
+
+      if (activityId) {
+        await updateCustomCruise.mutateAsync({
+          id: activityId,
+          data: payload as any,
+        })
+      } else {
+        const response = await createCustomCruise.mutateAsync(payload)
+        if (response.id) {
+          savedId = response.id
+          setActivityId(response.id)
+        }
+      }
+
+      setAutoSaveStatus('saved')
+      setLastSavedAt(new Date())
+      reset(formData, { keepDirty: false })
+
+      // Now generate port schedule
+      if (savedId) {
+        generatePortSchedule.mutate(savedId)
+      }
+    } catch (err) {
+      setAutoSaveStatus('error')
+      const apiError = err as any
+      toast({
+        title: 'Save failed',
+        description: apiError?.message || 'Please try again.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Get travelers from trip data
+  const travelers = trip?.travelers || []
+  const totalTravelers = trip?.travelers?.length || 0
+
+  // Use changeCounter to refresh values after changes; no render-time subscription
+  const currentValues = useMemo(() => {
+    void changeCounter
+    return getValues() as CustomCruiseFormData
+  }, [changeCounter, getValues])
+
+  // Build pricingData for BookingDetailsSection (uses changeCounter to refresh)
+  const pricingData: PricingData = useMemo(() => {
+    void changeCounter
+    const values = getValues()
+    return {
+      // Derive invoiceType from package linkage
+      invoiceType: selectedPackageId ? 'part_of_package' : 'individual_item',
+      pricingType: (values.pricingType || 'per_person') as PricingData['pricingType'],
+      totalPriceCents: values.totalPriceCents || 0,
+      taxesAndFeesCents: values.taxesAndFeesCents || 0,
+      currency: values.currency || 'USD',
+      confirmationNumber: values.confirmationNumber || '',
+      commissionTotalCents: values.commissionTotalCents || 0,
+      commissionSplitPercentage: values.commissionSplitPercentage || 0,
+      commissionExpectedDate: values.commissionExpectedDate || null,
+      termsAndConditions: values.termsAndConditions || '',
+      cancellationPolicy: values.cancellationPolicy || '',
+      supplier: values.supplier || '',
+    }
+  }, [changeCounter, getValues, selectedPackageId])
+
+  // Handler for pricing/booking/commission section updates
+  const handlePricingUpdate = useCallback((updates: Partial<PricingData>) => {
+    Object.entries(updates).forEach(([key, value]) => {
+      setValue(key as keyof CustomCruiseFormData, value as any, { shouldDirty: true, shouldValidate: true })
+    })
+  }, [setValue])
+
+  return (
+    <div className="relative max-w-5xl">
+      <FormSuccessOverlay
+        show={showSuccess}
+        message={isEditMode ? 'Cruise Updated!' : 'Cruise Added!'}
+        onComplete={returnToItinerary}
+        onDismiss={() => setShowSuccess(false)}
+        duration={1000}
+      />
+
+      {/* Header */}
+      <div className="flex items-start gap-4 mb-8">
+        {/* Cruise Icon */}
+        <div className="flex-shrink-0 w-16 h-16 bg-cyan-500 rounded-lg flex items-center justify-center">
+          <Ship className="h-8 w-8 text-white" />
+        </div>
+
+        {/* Title and Meta */}
+        <div className="flex-1 min-w-0">
+          <h1 className={`text-2xl font-semibold mb-3 ${displayName ? 'text-gray-900' : 'text-gray-400'}`}>
+            {displayName || placeholder}
+          </h1>
+
+          <div className="flex items-center gap-6 flex-wrap">
+            {/* Travelers */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Travelers ({travelers.length} of {totalTravelers})</span>
+              <div className="flex -space-x-2">
+                {travelers.map((traveler: any) => (
+                  <Avatar key={traveler.id} className="w-8 h-8 border-2 border-white">
+                    <AvatarFallback className="bg-cyan-500 text-white text-xs">
+                      {traveler.initials}
+                    </AvatarFallback>
+                  </Avatar>
+                ))}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2"
+                onClick={() => setShowTravelersDialog(true)}
+              >
+                Edit
+              </Button>
+            </div>
+
+            {/* Status */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Status</span>
+              <Select
+                value={statusValue}
+                onValueChange={(v) => setValue('status', v as CustomCruiseFormData['status'], { shouldDirty: true })}
+              >
+                <SelectTrigger className="w-32 h-8" data-field="status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUSES.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        {/* Auto-Save Status Indicator */}
+        <div className="flex items-center gap-2 text-sm">
+          {autoSaveStatus === 'saving' && (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin text-gray-500" />
+              <span className="text-gray-500">Saving...</span>
+            </>
+          )}
+          {autoSaveStatus === 'saved' && lastSavedAt && (
+            <>
+              <Check className="h-4 w-4 text-green-600" />
+              <span className="text-gray-500">
+                Saved {formatDistanceToNow(lastSavedAt, { addSuffix: true })}
+              </span>
+            </>
+          )}
+          {autoSaveStatus === 'error' && (
+            <>
+              <AlertCircle className="h-4 w-4 text-red-600" />
+              <span className="text-red-600">Error - Click Save to retry</span>
+            </>
+          )}
+          {autoSaveStatus === 'idle' && (
+            <>
+              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+              </svg>
+              <span className="text-gray-400">Not saved yet</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Tabbed Interface - 5 tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="general" className="flex items-center gap-2">
+            <Ship className="h-4 w-4" />
+            General
+          </TabsTrigger>
+          <TabsTrigger value="cabin" className="flex items-center gap-2">
+            <Calendar className="h-4 w-4" />
+            Cabin
+          </TabsTrigger>
+          <TabsTrigger value="media" className="flex items-center gap-2">
+            <ImageIcon className="h-4 w-4" />
+            Media
+          </TabsTrigger>
+          <TabsTrigger value="documents" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Documents
+          </TabsTrigger>
+          <TabsTrigger value="pricing" className="flex items-center gap-2">
+            <DollarSign className="h-4 w-4" />
+            Booking & Pricing
+          </TabsTrigger>
+        </TabsList>
+
+        {/* General Tab */}
+        <TabsContent value="general" className="mt-6 space-y-6">
+          {/* AI Assist Section */}
+          <div className="border border-gray-200 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setIsAiAssistOpen(!isAiAssistOpen)}
+              className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-cyan-500" />
+                <span className="font-medium">AI Assist</span>
+              </div>
+              {isAiAssistOpen ? (
+                <ChevronUp className="h-5 w-5 text-gray-400" />
+              ) : (
+                <ChevronDown className="h-5 w-5 text-gray-400" />
+              )}
+            </button>
+
+            {isAiAssistOpen && (
+              <div className="p-4 border-t border-gray-200 space-y-3">
+                <p className="text-sm text-gray-600">
+                  Paste cruise itinerary details, booking confirmations, or voyage information, and let AI Assist fill in the fields.
+                </p>
+                <Textarea
+                  value={aiInput}
+                  onChange={(e) => setAiInput(e.target.value)}
+                  placeholder="Paste cruise booking details, itinerary information, or voyage descriptions..."
+                  className="min-h-[100px]"
+                />
+                <div className="flex justify-end">
+                  <Button onClick={handleAiSubmit} className="bg-cyan-600 hover:bg-cyan-700">
+                    Submit
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Basic Information */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Cruise Information</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label htmlFor="cruise-name" className="text-sm font-medium text-gray-700">Cruise Name</label>
+                <Input
+                  {...register('name')}
+                  id="cruise-name"
+                  data-field="name"
+                  placeholder="e.g., Caribbean 7-Night Adventure"
+                  className={errors.name ? 'border-red-500 focus:ring-red-500' : ''}
+                  aria-invalid={errors.name ? 'true' : 'false'}
+                  aria-describedby={errors.name ? 'cruise-name-error' : undefined}
+                />
+                {errors.name && (
+                  <p id="cruise-name-error" className="text-sm text-red-500 mt-1" role="alert">
+                    {errors.name.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Description</label>
+                <Textarea
+                  {...register('description')}
+                  data-field="description"
+                  placeholder="Brief description of this cruise..."
+                  className="min-h-[80px]"
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Cruise Line & Ship */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Cruise Line & Ship</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Cruise Line</label>
+                {cruiseLineOptions ? (
+                  <Combobox
+                    options={cruiseLineOptions.map(opt => ({ value: opt.value, label: opt.label }))}
+                    value={cruiseLineNameValue || null}
+                    onValueChange={(value) => {
+                      const selected = cruiseLineOptions.find(opt => opt.label === value || opt.value === value)
+                      if (selected) {
+                        setValue('customCruiseDetails.cruiseLineName', selected.label, { shouldDirty: true })
+                        setValue('customCruiseDetails.cruiseLineCode', selected.data?.name?.substring(0, 3).toUpperCase() || null, { shouldDirty: true })
+                        setValue('customCruiseDetails.cruiseLineId', selected.value, { shouldDirty: true })
+                        setValue('customCruiseDetails.shipName', null, { shouldDirty: true })
+                        setValue('customCruiseDetails.cruiseShipId', null, { shouldDirty: true })
+                        setSelectedCruiseLineId(selected.value)
+                      } else if (value) {
+                        setValue('customCruiseDetails.cruiseLineName', value, { shouldDirty: true })
+                        setValue('customCruiseDetails.cruiseLineId', null, { shouldDirty: true })
+                        setValue('customCruiseDetails.shipName', null, { shouldDirty: true })
+                        setValue('customCruiseDetails.cruiseShipId', null, { shouldDirty: true })
+                        setSelectedCruiseLineId(undefined)
+                      } else {
+                        setValue('customCruiseDetails.cruiseLineName', null, { shouldDirty: true })
+                        setValue('customCruiseDetails.cruiseLineId', null, { shouldDirty: true })
+                        setValue('customCruiseDetails.shipName', null, { shouldDirty: true })
+                        setValue('customCruiseDetails.cruiseShipId', null, { shouldDirty: true })
+                        setSelectedCruiseLineId(undefined)
+                      }
+                    }}
+                    placeholder="Select cruise line..."
+                    searchPlaceholder="Search cruise lines..."
+                    allowCustom
+                  />
+                ) : (
+                  <Input
+                    value={cruiseLineNameValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.cruiseLineName', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.cruiseLineName"
+                    placeholder="e.g., Royal Caribbean"
+                  />
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Ship Name</label>
+                  {cruiseShipOptions ? (
+                    <Combobox
+                      options={cruiseShipOptions.map(opt => ({ value: opt.value, label: opt.label }))}
+                      value={shipNameValue || null}
+                      onValueChange={(value) => {
+                        const selected = cruiseShipOptions.find(opt => opt.label === value || opt.value === value)
+                        if (selected) {
+                          setValue('customCruiseDetails.shipName', selected.label, { shouldDirty: true })
+                          setValue('customCruiseDetails.cruiseShipId', selected.value, { shouldDirty: true })
+                        } else if (value) {
+                          setValue('customCruiseDetails.shipName', value, { shouldDirty: true })
+                          setValue('customCruiseDetails.cruiseShipId', null, { shouldDirty: true })
+                        } else {
+                          setValue('customCruiseDetails.shipName', null, { shouldDirty: true })
+                          setValue('customCruiseDetails.cruiseShipId', null, { shouldDirty: true })
+                        }
+                      }}
+                      placeholder="Select ship..."
+                      searchPlaceholder="Search ships..."
+                      allowCustom
+                    />
+                  ) : (
+                    <Input
+                      value={shipNameValue || ''}
+                      onChange={(e) => setValue('customCruiseDetails.shipName', e.target.value || null, { shouldDirty: true })}
+                      data-field="customCruiseDetails.shipName"
+                      placeholder="e.g., Symphony of the Seas"
+                    />
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Ship Image URL (optional)</label>
+                  <Input
+                    value={shipImageUrlValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.shipImageUrl', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.shipImageUrl"
+                    placeholder="https://..."
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Voyage Details */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Voyage Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Itinerary Name</label>
+                <Input
+                  value={itineraryNameValue || ''}
+                  onChange={(e) => setValue('customCruiseDetails.itineraryName', e.target.value || null, { shouldDirty: true })}
+                  data-field="customCruiseDetails.itineraryName"
+                  placeholder="e.g., Western Caribbean 7-Night"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Region</label>
+                  {cruiseRegionOptions ? (
+                    <Combobox
+                      options={cruiseRegionOptions.map(opt => ({ value: opt.value, label: opt.label }))}
+                      value={regionValue || null}
+                      onValueChange={(value) => {
+                        const selected = cruiseRegionOptions.find(opt => opt.label === value || opt.value === value)
+                        if (selected) {
+                          setValue('customCruiseDetails.region', selected.label, { shouldDirty: true })
+                          setValue('customCruiseDetails.cruiseRegionId', selected.value, { shouldDirty: true })
+                        } else if (value) {
+                          setValue('customCruiseDetails.region', value, { shouldDirty: true })
+                          setValue('customCruiseDetails.cruiseRegionId', null, { shouldDirty: true })
+                        } else {
+                          setValue('customCruiseDetails.region', null, { shouldDirty: true })
+                          setValue('customCruiseDetails.cruiseRegionId', null, { shouldDirty: true })
+                        }
+                      }}
+                      placeholder="Select region..."
+                      searchPlaceholder="Search regions..."
+                      allowCustom
+                    />
+                  ) : (
+                    <Input
+                      value={regionValue || ''}
+                      onChange={(e) => setValue('customCruiseDetails.region', e.target.value || null, { shouldDirty: true })}
+                      data-field="customCruiseDetails.region"
+                      placeholder="e.g., Caribbean"
+                    />
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Nights</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={nightsValue ?? ''}
+                    onChange={(e) => setValue('customCruiseDetails.nights', e.target.value ? parseInt(e.target.value) : null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.nights"
+                    placeholder="e.g., 7"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Sea Days</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={seaDaysValue ?? ''}
+                    onChange={(e) => setValue('customCruiseDetails.seaDays', e.target.value ? parseInt(e.target.value) : null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.seaDays"
+                    placeholder="e.g., 3"
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Departure & Arrival */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Departure & Arrival</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Departure */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-semibold text-gray-900">Departure</h4>
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Port</label>
+                    <Combobox
+                      options={cruisePortOptions?.map(opt => ({ value: opt.value, label: opt.label })) || []}
+                      value={departurePortValue || null}
+                      onValueChange={(value) => {
+                        const selected = cruisePortOptions?.find(opt => opt.label === value || opt.value === value)
+                        if (selected) {
+                          setValue('customCruiseDetails.departurePort', selected.label, { shouldDirty: true })
+                          setValue('customCruiseDetails.departurePortId', selected.value, { shouldDirty: true })
+                        } else if (value) {
+                          setValue('customCruiseDetails.departurePort', value, { shouldDirty: true })
+                          setValue('customCruiseDetails.departurePortId', null, { shouldDirty: true })
+                        } else {
+                          setValue('customCruiseDetails.departurePort', null, { shouldDirty: true })
+                          setValue('customCruiseDetails.departurePortId', null, { shouldDirty: true })
+                        }
+                      }}
+                      placeholder="Select or enter port..."
+                      searchPlaceholder="Search ports..."
+                      allowCustom
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Date</label>
+                    <DatePickerEnhanced
+                      value={departureDateValue || undefined}
+                      onChange={(date) => setValue('customCruiseDetails.departureDate', date ?? null, { shouldDirty: true })}
+                      placeholder="Select date"
+                      defaultMonthHint={tripMonthHint}
+                    />
+                    <TripDateWarning
+                      date={departureDateValue}
+                      tripStartDate={trip?.startDate}
+                      tripEndDate={trip?.endDate}
+                      fieldLabel="Departure date"
+                    />
+                    {/* Warning when departure date doesn't match any itinerary day */}
+                    {!isEditMode && departureDateMismatch && departureDateValue && (
+                      <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 p-2 rounded-md mt-1">
+                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <span className="font-medium">No matching day:</span>{' '}
+                          {!trip?.startDate || !trip?.endDate
+                            ? 'Set trip dates first, then generate itinerary days.'
+                            : days.length === 0
+                              ? 'Generate itinerary days first to auto-assign this cruise.'
+                              : 'This date doesn\'t match any itinerary day. Generate more days or adjust the date.'}
+                        </div>
+                      </div>
+                    )}
+                    {/* Day assignment feedback for pendingDay mode */}
+                    {pendingDay && departureDateValue && matchedDay && !departureDateMismatch && (
+                      <p className="text-sm text-tern-teal-700 flex items-center gap-1.5 mt-1">
+                        <Check className="h-4 w-4" />
+                        This cruise will be added to <strong>Day {matchedDay.dayNumber}</strong>
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Time</label>
+                    <TimePicker
+                      value={departureTimeValue || undefined}
+                      onChange={(time) => setValue('customCruiseDetails.departureTime', time ?? '', { shouldDirty: true })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Timezone</label>
+                    <Input
+                      value={departureTimezoneValue || ''}
+                      onChange={(e) => setValue('customCruiseDetails.departureTimezone', e.target.value || null, { shouldDirty: true })}
+                      data-field="customCruiseDetails.departureTimezone"
+                      placeholder="e.g., America/New_York"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Arrival */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-semibold text-gray-900">Arrival</h4>
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Port</label>
+                    <Combobox
+                      options={cruisePortOptions?.map(opt => ({ value: opt.value, label: opt.label })) || []}
+                      value={arrivalPortValue || null}
+                      onValueChange={(value) => {
+                        const selected = cruisePortOptions?.find(opt => opt.label === value || opt.value === value)
+                        if (selected) {
+                          setValue('customCruiseDetails.arrivalPort', selected.label, { shouldDirty: true })
+                          setValue('customCruiseDetails.arrivalPortId', selected.value, { shouldDirty: true })
+                        } else if (value) {
+                          setValue('customCruiseDetails.arrivalPort', value, { shouldDirty: true })
+                          setValue('customCruiseDetails.arrivalPortId', null, { shouldDirty: true })
+                        } else {
+                          setValue('customCruiseDetails.arrivalPort', null, { shouldDirty: true })
+                          setValue('customCruiseDetails.arrivalPortId', null, { shouldDirty: true })
+                        }
+                      }}
+                      placeholder="Select or enter port..."
+                      searchPlaceholder="Search ports..."
+                      allowCustom
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Date</label>
+                    <DatePickerEnhanced
+                      value={arrivalDateValue || undefined}
+                      onChange={(date) => setValue('customCruiseDetails.arrivalDate', date ?? null, { shouldDirty: true })}
+                      placeholder="Select date"
+                      defaultMonthHint={tripMonthHint}
+                    />
+                    <TripDateWarning
+                      date={arrivalDateValue}
+                      tripStartDate={trip?.startDate}
+                      tripEndDate={trip?.endDate}
+                      fieldLabel="Arrival date"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Time</label>
+                    <TimePicker
+                      value={arrivalTimeValue || undefined}
+                      onChange={(time) => setValue('customCruiseDetails.arrivalTime', time ?? '', { shouldDirty: true })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">Timezone</label>
+                    <Input
+                      value={arrivalTimezoneValue || ''}
+                      onChange={(e) => setValue('customCruiseDetails.arrivalTimezone', e.target.value || null, { shouldDirty: true })}
+                      data-field="customCruiseDetails.arrivalTimezone"
+                      placeholder="e.g., America/New_York"
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Port Schedule Generation */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Anchor className="h-5 w-5" />
+                Port Schedule
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Optionally generate port schedule entries for each day of the cruise based on the departure and arrival dates.
+              </p>
+
+              {/* Show existing port schedule count */}
+              {portSchedule && portSchedule.length > 0 && (
+                <div className="flex items-center gap-2 text-sm text-gray-600 bg-gray-50 p-3 rounded-lg">
+                  <Check className="h-4 w-4 text-green-600" />
+                  <span>{portSchedule.length} port entries already generated</span>
+                </div>
+              )}
+
+              {/* Step-by-step guidance for new cruises */}
+              {!activityId && (
+                <div className="space-y-3 p-4 bg-blue-50 rounded-lg border border-blue-100">
+                  <p className="text-sm font-medium text-blue-800">To generate port schedule:</p>
+                  <ol className="text-sm text-blue-700 list-decimal list-inside space-y-1">
+                    <li className={currentValues.customCruiseDetails?.departureDate ? 'text-blue-500 line-through' : ''}>
+                      Set departure date above
+                    </li>
+                    <li className={currentValues.customCruiseDetails?.arrivalDate ? 'text-blue-500 line-through' : ''}>
+                      Set arrival date above
+                    </li>
+                    <li>Click &quot;Save Cruise&quot; at the bottom of the form</li>
+                    <li>Return here to generate port schedule</li>
+                  </ol>
+                </div>
+              )}
+
+              {/* Generation requirements for saved cruises */}
+              {activityId && (!currentValues.customCruiseDetails?.departureDate || !currentValues.customCruiseDetails?.arrivalDate) && (
+                <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 p-3 rounded-lg">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Set both departure and arrival dates above to generate port schedule</span>
+                </div>
+              )}
+
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                disabled={
+                  !activityId ||
+                  !currentValues.customCruiseDetails?.departureDate ||
+                  !currentValues.customCruiseDetails?.arrivalDate ||
+                  generatePortSchedule.isPending
+                }
+                onClick={() => {
+                  if (activityId) {
+                    generatePortSchedule.mutate(activityId)
+                  }
+                }}
+              >
+                {generatePortSchedule.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Generating Port Schedule...
+                  </>
+                ) : portSchedule && portSchedule.length > 0 ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Regenerate Port Schedule
+                  </>
+                ) : (
+                  <>
+                    <Anchor className="h-4 w-4 mr-2" />
+                    Generate Port Schedule
+                  </>
+                )}
+              </Button>
+
+              <p className="text-xs text-gray-500">
+                This will create departure, sea day, and arrival entries linked to this cruise. Regenerating will replace existing entries.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Traveltek Identity */}
+          {currentValues.customCruiseDetails?.source === 'traveltek' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Traveltek Identity</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Traveltek Cruise ID</label>
+                  <Input
+                    value={traveltekCruiseIdValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.traveltekCruiseId', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.traveltekCruiseId"
+                    placeholder="Traveltek system ID"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Cabin Tab */}
+        <TabsContent value="cabin" className="mt-6 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Cabin Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Cabin Category</label>
+                  <Input
+                    value={cabinCategoryValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.cabinCategory', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.cabinCategory"
+                    placeholder="e.g., Suite, Balcony, Oceanview, Inside"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Cabin Code</label>
+                  <Input
+                    value={cabinCodeValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.cabinCode', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.cabinCode"
+                    placeholder="e.g., 1A"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Cabin Number</label>
+                  <Input
+                    value={cabinNumberValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.cabinNumber', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.cabinNumber"
+                    placeholder="e.g., 7234"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Cabin Deck</label>
+                  <Input
+                    value={cabinDeckValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.cabinDeck', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.cabinDeck"
+                    placeholder="e.g., Deck 7"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Cabin Image</label>
+                <div className="flex gap-2">
+                  <Input
+                    value={cabinImageUrlValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.cabinImageUrl', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.cabinImageUrl"
+                    placeholder="https://... (link to cabin photo)"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={isUploadingCabinImage}
+                    onClick={() => {
+                      const input = document.createElement('input')
+                      input.type = 'file'
+                      input.accept = 'image/jpeg,image/png,image/gif,image/webp'
+                      input.onchange = async (e) => {
+                        const file = (e.target as HTMLInputElement).files?.[0]
+                        if (file && activityId) {
+                          setIsUploadingCabinImage(true)
+                          try {
+                            const formData = new FormData()
+                            formData.append('file', file)
+                            formData.append('documentType', 'cabin_image')
+                            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1'
+                            const response = await fetch(`${apiUrl}/components/${activityId}/documents`, {
+                              method: 'POST',
+                              body: formData,
+                            })
+                            if (response.ok) {
+                              const doc = await response.json()
+                              // Fetch the document again to get the signed download URL
+                              const docResponse = await fetch(`${apiUrl}/components/${activityId}/documents/${doc.id}`)
+                              if (docResponse.ok) {
+                                const docWithUrl = await docResponse.json()
+                                setValue('customCruiseDetails.cabinImageUrl', docWithUrl.downloadUrl)
+                                toast({ title: 'Cabin image uploaded successfully' })
+                              } else {
+                                // Fallback to fileUrl if fetch fails
+                                setValue('customCruiseDetails.cabinImageUrl', doc.fileUrl)
+                                toast({ title: 'Cabin image uploaded successfully' })
+                              }
+                            } else {
+                              const errorText = await response.text()
+                              console.error('Upload failed:', response.status, errorText)
+                              // Parse error message from API response
+                              let errorMessage = 'Failed to upload image'
+                              try {
+                                const errorJson = JSON.parse(errorText)
+                                errorMessage = errorJson.message || errorMessage
+                              } catch {
+                                // Use default error message
+                              }
+                              throw new Error(errorMessage)
+                            }
+                          } catch (err) {
+                            console.error('Upload error:', err)
+                            const message = err instanceof Error ? err.message : 'Failed to upload image'
+                            toast({
+                              title: 'Upload Failed',
+                              description: message,
+                              variant: 'destructive'
+                            })
+                          } finally {
+                            setIsUploadingCabinImage(false)
+                          }
+                        } else if (!activityId) {
+                          toast({ title: 'Save cruise first', description: 'Please save the cruise details before uploading images.', variant: 'destructive' })
+                        }
+                      }
+                      input.click()
+                    }}
+                  >
+                    {isUploadingCabinImage ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <ImageIcon className="h-4 w-4 mr-1" />
+                    )}
+                    {isUploadingCabinImage ? 'Uploading...' : 'Upload'}
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500">Enter a URL or upload an image of the cabin</p>
+                {currentValues.customCruiseDetails?.cabinImageUrl && (
+                  <div className="mt-2">
+                    <img
+                      src={currentValues.customCruiseDetails.cabinImageUrl}
+                      alt="Cabin preview"
+                      className="max-w-xs max-h-32 rounded border object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none'
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Cabin Description (optional)</label>
+                <Textarea
+                  value={cabinDescriptionValue || ''}
+                  onChange={(e) => setValue('customCruiseDetails.cabinDescription', e.target.value || null, { shouldDirty: true })}
+                  data-field="customCruiseDetails.cabinDescription"
+                  placeholder="Describe the cabin features, amenities, view, etc."
+                  className="min-h-[80px]"
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Media Tab */}
+        <TabsContent value="media" className="mt-6">
+          {activityId ? (
+            <ComponentMediaTab
+              componentId={activityId}
+              entityType="cruise"
+              itineraryId={itineraryId}
+              title="Cruise Photos"
+              description="Ship photos, cabin images, and cruise experience"
+            />
+          ) : (
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center py-12 text-muted-foreground">
+                  <ImageIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Save the cruise first to upload media.</p>
+                  <p className="text-sm mt-1">Media will be available after the cruise is created.</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Documents Tab */}
+        <TabsContent value="documents" className="mt-6">
+          {activityId ? (
+            <div className="space-y-6">
+              <DocumentUploader componentId={activityId} />
+              <div className="rounded-lg bg-blue-50 p-4">
+                <p className="text-sm font-medium text-blue-900 mb-2">Common Cruise Documents</p>
+                <ul className="text-sm text-blue-700 space-y-1">
+                  <li>Booking confirmations & e-tickets</li>
+                  <li>Cruise insurance documents</li>
+                  <li>Luggage tags & deck plans</li>
+                  <li>Shore excursion vouchers</li>
+                  <li>Travel visas & passport copies</li>
+                </ul>
+                <p className="text-xs text-blue-600 mt-3">
+                  Supported: PDF, images, Word, Excel (max 10MB)
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-12 text-muted-foreground">
+              <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>Save the cruise first to upload documents.</p>
+              <p className="text-sm mt-1">Documents will be available after the cruise is created.</p>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Booking & Pricing Tab */}
+        <TabsContent value="pricing" className="mt-6 space-y-6">
+          {/* Cruise-specific booking info */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Cruise Booking Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Booking Number</label>
+                  <Input
+                    value={bookingNumberValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.bookingNumber', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.bookingNumber"
+                    placeholder="Cruise booking reference"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Fare Code</label>
+                  <Input
+                    value={fareCodeValue || ''}
+                    onChange={(e) => setValue('customCruiseDetails.fareCode', e.target.value || null, { shouldDirty: true })}
+                    data-field="customCruiseDetails.fareCode"
+                    placeholder="e.g., PROMO2024"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Booking Deadline</label>
+                  <DatePickerEnhanced
+                    value={bookingDeadlineValue || undefined}
+                    onChange={(date) => setValue('customCruiseDetails.bookingDeadline', date ?? null, { shouldDirty: true })}
+                    placeholder="Select deadline"
+                    defaultMonthHint={tripMonthHint}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Separator />
+
+          {/* Pricing Section */}
+          <PricingSection
+            pricingData={pricingData}
+            onUpdate={handlePricingUpdate}
+            errors={{}}
+            packageId={selectedPackageId}
+            packages={availablePackages}
+            tripId={trip?.id}
+            onPackageChange={setSelectedPackageId}
+            isChildOfPackage={isChildOfPackage}
+            parentPackageName={parentPackageName}
+          />
+
+          <Separator />
+
+          {/* Payment Schedule */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold">Credit Card Authorization & Payment</h3>
+            <PaymentScheduleSection
+              activityPricingId={activityPricingId}
+              totalPriceCents={pricingData.totalPriceCents}
+              currency={pricingData.currency}
+            />
+          </div>
+
+          <Separator />
+
+          {/* Booking Details */}
+          <BookingDetailsSection
+            pricingData={pricingData}
+            onUpdate={handlePricingUpdate}
+          />
+
+          <Separator />
+
+          {/* Commission Section */}
+          <CommissionSection
+            pricingData={pricingData}
+            onUpdate={handlePricingUpdate}
+            errors={{}}
+            isChildOfPackage={isChildOfPackage}
+            parentPackageName={parentPackageName}
+          />
+
+          <Separator />
+
+          {/* Booking Status Section */}
+          {isChildOfPackage && parentPackageId ? (
+            <ChildOfPackageBookingSection
+              parentPackageId={parentPackageId}
+              parentPackageName={parentPackageName}
+              tripId={trip?.id || ''}
+              activityIsBooked={activityIsBooked}
+              activityBookingDate={activityBookingDate}
+            />
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <CalendarCheck className="h-5 w-5" />
+                  Booking Status
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Current Status</p>
+                    <div className="mt-1">
+                      <BookingStatusBadge
+                        isBooked={activityIsBooked}
+                        bookingDate={activityBookingDate}
+                      />
+                    </div>
+                  </div>
+                  {activityId && !activityIsBooked && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowBookingModal(true)}
+                      className="flex items-center gap-2"
+                    >
+                      <CalendarCheck className="h-4 w-4" />
+                      Mark As Booked
+                    </Button>
+                  )}
+                </div>
+                {!activityId && (
+                  <p className="text-sm text-gray-500">
+                    Save the cruise first to mark it as booked.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {/* Save Button */}
+      <div className="flex justify-end gap-3 pt-6">
+        {onCancel && (
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
+        <Button onClick={handleFormSubmit} className="bg-cyan-600 hover:bg-cyan-700">
+          Save Cruise
+        </Button>
+        {/* Show "Save & Generate Ports" option when dates are set and cruise hasn't been saved */}
+        {!activityId &&
+          currentValues.customCruiseDetails?.departureDate &&
+          currentValues.customCruiseDetails?.arrivalDate && (
+            <Button
+              onClick={handleSaveAndGeneratePorts}
+              className="bg-teal-600 hover:bg-teal-700"
+              disabled={generatePortSchedule.isPending}
+            >
+              <Anchor className="h-4 w-4 mr-2" />
+              Save & Generate Ports
+            </Button>
+          )}
+      </div>
+
+      {/* Travelers Dialog */}
+      {trip && (
+        <EditTravelersDialog
+          open={showTravelersDialog}
+          onOpenChange={setShowTravelersDialog}
+          trip={trip}
+        />
+      )}
+
+      {/* Mark As Booked Modal */}
+      <MarkActivityBookedModal
+        open={showBookingModal}
+        onOpenChange={setShowBookingModal}
+        activityName={currentValues.name || 'Cruise'}
+        isBooked={activityIsBooked}
+        currentBookingDate={activityBookingDate}
+        onConfirm={handleMarkAsBooked}
+        isPending={markActivityBooked.isPending}
+      />
+    </div>
+  )
+}

@@ -1,0 +1,251 @@
+/**
+ * Unit tests for CloudflareR2Provider
+ */
+
+import { CloudflareR2Provider } from '../cloudflare-r2.provider'
+import { ApiProvider, CloudflareR2Credentials } from '@tailfire/shared-types'
+import { createMockS3Client, setupMockS3Client } from './s3-client.mock'
+import {
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  ListObjectsV2Command,
+  S3Client
+} from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+
+// Mock AWS SDK
+jest.mock('@aws-sdk/client-s3', () => {
+  const actual = jest.requireActual('@aws-sdk/client-s3')
+  return {
+    ...actual,
+    S3Client: jest.fn(),
+  }
+})
+jest.mock('@aws-sdk/s3-request-presigner', () => ({
+  getSignedUrl: jest.fn(),
+}))
+
+describe('CloudflareR2Provider', () => {
+  let provider: CloudflareR2Provider
+  let mockClient: any
+  const mockCredentials: CloudflareR2Credentials = {
+    accountId: 'test-account-id',
+    accessKeyId: 'test-access-key-id',
+    secretAccessKey: 'test-secret-access-key',
+    bucketName: 'test-bucket',
+  }
+
+  beforeEach(() => {
+    mockClient = createMockS3Client()
+    ;(S3Client as jest.Mock).mockImplementation(() => mockClient)
+    provider = new CloudflareR2Provider(mockCredentials, mockCredentials.bucketName)
+  })
+
+  afterEach(() => {
+    jest.clearAllMocks()
+  })
+
+  describe('initialization', () => {
+    it('should initialize with correct provider type', () => {
+      expect(provider.provider).toBe(ApiProvider.CLOUDFLARE_R2)
+    })
+  })
+
+  describe('upload', () => {
+    const testFile = Buffer.from('test file content')
+    const testPath = 'uploads/test-file.jpg'
+
+    beforeEach(() => {
+      setupMockS3Client(mockClient, { putObject: 'success' })
+    })
+
+    it('should upload file successfully', async () => {
+      const result = await provider.upload(testFile, testPath)
+
+      expect(mockClient.send).toHaveBeenCalledWith(
+        expect.any(PutObjectCommand)
+      )
+      expect(result).toBe(testPath)
+    })
+
+    it('should upload with custom content type', async () => {
+      const options = {
+        contentType: 'image/jpeg',
+      }
+
+      await provider.upload(testFile, testPath, options)
+
+      const callArg = mockClient.send.mock.calls[0][0]
+      expect(callArg).toBeInstanceOf(PutObjectCommand)
+      expect(callArg.input.ContentType).toBe('image/jpeg')
+    })
+
+    it('should upload with cache control', async () => {
+      const options = {
+        cacheControl: 'public, max-age=3600',
+      }
+
+      await provider.upload(testFile, testPath, options)
+
+      const callArg = mockClient.send.mock.calls[0][0]
+      expect(callArg.input.CacheControl).toBe('public, max-age=3600')
+    })
+
+    it('should throw error when upload fails', async () => {
+      setupMockS3Client(mockClient, { putObject: 'error' })
+
+      await expect(provider.upload(testFile, testPath)).rejects.toThrow()
+    })
+
+    it('should throw error when access denied', async () => {
+      setupMockS3Client(mockClient, { putObject: 'accessDenied' })
+
+      await expect(provider.upload(testFile, testPath)).rejects.toThrow()
+    })
+  })
+
+  describe('download', () => {
+    const testPath = 'uploads/test-file.jpg'
+
+    beforeEach(() => {
+      setupMockS3Client(mockClient, { getObject: 'success' })
+    })
+
+    it('should download file successfully', async () => {
+      const result = await provider.download(testPath)
+
+      expect(mockClient.send).toHaveBeenCalledWith(
+        expect.any(GetObjectCommand)
+      )
+      expect(result).toBeInstanceOf(Buffer)
+    })
+
+    it('should throw error when file not found', async () => {
+      setupMockS3Client(mockClient, { getObject: 'notFound' })
+
+      await expect(provider.download(testPath)).rejects.toThrow()
+    })
+
+    it('should throw error on network error', async () => {
+      setupMockS3Client(mockClient, { getObject: 'error' })
+
+      await expect(provider.download(testPath)).rejects.toThrow()
+    })
+  })
+
+  describe('delete', () => {
+    const testPath = 'uploads/test-file.jpg'
+
+    beforeEach(() => {
+      setupMockS3Client(mockClient, { deleteObject: 'success' })
+    })
+
+    it('should delete file successfully', async () => {
+      await provider.delete(testPath)
+
+      expect(mockClient.send).toHaveBeenCalledWith(
+        expect.any(DeleteObjectCommand)
+      )
+    })
+
+    it('should handle deletion of non-existent file', async () => {
+      setupMockS3Client(mockClient, { deleteObject: 'notFound' })
+
+      // S3 delete is idempotent, so this should not throw
+      await expect(provider.delete(testPath)).rejects.toThrow()
+    })
+
+    it('should throw error on network error', async () => {
+      setupMockS3Client(mockClient, { deleteObject: 'error' })
+
+      await expect(provider.delete(testPath)).rejects.toThrow()
+    })
+  })
+
+  describe('getSignedUrl', () => {
+    const testPath = 'uploads/test-file.jpg'
+    const mockSignedUrl = 'https://test-bucket.r2.cloudflarestorage.com/uploads/test-file.jpg?signature=abc123'
+
+    beforeEach(() => {
+      ;(getSignedUrl as jest.Mock).mockResolvedValue(mockSignedUrl)
+    })
+
+    it('should get signed URL with default expiry', async () => {
+      const result = await provider.getSignedUrl(testPath)
+
+      expect(getSignedUrl).toHaveBeenCalledWith(
+        mockClient,
+        expect.any(GetObjectCommand),
+        expect.objectContaining({
+          expiresIn: 3600,
+        })
+      )
+      expect(result).toBe(mockSignedUrl)
+    })
+
+    it('should get signed URL with custom expiry', async () => {
+      const expiresIn = 7200
+
+      await provider.getSignedUrl(testPath, expiresIn)
+
+      expect(getSignedUrl).toHaveBeenCalledWith(
+        mockClient,
+        expect.any(GetObjectCommand),
+        expect.objectContaining({
+          expiresIn: 7200,
+        })
+      )
+    })
+
+    it('should throw error when signing fails', async () => {
+      ;(getSignedUrl as jest.Mock).mockRejectedValue(new Error('Signing failed'))
+
+      await expect(provider.getSignedUrl(testPath)).rejects.toThrow(
+        'R2 signed URL creation failed:'
+      )
+    })
+  })
+
+  describe('testConnection', () => {
+    it('should return success when connection works', async () => {
+      setupMockS3Client(mockClient, { listObjectsV2: 'success', putObject: 'success', deleteObject: 'success' })
+
+      const result = await provider.testConnection()
+
+      expect(result.success).toBe(true)
+      expect(result.message).toContain('Successfully connected')
+      expect(mockClient.send).toHaveBeenCalledWith(
+        expect.any(ListObjectsV2Command)
+      )
+    })
+
+    it('should return failure when bucket not found', async () => {
+      setupMockS3Client(mockClient, { listObjectsV2: 'notFound' })
+
+      const result = await provider.testConnection()
+
+      expect(result.success).toBe(false)
+      expect(result.message).toContain('R2 connection test failed')
+      expect(result.error).toBeDefined()
+    })
+
+    it('should return failure when access denied', async () => {
+      setupMockS3Client(mockClient, { listObjectsV2: 'accessDenied' })
+
+      const result = await provider.testConnection()
+
+      expect(result.success).toBe(false)
+      expect(result.message).toContain('R2 connection test failed')
+    })
+
+    it('should return failure on network error', async () => {
+      setupMockS3Client(mockClient, { listObjectsV2: 'error' })
+
+      const result = await provider.testConnection()
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBeDefined()
+    })
+  })
+})

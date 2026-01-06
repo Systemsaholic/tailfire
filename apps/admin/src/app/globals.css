@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Tern Design System - Light Mode */
+    --background: 0 0% 98%;
+    --foreground: 217 33% 7%;
+    --card: 0 0% 100%;
+    --card-foreground: 217 33% 7%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 217 33% 7%;
+
+    /* Phoenix Primary: Phoenix Gold #C59746 */
+    --primary: 39 48% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Tern Secondary: Light Gray */
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 217 33% 17%;
+
+    /* Tern Muted: Very Light Gray */
+    --muted: 220 13% 97%;
+    --muted-foreground: 217 10% 43%;
+
+    /* Phoenix Accent: Phoenix Gold */
+    --accent: 39 48% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Phoenix Destructive: Ember Red #B33939 */
+    --destructive: 0 51% 47%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Tern Borders: Light Gray #E5E7EB */
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 39 48% 60%;
+
+    /* Tern Border Radius: Subtle, minimal */
+    --radius: 0.375rem;
+
+    /* Additional Tern Colors */
+    --tern-gray-50: 220 14% 98%;
+    --tern-gray-100: 220 13% 97%;
+    --tern-gray-200: 220 13% 91%;
+    --tern-gray-300: 216 12% 84%;
+    --tern-gray-400: 218 11% 65%;
+    --tern-gray-500: 217 10% 43%;
+    --tern-gray-600: 217 17% 35%;
+    --tern-gray-700: 217 33% 17%;
+    --tern-gray-800: 217 33% 12%;
+    --tern-gray-900: 217 33% 7%;
+
+    /* Phoenix Gold Palette - Base: #C59746 */
+    --phoenix-gold-50: 39 65% 95%;
+    --phoenix-gold-100: 39 60% 88%;
+    --phoenix-gold-200: 39 55% 78%;
+    --phoenix-gold-300: 39 52% 68%;
+    --phoenix-gold-400: 39 50% 64%;
+    --phoenix-gold-500: 39 48% 60%;
+    --phoenix-gold-600: 39 48% 52%;
+    --phoenix-gold-700: 39 48% 44%;
+    --phoenix-gold-800: 39 45% 32%;
+    --phoenix-gold-900: 39 42% 22%;
+
+    /* Ember Red Palette - Base: #B33939 */
+    --ember-red-50: 0 70% 95%;
+    --ember-red-100: 0 65% 88%;
+    --ember-red-200: 0 60% 78%;
+    --ember-red-300: 0 55% 65%;
+    --ember-red-400: 0 53% 56%;
+    --ember-red-500: 0 51% 47%;
+    --ember-red-600: 0 51% 42%;
+    --ember-red-700: 0 51% 35%;
+    --ember-red-800: 0 48% 28%;
+    --ember-red-900: 0 45% 20%;
+
+    /* Ember Orange Palette - Base: #B1481A */
+    --ember-orange-50: 16 85% 95%;
+    --ember-orange-100: 16 82% 88%;
+    --ember-orange-200: 16 80% 75%;
+    --ember-orange-300: 16 79% 60%;
+    --ember-orange-400: 16 78% 50%;
+    --ember-orange-500: 16 78% 40%;
+    --ember-orange-600: 16 78% 35%;
+    --ember-orange-700: 16 78% 28%;
+    --ember-orange-800: 16 75% 22%;
+    --ember-orange-900: 16 72% 16%;
+
+    /* Golden Hour Orange Palette - Base: #E89E4A */
+    --golden-orange-50: 33 85% 95%;
+    --golden-orange-100: 33 82% 88%;
+    --golden-orange-200: 33 80% 78%;
+    --golden-orange-300: 33 79% 68%;
+    --golden-orange-400: 33 78% 63%;
+    --golden-orange-500: 33 78% 58%;
+    --golden-orange-600: 33 70% 52%;
+    --golden-orange-700: 33 65% 45%;
+    --golden-orange-800: 33 60% 35%;
+    --golden-orange-900: 33 55% 25%;
+
+    /* Backward compatibility: tern-teal now aliases to phoenix-gold */
+    --tern-teal-50: var(--phoenix-gold-50);
+    --tern-teal-100: var(--phoenix-gold-100);
+    --tern-teal-200: var(--phoenix-gold-200);
+    --tern-teal-300: var(--phoenix-gold-300);
+    --tern-teal-400: var(--phoenix-gold-400);
+    --tern-teal-500: var(--phoenix-gold-500);
+    --tern-teal-600: var(--phoenix-gold-600);
+    --tern-teal-700: var(--phoenix-gold-700);
+    --tern-teal-800: var(--phoenix-gold-800);
+    --tern-teal-900: var(--phoenix-gold-900);
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

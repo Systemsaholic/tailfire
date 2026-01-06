@@ -1,0 +1,502 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Image from 'next/image'
+import { MoreVertical, MapPin, Clock, Calendar, Pencil, Copy, Trash2 } from 'lucide-react'
+import type { TripResponseDto, ItineraryResponseDto } from '@tailfire/shared-types/api'
+import { useItineraryDaysWithActivities } from '@/hooks/use-itinerary-days'
+import { useDeleteActivity, useDuplicateActivity } from '@/hooks/use-activities'
+import { useToast } from '@/hooks/use-toast'
+import { TernBadge } from '@/components/tern/core'
+import { Button } from '@/components/ui/button'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useDroppable } from '@dnd-kit/core'
+import { cn } from '@/lib/utils'
+import {
+  ITINERARY_CARD_STYLES,
+  DROP_ZONE_BASE,
+  DROP_ZONE_ACTIVE,
+  FOCUS_VISIBLE_RING,
+  SKELETON_BG,
+} from '@/lib/itinerary-styles'
+import { getActivityTypeMetadata, filterItineraryActivities } from '@/lib/activity-constants'
+import { ActivityIconBadge } from '@/components/ui/activity-icon-badge'
+import { parseISODate } from '@/lib/date-utils'
+import { formatCurrency } from '@/lib/pricing/currency-helpers'
+import { useActivityNavigation } from '@/hooks/use-activity-navigation'
+
+interface ItineraryTableViewProps {
+  trip: TripResponseDto
+  itinerary: ItineraryResponseDto
+}
+
+// Status badge variants
+const statusVariants: Record<string, 'inbound' | 'planning' | 'secondary' | 'default'> = {
+  confirmed: 'inbound',
+  pending: 'planning',
+  cancelled: 'secondary',
+  draft: 'default',
+}
+
+/**
+ * Format time from ISO datetime string
+ */
+function formatTime(datetime: string | null): string {
+  if (!datetime) return '-'
+  try {
+    const date = new Date(datetime)
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    })
+  } catch {
+    return '-'
+  }
+}
+
+/**
+ * Format date from ISO datetime string (use parseISODate for TZ-safe parsing)
+ */
+function formatDate(datetime: string | null): string {
+  if (!datetime) return ''
+  try {
+    const date = parseISODate(datetime)
+    if (!date) return ''
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    })
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Itinerary Table View Component
+ *
+ * Displays all activities across all days in a flat table format.
+ * Columns: Day | Type | Details | Time | Location | Status | Cost | Actions
+ */
+export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps) {
+  const router = useRouter()
+  const { toast } = useToast()
+  const { storeReturnContext } = useActivityNavigation()
+  const { data: daysWithActivities, isLoading } = useItineraryDaysWithActivities(itinerary.id)
+
+  // State for delete confirmation dialog
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string
+    name: string
+    dayId: string
+  } | null>(null)
+
+  // Make table a drop target for sidebar components
+  const { setNodeRef, isOver } = useDroppable({
+    id: 'table-drop',
+    data: { type: 'table' },
+  })
+
+  // Navigate to activity edit page
+  const handleRowClick = (activityId: string, dayId: string) => {
+    storeReturnContext({
+      tripId: trip.id,
+      itineraryId: itinerary.id,
+      dayId: dayId,
+      viewMode: 'table',
+    })
+    router.push(`/trips/${trip.id}/activities/${activityId}/edit`)
+  }
+
+  // Edit action - navigate to edit page
+  const handleEdit = (activityId: string, dayId: string) => {
+    storeReturnContext({
+      tripId: trip.id,
+      itineraryId: itinerary.id,
+      dayId: dayId,
+      viewMode: 'table',
+    })
+    router.push(`/trips/${trip.id}/activities/${activityId}/edit`)
+  }
+
+  // Delete hook - dayId passed at mutation time
+  const deleteActivity = useDeleteActivity(itinerary.id)
+
+  // Handle delete confirmation
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget || !deleteTarget.dayId) return
+    try {
+      await deleteActivity.mutateAsync({ activityId: deleteTarget.id, dayId: deleteTarget.dayId })
+      toast({
+        title: 'Activity deleted',
+        description: `"${deleteTarget.name}" has been removed.`,
+      })
+      setDeleteTarget(null)
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete activity. Please try again.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Duplicate mutation hook - pass dayId directly to mutation
+  const duplicateActivity = useDuplicateActivity(itinerary.id)
+
+  // Duplicate action handler
+  const handleDuplicate = async (activityId: string, dayId: string, activityName: string) => {
+    if (!dayId) {
+      toast({
+        title: 'Error',
+        description: 'Cannot duplicate: missing day information.',
+        variant: 'destructive',
+      })
+      return
+    }
+    try {
+      await duplicateActivity.mutateAsync({ activityId, dayId })
+      toast({
+        title: 'Activity duplicated',
+        description: `"${activityName}" has been copied.`,
+      })
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to duplicate activity. Please try again.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Flatten activities with day info for table rows (filter out packages - they belong in Bookings tab)
+  const tableRows = useMemo(() => {
+    if (!daysWithActivities) return []
+
+    return daysWithActivities.flatMap((day) =>
+      filterItineraryActivities(day.activities).map((activity) => ({
+        dayId: day.id,
+        dayNumber: day.dayNumber,
+        dayDate: day.date,
+        dayTitle: day.title,
+        activity,
+      }))
+    )
+  }, [daysWithActivities])
+
+  if (isLoading) {
+    return (
+      <div className={cn(ITINERARY_CARD_STYLES, 'overflow-hidden')} role="status" aria-label="Loading activities">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-tern-gray-50">
+              <TableHead className="w-20 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Day</TableHead>
+              <TableHead className="w-24 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Type</TableHead>
+              <TableHead className="text-xs font-medium uppercase tracking-wide text-tern-gray-600">Details</TableHead>
+              <TableHead className="w-32 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Time</TableHead>
+              <TableHead className="w-40 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Location</TableHead>
+              <TableHead className="w-24 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Status</TableHead>
+              <TableHead className="w-24 text-xs font-medium uppercase tracking-wide text-tern-gray-600 text-right">Cost</TableHead>
+              <TableHead className="w-10" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {[1, 2, 3, 4, 5].map((i) => (
+              <TableRow key={i}>
+                <TableCell><Skeleton className={cn('h-4 w-8', SKELETON_BG)} /></TableCell>
+                <TableCell><Skeleton className={cn('h-6 w-16', SKELETON_BG)} /></TableCell>
+                <TableCell><Skeleton className={cn('h-4 w-48', SKELETON_BG)} /></TableCell>
+                <TableCell><Skeleton className={cn('h-4 w-20', SKELETON_BG)} /></TableCell>
+                <TableCell><Skeleton className={cn('h-4 w-32', SKELETON_BG)} /></TableCell>
+                <TableCell><Skeleton className={cn('h-5 w-16', SKELETON_BG)} /></TableCell>
+                <TableCell><Skeleton className={cn('h-4 w-12', SKELETON_BG)} /></TableCell>
+                <TableCell><Skeleton className={cn('h-6 w-6', SKELETON_BG)} /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    )
+  }
+
+  if (tableRows.length === 0) {
+    return (
+      <div
+        ref={setNodeRef}
+        aria-label="Activity table drop zone"
+        className={cn(
+          DROP_ZONE_BASE,
+          isOver && DROP_ZONE_ACTIVE
+        )}
+      >
+        <div className={cn(ITINERARY_CARD_STYLES, 'p-8 text-center')}>
+          <Calendar className="h-12 w-12 text-tern-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-tern-gray-900 mb-2">No activities yet</h3>
+          <p className="text-sm text-tern-gray-500">
+            Drag components from the sidebar to add activities to your itinerary.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      aria-label="Activity table drop zone"
+      className={cn(
+        DROP_ZONE_BASE,
+        isOver && DROP_ZONE_ACTIVE
+      )}
+    >
+      <div className={cn(ITINERARY_CARD_STYLES, 'overflow-hidden')}>
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-tern-gray-50">
+            <TableHead className="w-20 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Day</TableHead>
+            <TableHead className="w-24 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Type</TableHead>
+            <TableHead className="text-xs font-medium uppercase tracking-wide text-tern-gray-600">Details</TableHead>
+            <TableHead className="w-32 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Time</TableHead>
+            <TableHead className="w-40 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Location</TableHead>
+            <TableHead className="w-24 text-xs font-medium uppercase tracking-wide text-tern-gray-600">Status</TableHead>
+            <TableHead className="w-24 text-xs font-medium uppercase tracking-wide text-tern-gray-600 text-right">Cost</TableHead>
+            <TableHead className="w-10" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {tableRows.map((row, index) => {
+            const metadata = getActivityTypeMetadata(row.activity.activityType)
+            const statusVariant = statusVariants[row.activity.status] || 'default'
+
+            // Show day info only for first activity of each day
+            const showDayInfo =
+              index === 0 || tableRows[index - 1]?.dayId !== row.dayId
+
+            return (
+              <TableRow
+                key={`${row.dayId}-${row.activity.id}`}
+                tabIndex={0}
+                aria-label={`${row.activity.name} on Day ${row.dayNumber}`}
+                className={cn(
+                  'hover:bg-tern-gray-50 cursor-pointer transition-colors',
+                  FOCUS_VISIBLE_RING,
+                  showDayInfo && index > 0 && 'border-t-2 border-tern-gray-200'
+                )}
+                onClick={() => handleRowClick(row.activity.id, row.dayId)}
+                onKeyDown={(e) => e.key === 'Enter' && handleRowClick(row.activity.id, row.dayId)}
+              >
+                {/* Day Column */}
+                <TableCell className="py-2">
+                  {showDayInfo ? (
+                    <div className="flex flex-col">
+                      <span className="font-medium text-xs text-tern-gray-900">Day {row.dayNumber}</span>
+                      {row.dayDate && (
+                        <span className="text-xs text-tern-gray-500">
+                          {formatDate(row.dayDate)}
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
+                </TableCell>
+
+                {/* Type Column */}
+                <TableCell className="py-2">
+                  <div className="inline-flex items-center gap-2 text-xs font-medium text-tern-gray-900">
+                    <ActivityIconBadge type={row.activity.activityType} size="xs" />
+                    <span className="capitalize">{metadata.label}</span>
+                  </div>
+                </TableCell>
+
+                {/* Details Column */}
+                <TableCell className="py-2">
+                  <div className="flex items-center gap-2">
+                    {/* Thumbnail or Icon */}
+                    {row.activity.thumbnail ? (
+                      <div className="relative w-8 h-8 rounded-md overflow-hidden flex-shrink-0">
+                        <Image
+                          src={row.activity.thumbnail}
+                          alt={row.activity.name}
+                          fill
+                          className="object-cover"
+                          sizes="32px"
+                        />
+                      </div>
+                    ) : (
+                      <ActivityIconBadge type={row.activity.activityType} size="sm" />
+                    )}
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="font-medium text-sm text-tern-gray-900 truncate max-w-[250px]" title={row.activity.name}>
+                        {row.activity.name}
+                      </span>
+                      {row.activity.confirmationNumber && (
+                        <span className="text-xs text-tern-gray-500">
+                          Conf: {row.activity.confirmationNumber}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </TableCell>
+
+                {/* Time Column */}
+                <TableCell className="py-2">
+                  {row.activity.startDatetime ? (
+                    <div className="flex items-center gap-1 text-xs text-tern-gray-700">
+                      <Clock className="h-3 w-3 text-tern-gray-400" />
+                      <span>
+                        {formatTime(row.activity.startDatetime)}
+                        {row.activity.endDatetime && (
+                          <> - {formatTime(row.activity.endDatetime)}</>
+                        )}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-tern-gray-400">-</span>
+                  )}
+                </TableCell>
+
+                {/* Location Column */}
+                <TableCell className="py-2">
+                  {row.activity.location ? (
+                    <div className="flex items-center gap-1 text-xs text-tern-gray-700">
+                      <MapPin className="h-3 w-3 text-tern-gray-400 flex-shrink-0" />
+                      <span className="truncate max-w-[120px]" title={row.activity.location}>
+                        {row.activity.location}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-tern-gray-400">-</span>
+                  )}
+                </TableCell>
+
+                {/* Status Column */}
+                <TableCell className="py-2">
+                  <TernBadge variant={statusVariant}>
+                    <span className="capitalize text-xs">
+                      {row.activity.status}
+                    </span>
+                  </TernBadge>
+                </TableCell>
+
+                {/* Cost Column */}
+                <TableCell className="py-2 text-right">
+                  <span className="text-xs font-medium text-tern-gray-900">
+                    {row.activity.pricing?.totalPriceCents != null
+                      ? formatCurrency(row.activity.pricing.totalPriceCents, row.activity.pricing.currency || row.activity.currency)
+                      : '-'}
+                  </span>
+                </TableCell>
+
+                {/* Actions Column */}
+                <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cn('h-8 w-8 p-0 hover:bg-tern-gray-100', FOCUS_VISIBLE_RING)}
+                        aria-label={`Actions for ${row.activity.name}`}
+                      >
+                        <MoreVertical className="h-4 w-4 text-tern-gray-500" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => handleEdit(row.activity.id, row.dayId)}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => handleDuplicate(row.activity.id, row.dayId, row.activity.name)}
+                        disabled={duplicateActivity.isPending}
+                      >
+                        <Copy className="mr-2 h-4 w-4" />
+                        {duplicateActivity.isPending ? 'Duplicating...' : 'Duplicate'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() =>
+                          setDeleteTarget({
+                            id: row.activity.id,
+                            name: row.activity.name,
+                            dayId: row.dayId,
+                          })
+                        }
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
+              </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
+
+        {/* Summary Footer */}
+        <div className="border-t border-tern-gray-200 bg-tern-gray-50 px-4 py-2 flex items-center justify-between text-xs">
+          <span className="text-tern-gray-500">
+            {tableRows.length} activities across {daysWithActivities?.length || 0} days
+          </span>
+          <span className="font-medium text-tern-gray-900">
+            Total:{' '}
+            {formatCurrency(
+              tableRows.reduce((sum, row) => {
+                const costCents = row.activity.pricing?.totalPriceCents ?? 0
+                return sum + costCents
+              }, 0)
+            )}
+          </span>
+        </div>
+      </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Activity</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteActivity.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={deleteActivity.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteActivity.isPending ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}

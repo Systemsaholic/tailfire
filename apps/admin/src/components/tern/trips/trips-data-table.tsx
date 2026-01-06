@@ -1,0 +1,194 @@
+'use client'
+
+import Link from 'next/link'
+import { Calendar, MoreVertical, Trash2, Archive, XCircle, User } from 'lucide-react'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { TripStatusBadge } from '@/components/tern/shared'
+import { formatDate, cn } from '@/lib/utils'
+import { canDeleteTrip, type TripStatus } from '@/lib/trip-status-constants'
+import type { TripResponseDto } from '@tailfire/shared-types/api'
+
+interface TripsDataTableProps {
+  trips: TripResponseDto[]
+  selectedIds: Set<string>
+  onSelectionChange: (ids: Set<string>) => void
+  onDelete?: (id: string) => void
+  onArchive?: (id: string) => void
+}
+
+const TRIP_TYPE_LABELS: Record<string, string> = {
+  leisure: 'Leisure',
+  business: 'Business',
+  group: 'Group',
+  honeymoon: 'Honeymoon',
+  corporate: 'Corporate',
+  custom: 'Custom',
+}
+
+export function TripsDataTable({
+  trips,
+  selectedIds,
+  onSelectionChange,
+  onDelete,
+  onArchive,
+}: TripsDataTableProps) {
+  const allSelected = trips.length > 0 && selectedIds.size === trips.length
+  const someSelected = selectedIds.size > 0 && selectedIds.size < trips.length
+
+  const handleSelectAll = () => {
+    if (allSelected) {
+      onSelectionChange(new Set())
+    } else {
+      onSelectionChange(new Set(trips.map((t) => t.id)))
+    }
+  }
+
+  const handleSelectRow = (id: string) => {
+    const newSelection = new Set(selectedIds)
+    if (newSelection.has(id)) {
+      newSelection.delete(id)
+    } else {
+      newSelection.add(id)
+    }
+    onSelectionChange(newSelection)
+  }
+
+  return (
+    <div className="rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[40px]">
+              <Checkbox
+                checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                onCheckedChange={handleSelectAll}
+                aria-label="Select all"
+              />
+            </TableHead>
+            <TableHead>Name</TableHead>
+            <TableHead>Agent</TableHead>
+            <TableHead>Reference</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Type</TableHead>
+            <TableHead>Dates</TableHead>
+            <TableHead className="w-[60px]"></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {trips.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                No trips found
+              </TableCell>
+            </TableRow>
+          ) : (
+            trips.map((trip) => (
+              <TableRow
+                key={trip.id}
+                className={cn(selectedIds.has(trip.id) && 'bg-muted/50')}
+              >
+                <TableCell>
+                  <Checkbox
+                    checked={selectedIds.has(trip.id)}
+                    onCheckedChange={() => handleSelectRow(trip.id)}
+                    aria-label={`Select ${trip.name}`}
+                  />
+                </TableCell>
+                <TableCell>
+                  <Link
+                    href={`/trips/${trip.id}`}
+                    className="font-medium hover:text-tern-teal-600 transition-colors"
+                  >
+                    {trip.name}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  {trip.owner ? (
+                    <span className="text-sm">{trip.owner.name}</span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                      <User className="h-3.5 w-3.5" />
+                      Unassigned
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {trip.referenceNumber || '-'}
+                </TableCell>
+                <TableCell>
+                  <TripStatusBadge status={trip.status as TripStatus} />
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {trip.tripType ? TRIP_TYPE_LABELS[trip.tripType] || trip.tripType : '-'}
+                </TableCell>
+                <TableCell>
+                  {trip.startDate || trip.endDate ? (
+                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                      <Calendar className="h-3.5 w-3.5" />
+                      <span>
+                        {trip.startDate && formatDate(trip.startDate)}
+                        {trip.startDate && trip.endDate && ' - '}
+                        {trip.endDate && trip.startDate !== trip.endDate && formatDate(trip.endDate)}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <MoreVertical className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {onArchive && (
+                        <DropdownMenuItem onClick={() => onArchive(trip.id)}>
+                          <Archive className="mr-2 h-4 w-4" />
+                          {trip.isArchived ? 'Unarchive' : 'Archive'}
+                        </DropdownMenuItem>
+                      )}
+                      {canDeleteTrip(trip.status as TripStatus) ? (
+                        <DropdownMenuItem
+                          onClick={() => onDelete?.(trip.id)}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem
+                          disabled
+                          className="text-muted-foreground"
+                        >
+                          <XCircle className="mr-2 h-4 w-4" />
+                          Cancel (coming soon)
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}

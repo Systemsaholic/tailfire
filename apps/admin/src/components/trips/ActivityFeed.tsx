@@ -1,0 +1,275 @@
+/**
+ * ActivityFeed Component
+ *
+ * Reusable timeline component for displaying trip activity logs in chronological order.
+ * Supports pagination and displays activity with appropriate icons and metadata.
+ */
+
+import { useState } from 'react'
+import {
+  Plus,
+  Edit,
+  Trash2,
+  User,
+  UserPlus,
+  UserMinus,
+  Calendar,
+  XCircle,
+  Eye,
+  EyeOff,
+  MapPin,
+  Package,
+  DollarSign,
+  FileText,
+  Image as ImageIcon,
+  HelpCircle,
+} from 'lucide-react'
+import { formatDistanceToNow } from 'date-fns'
+import { useTripActivity, type ActivityLog } from '@/hooks/use-trip-activity'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+
+interface ActivityFeedProps {
+  tripId: string
+  limit?: number
+  showLoadMore?: boolean
+}
+
+/**
+ * Get icon component for activity based on entity type and action
+ */
+function getActivityIcon(log: ActivityLog) {
+  const iconClass = 'h-4 w-4'
+
+  // Trip activity
+  if (log.entityType === 'trip') {
+    if (log.action === 'created') return <Plus className={iconClass} />
+    if (log.action === 'updated') return <Edit className={iconClass} />
+    if (log.action === 'deleted') return <Trash2 className={iconClass} />
+    if (log.action === 'published') return <Eye className={iconClass} />
+    if (log.action === 'unpublished') return <EyeOff className={iconClass} />
+  }
+
+  // Traveler activity
+  if (log.entityType === 'trip_traveler') {
+    if (log.action === 'created') return <UserPlus className={iconClass} />
+    if (log.action === 'updated') return <User className={iconClass} />
+    if (log.action === 'deleted') return <UserMinus className={iconClass} />
+  }
+
+  // Itinerary activity
+  if (log.entityType === 'itinerary') {
+    if (log.action === 'created') return <Calendar className={iconClass} />
+    if (log.action === 'updated') return <Calendar className={iconClass} />
+    if (log.action === 'deleted') return <Calendar className={iconClass} />
+  }
+
+  // Trip Activity (tours, hotels, flights, etc.)
+  if (log.entityType === 'activity') {
+    return <MapPin className={iconClass} />
+  }
+
+  // Booking/Package activity
+  if (log.entityType === 'booking') {
+    return <Package className={iconClass} />
+  }
+
+  // Installment activity
+  if (log.entityType === 'installment') {
+    return <DollarSign className={iconClass} />
+  }
+
+  // Document activity (both activity and booking documents)
+  if (log.entityType === 'activity_document' || log.entityType === 'booking_document') {
+    return <FileText className={iconClass} />
+  }
+
+  // Media activity (activity media and trip media)
+  if (log.entityType === 'activity_media' || log.entityType === 'trip_media') {
+    return <ImageIcon className={iconClass} />
+  }
+
+  // Default fallback
+  if (log.action === 'created') return <Plus className={iconClass} />
+  if (log.action === 'updated') return <Edit className={iconClass} />
+  if (log.action === 'deleted') return <Trash2 className={iconClass} />
+  return <HelpCircle className={iconClass} />
+}
+
+/**
+ * Get background color for activity icon
+ */
+function getIconBgColor(log: ActivityLog): string {
+  // Entity-specific colors for certain types
+  if (log.entityType === 'booking') {
+    if (log.action === 'created') return 'bg-amber-100 text-amber-600'
+    if (log.action === 'deleted') return 'bg-red-100 text-red-600'
+    return 'bg-amber-100 text-amber-600'
+  }
+
+  if (log.entityType === 'installment') {
+    if (log.action === 'created') return 'bg-emerald-100 text-emerald-600'
+    if (log.action === 'deleted') return 'bg-red-100 text-red-600'
+    return 'bg-emerald-100 text-emerald-600'
+  }
+
+  if (log.entityType === 'activity_document' || log.entityType === 'booking_document') {
+    if (log.action === 'created') return 'bg-cyan-100 text-cyan-600'
+    if (log.action === 'deleted') return 'bg-red-100 text-red-600'
+    return 'bg-cyan-100 text-cyan-600'
+  }
+
+  if (log.entityType === 'activity_media' || log.entityType === 'trip_media') {
+    if (log.action === 'created') return 'bg-violet-100 text-violet-600'
+    if (log.action === 'deleted') return 'bg-red-100 text-red-600'
+    return 'bg-violet-100 text-violet-600'
+  }
+
+  // Default action-based colors
+  if (log.action === 'created') return 'bg-green-100 text-green-600'
+  if (log.action === 'deleted') return 'bg-red-100 text-red-600'
+  if (log.action === 'updated') return 'bg-blue-100 text-blue-600'
+  if (log.action === 'published') return 'bg-purple-100 text-purple-600'
+  if (log.action === 'unpublished') return 'bg-gray-100 text-gray-600'
+  return 'bg-gray-100 text-gray-600'
+}
+
+/**
+ * Format relative time for activity
+ */
+function formatActivityTime(dateString: string): string {
+  try {
+    const date = new Date(dateString)
+    return formatDistanceToNow(date, { addSuffix: true })
+  } catch {
+    return 'Unknown time'
+  }
+}
+
+/**
+ * Single activity log item
+ */
+function ActivityItem({ log }: { log: ActivityLog }) {
+  const iconBgColor = getIconBgColor(log)
+  const icon = getActivityIcon(log)
+  const timeAgo = formatActivityTime(log.createdAt)
+
+  return (
+    <div className="flex gap-3 py-3">
+      {/* Icon */}
+      <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${iconBgColor}`}>
+        {icon}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-tern-gray-900">{log.description}</p>
+        <p className="text-xs text-tern-gray-500 mt-1">{timeAgo}</p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Loading skeleton for activity feed
+ */
+function ActivityFeedSkeleton() {
+  return (
+    <div className="space-y-3">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="flex gap-3 py-3">
+          <Skeleton className="h-8 w-8 rounded-full flex-shrink-0" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/4" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * ActivityFeed Component
+ *
+ * Main timeline component that fetches and displays activity logs
+ */
+export function ActivityFeed({
+  tripId,
+  limit = 10,
+  showLoadMore = false,
+}: ActivityFeedProps) {
+  const [offset, setOffset] = useState(0)
+  const { data: logs = [], isLoading, isError } = useTripActivity({
+    tripId,
+    limit,
+    offset,
+  })
+
+  const handleLoadMore = () => {
+    setOffset((prev) => prev + limit)
+  }
+
+  const handleLoadPrevious = () => {
+    setOffset((prev) => Math.max(0, prev - limit))
+  }
+
+  if (isLoading) {
+    return <ActivityFeedSkeleton />
+  }
+
+  if (isError) {
+    return (
+      <div className="text-center py-8">
+        <XCircle className="h-12 w-12 text-red-300 mx-auto mb-3" />
+        <p className="text-sm text-tern-gray-900 mb-1">Failed to load activity</p>
+        <p className="text-sm text-tern-gray-500">Please try again later.</p>
+      </div>
+    )
+  }
+
+  if (logs.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <Calendar className="h-12 w-12 text-tern-gray-300 mx-auto mb-3" />
+        <p className="text-sm text-tern-gray-900 mb-1">No activity yet</p>
+        <p className="text-sm text-tern-gray-500">Activity will appear here as changes are made.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {/* Activity Timeline */}
+      <div className="space-y-1 divide-y divide-tern-gray-100">
+        {logs.map((log) => (
+          <ActivityItem key={log.id} log={log} />
+        ))}
+      </div>
+
+      {/* Load More Controls */}
+      {showLoadMore && (
+        <div className="flex gap-2 justify-center mt-6">
+          {offset > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLoadPrevious}
+            >
+              Previous
+            </Button>
+          )}
+          {logs.length === limit && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLoadMore}
+            >
+              Load More
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

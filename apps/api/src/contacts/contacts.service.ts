@@ -1,0 +1,520 @@
+/**
+ * Contacts Service
+ *
+ * Business logic for Contact CRUD operations.
+ */
+
+import { Injectable, NotFoundException } from '@nestjs/common'
+import { OnEvent } from '@nestjs/event-emitter'
+import { eq, and, ilike, or, sql, desc, asc } from 'drizzle-orm'
+import { DatabaseService } from '../db/database.service'
+import { TripBookedEvent } from '../trips/events/trip-booked.event'
+import type {
+  CreateContactDto,
+  UpdateContactDto,
+  ContactFilterDto,
+  ContactResponseDto,
+  PaginatedContactsResponseDto,
+} from '../../../../packages/shared-types/src/api'
+
+@Injectable()
+export class ContactsService {
+  constructor(private readonly db: DatabaseService) {}
+
+  /**
+   * Create a new contact
+   */
+  async create(dto: CreateContactDto): Promise<ContactResponseDto> {
+    const [contact] = await this.db.client
+      .insert(this.db.schema.contacts)
+      .values({
+        // Name fields
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        legalFirstName: dto.legalFirstName,
+        legalLastName: dto.legalLastName,
+        middleName: dto.middleName,
+        preferredName: dto.preferredName,
+        prefix: dto.prefix,
+        suffix: dto.suffix,
+
+        // Phase 1: LGBTQ+ inclusive
+        gender: dto.gender,
+        pronouns: dto.pronouns,
+        maritalStatus: dto.maritalStatus,
+
+        // Contact info
+        email: dto.email,
+        phone: dto.phone,
+        dateOfBirth: dto.dateOfBirth,
+
+        // Passport
+        passportNumber: dto.passportNumber,
+        passportExpiry: dto.passportExpiry,
+        passportCountry: dto.passportCountry,
+        passportIssueDate: dto.passportIssueDate,
+        nationality: dto.nationality,
+
+        // Phase 4: TSA credentials
+        redressNumber: dto.redressNumber,
+        knownTravelerNumber: dto.knownTravelerNumber,
+
+        // Address
+        addressLine1: dto.addressLine1,
+        addressLine2: dto.addressLine2,
+        city: dto.city,
+        province: dto.province,
+        postalCode: dto.postalCode,
+        country: dto.country,
+
+        // Requirements
+        dietaryRequirements: dto.dietaryRequirements,
+        mobilityRequirements: dto.mobilityRequirements,
+
+        // Phase 4: Travel preferences
+        seatPreference: dto.seatPreference,
+        cabinPreference: dto.cabinPreference,
+        floorPreference: dto.floorPreference,
+        travelPreferences: dto.travelPreferences
+          ? JSON.parse(dto.travelPreferences)
+          : undefined,
+
+        // Phase 2: Lifecycle (optional on create)
+        contactType: dto.contactType,
+        contactStatus: dto.contactStatus,
+
+        // Phase 3: Marketing consent (optional on create)
+        marketingEmailOptIn: dto.marketingEmailOptIn,
+        marketingSmsOptIn: dto.marketingSmsOptIn,
+        marketingPhoneOptIn: dto.marketingPhoneOptIn,
+        marketingOptInSource: dto.marketingOptInSource,
+
+        // Metadata
+        tags: dto.tags,
+
+        // Phase 3.5: Date/Time Management
+        timezone: dto.timezone,
+      })
+      .returning()
+
+    return this.mapToResponseDto(contact)
+  }
+
+  /**
+   * Find all contacts with filtering and pagination
+   */
+  async findAll(
+    filters: ContactFilterDto,
+  ): Promise<PaginatedContactsResponseDto> {
+    const page = filters.page || 1
+    const limit = filters.limit || 20
+    const offset = (page - 1) * limit
+
+    // Build WHERE conditions
+    const conditions = []
+
+    // Default to showing only active contacts unless explicitly filtering for inactive ones
+    if (filters.isActive !== undefined) {
+      conditions.push(eq(this.db.schema.contacts.isActive, filters.isActive))
+    } else {
+      // Default: only show active contacts
+      conditions.push(eq(this.db.schema.contacts.isActive, true))
+    }
+
+    if (filters.search) {
+      const searchCondition = or(
+        ilike(this.db.schema.contacts.firstName, `%${filters.search}%`),
+        ilike(this.db.schema.contacts.lastName, `%${filters.search}%`),
+        ilike(this.db.schema.contacts.email, `%${filters.search}%`),
+        ilike(this.db.schema.contacts.phone, `%${filters.search}%`),
+      )
+      if (searchCondition) {
+        conditions.push(searchCondition)
+      }
+    }
+
+    if (filters.tags && filters.tags.length > 0) {
+      // Match any of the provided tags
+      conditions.push(
+        sql`${this.db.schema.contacts.tags} && ARRAY[${sql.join(
+          filters.tags.map((tag) => sql`${tag}`),
+          sql`, `,
+        )}]::text[]`,
+      )
+    }
+
+    if (filters.hasPassport) {
+      conditions.push(sql`${this.db.schema.contacts.passportNumber} IS NOT NULL`)
+    }
+
+    if (filters.passportExpiring) {
+      // Passport expiring within 6 months
+      const sixMonthsFromNow = new Date()
+      sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6)
+      conditions.push(
+        sql`${this.db.schema.contacts.passportExpiry} <= ${sixMonthsFromNow.toISOString().split('T')[0]}`,
+      )
+    }
+
+    // Build ORDER BY
+    const sortBy = filters.sortBy || 'lastName'
+    const sortOrder = filters.sortOrder || 'asc'
+    const orderByColumn = this.db.schema.contacts[sortBy] || this.db.schema.contacts.lastName
+    const orderByFn = sortOrder === 'desc' ? desc : asc
+
+    // Execute query
+    const contacts = await this.db.client
+      .select()
+      .from(this.db.schema.contacts)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(orderByFn(orderByColumn))
+      .limit(limit)
+      .offset(offset)
+
+    // Get total count
+    const countResult = await this.db.client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(this.db.schema.contacts)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+    const count = countResult[0]?.count ?? 0
+
+    return {
+      data: contacts.map((c) => this.mapToResponseDto(c)),
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.ceil(count / limit),
+      },
+    }
+  }
+
+  /**
+   * Find one contact by ID
+   */
+  async findOne(id: string): Promise<ContactResponseDto> {
+    const [contact] = await this.db.client
+      .select()
+      .from(this.db.schema.contacts)
+      .where(eq(this.db.schema.contacts.id, id))
+      .limit(1)
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+
+    return this.mapToResponseDto(contact)
+  }
+
+  /**
+   * Update a contact
+   */
+  async update(
+    id: string,
+    dto: UpdateContactDto,
+  ): Promise<ContactResponseDto> {
+    const updateData: any = { ...dto }
+
+    // Parse travelPreferences if it's a string
+    if (typeof dto.travelPreferences === 'string') {
+      updateData.travelPreferences = JSON.parse(dto.travelPreferences)
+    }
+
+    const [contact] = await this.db.client
+      .update(this.db.schema.contacts)
+      .set({
+        ...updateData,
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.contacts.id, id))
+      .returning()
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+
+    return this.mapToResponseDto(contact)
+  }
+
+  /**
+   * Delete a contact (soft delete by setting isActive = false)
+   */
+  async remove(id: string): Promise<void> {
+    const [contact] = await this.db.client
+      .update(this.db.schema.contacts)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(this.db.schema.contacts.id, id))
+      .returning()
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+  }
+
+  /**
+   * Hard delete a contact (permanent deletion)
+   */
+  async hardDelete(id: string): Promise<void> {
+    const [contact] = await this.db.client
+      .delete(this.db.schema.contacts)
+      .where(eq(this.db.schema.contacts.id, id))
+      .returning()
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+  }
+
+  /**
+   * Promote a lead to client
+   */
+  async promoteToClient(id: string): Promise<ContactResponseDto> {
+    const [contact] = await this.db.client
+      .update(this.db.schema.contacts)
+      .set({
+        contactType: 'client',
+        becameClientAt: new Date(),
+        contactStatus: 'prospecting', // Clients start at prospecting
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.contacts.id, id))
+      .returning()
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+
+    return this.mapToResponseDto(contact)
+  }
+
+  /**
+   * Update contact status
+   */
+  async updateStatus(id: string, status: string): Promise<ContactResponseDto> {
+    // Find contact first to validate status transition
+    const [existing] = await this.db.client
+      .select()
+      .from(this.db.schema.contacts)
+      .where(eq(this.db.schema.contacts.id, id))
+      .limit(1)
+
+    if (!existing) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+
+    // Validate: leads can only be prospecting
+    if (existing.contactType === 'lead' && status !== 'prospecting') {
+      throw new Error('Leads can only have status "prospecting". Promote to client first.')
+    }
+
+    const [contact] = await this.db.client
+      .update(this.db.schema.contacts)
+      .set({
+        contactStatus: status as 'prospecting' | 'quoted' | 'booked' | 'traveling' | 'returned' | 'awaiting_next' | 'inactive',
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.contacts.id, id))
+      .returning()
+
+    return this.mapToResponseDto(contact)
+  }
+
+  /**
+   * Update marketing consent
+   */
+  async updateMarketingConsent(id: string, dto: any): Promise<ContactResponseDto> {
+    const updates: any = { updatedAt: new Date() }
+
+    if (dto.email !== undefined) {
+      updates.marketingEmailOptIn = dto.email
+      if (dto.email && dto.source) {
+        updates.marketingOptInSource = dto.source
+      }
+    }
+
+    if (dto.sms !== undefined) {
+      updates.marketingSmsOptIn = dto.sms
+      if (dto.sms && dto.source) {
+        updates.marketingOptInSource = dto.source
+      }
+    }
+
+    if (dto.phone !== undefined) {
+      updates.marketingPhoneOptIn = dto.phone
+      if (dto.phone && dto.source) {
+        updates.marketingOptInSource = dto.source
+      }
+    }
+
+    if (dto.optOutReason) {
+      updates.marketingOptOutAt = new Date()
+      updates.marketingOptOutReason = dto.optOutReason
+    }
+
+    const [contact] = await this.db.client
+      .update(this.db.schema.contacts)
+      .set(updates)
+      .where(eq(this.db.schema.contacts.id, id))
+      .returning()
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+
+    return this.mapToResponseDto(contact)
+  }
+
+  /**
+   * Set first booking date (called by trips service)
+   * Stores as date-only string (YYYY-MM-DD) to match trip.bookingDate format
+   */
+  async setFirstBookingDate(id: string, date: Date): Promise<void> {
+    await this.db.client
+      .update(this.db.schema.contacts)
+      .set({
+        firstBookingDate: date.toISOString().split('T')[0],
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.contacts.id, id))
+  }
+
+  /**
+   * Event Listener: Handle TripBookedEvent
+   *
+   * When a trip is booked, set the contact's first booking date if it's not already set.
+   * This decouples ContactsService from TripsService by using domain events.
+   */
+  @OnEvent('trip.booked')
+  async handleTripBooked(event: TripBookedEvent): Promise<void> {
+    if (!event.primaryContactId) {
+      return
+    }
+
+    // Only set first booking date if it's not already set
+    const [contact] = await this.db.client
+      .select()
+      .from(this.db.schema.contacts)
+      .where(eq(this.db.schema.contacts.id, event.primaryContactId))
+      .limit(1)
+
+    if (!contact || contact.firstBookingDate) {
+      return
+    }
+
+    await this.setFirstBookingDate(
+      event.primaryContactId,
+      new Date(event.bookingDate),
+    )
+  }
+
+  /**
+   * Map database entity to response DTO
+   */
+  private mapToResponseDto(contact: any): ContactResponseDto {
+    // Compute display name: preferred > first > legal_first
+    const displayName = contact.preferredName ?? contact.firstName ?? contact.legalFirstName ?? 'Unknown'
+
+    // Compute legal full name for documents
+    const legalFullName = [
+      contact.prefix,
+      contact.legalFirstName ?? contact.firstName,
+      contact.middleName,
+      contact.legalLastName ?? contact.lastName,
+      contact.suffix
+    ].filter(Boolean).join(' ') || null
+
+    return {
+      id: contact.id,
+      agencyId: contact.agencyId,
+      ownerId: contact.ownerId,
+
+      // Name fields
+      firstName: contact.firstName,
+      lastName: contact.lastName,
+      legalFirstName: contact.legalFirstName,
+      legalLastName: contact.legalLastName,
+      middleName: contact.middleName,
+      preferredName: contact.preferredName,
+      prefix: contact.prefix,
+      suffix: contact.suffix,
+
+      // Computed names
+      displayName,
+      legalFullName,
+
+      // LGBTQ+ inclusive
+      gender: contact.gender,
+      pronouns: contact.pronouns,
+      maritalStatus: contact.maritalStatus,
+
+      // Contact info
+      email: contact.email,
+      phone: contact.phone,
+      dateOfBirth: contact.dateOfBirth,
+
+      // Passport
+      passportNumber: contact.passportNumber,
+      passportExpiry: contact.passportExpiry,
+      passportCountry: contact.passportCountry,
+      passportIssueDate: contact.passportIssueDate,
+      nationality: contact.nationality,
+
+      // TSA
+      redressNumber: contact.redressNumber,
+      knownTravelerNumber: contact.knownTravelerNumber,
+
+      // Address
+      addressLine1: contact.addressLine1,
+      addressLine2: contact.addressLine2,
+      city: contact.city,
+      province: contact.province,
+      postalCode: contact.postalCode,
+      country: contact.country,
+
+      // Requirements
+      dietaryRequirements: contact.dietaryRequirements,
+      mobilityRequirements: contact.mobilityRequirements,
+
+      // Travel preferences
+      seatPreference: contact.seatPreference,
+      cabinPreference: contact.cabinPreference,
+      floorPreference: contact.floorPreference,
+      travelPreferences: contact.travelPreferences
+        ? JSON.stringify(contact.travelPreferences)
+        : null,
+
+      // Lifecycle
+      contactType: contact.contactType,
+      contactStatus: contact.contactStatus,
+      becameClientAt: contact.becameClientAt?.toISOString() ?? null,
+      firstBookingDate: contact.firstBookingDate,
+      lastTripReturnDate: contact.lastTripReturnDate,
+
+      // Marketing consent
+      marketingEmailOptIn: contact.marketingEmailOptIn ?? false,
+      marketingEmailOptInAt: contact.marketingEmailOptInAt?.toISOString() ?? null,
+      marketingSmsOptIn: contact.marketingSmsOptIn ?? false,
+      marketingSmsOptInAt: contact.marketingSmsOptInAt?.toISOString() ?? null,
+      marketingPhoneOptIn: contact.marketingPhoneOptIn ?? false,
+      marketingPhoneOptInAt: contact.marketingPhoneOptInAt?.toISOString() ?? null,
+      marketingOptInSource: contact.marketingOptInSource,
+      marketingOptOutAt: contact.marketingOptOutAt?.toISOString() ?? null,
+      marketingOptOutReason: contact.marketingOptOutReason,
+
+      // Trust balances
+      trustBalanceCad: contact.trustBalanceCad,
+      trustBalanceUsd: contact.trustBalanceUsd,
+
+      // Metadata
+      tags: contact.tags || [],
+      isActive: contact.isActive,
+
+      // Date/Time Management
+      timezone: contact.timezone,
+
+      // Audit
+      createdAt: contact.createdAt.toISOString(),
+      updatedAt: contact.updatedAt.toISOString(),
+    }
+  }
+}

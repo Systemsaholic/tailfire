@@ -1,0 +1,78 @@
+"use client"
+
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+interface SwitchProps extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'role'> {
+  checked?: boolean
+  defaultChecked?: boolean
+  onCheckedChange?: (checked: boolean) => void
+  required?: boolean
+}
+
+const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
+  ({ className, checked, defaultChecked, onCheckedChange, disabled, id, name, value, required, ...props }, ref) => {
+    const [isChecked, setIsChecked] = React.useState(defaultChecked ?? false)
+
+    // Use controlled value if provided, otherwise use internal state
+    const checkedState = checked !== undefined ? checked : isChecked
+
+    const handleClick = React.useCallback(() => {
+      if (disabled) return
+
+      const newChecked = !checkedState
+      if (checked === undefined) {
+        setIsChecked(newChecked)
+      }
+      onCheckedChange?.(newChecked)
+    }, [checkedState, checked, disabled, onCheckedChange])
+
+    const handleKeyDown = React.useCallback((e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        handleClick()
+      }
+    }, [handleClick])
+
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checkedState}
+        aria-required={required}
+        data-state={checkedState ? "checked" : "unchecked"}
+        data-disabled={disabled ? "" : undefined}
+        disabled={disabled}
+        id={id}
+        ref={ref}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        className={cn(
+          "peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input",
+          className
+        )}
+        {...props}
+      >
+        <span
+          data-state={checkedState ? "checked" : "unchecked"}
+          className={cn(
+            "pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0"
+          )}
+        />
+        {/* Hidden input for form submission */}
+        {name && (
+          <input
+            type="hidden"
+            name={name}
+            value={checkedState ? (value ?? "on") : ""}
+          />
+        )}
+      </button>
+    )
+  }
+)
+Switch.displayName = "Switch"
+
+export { Switch }
+export type { SwitchProps }

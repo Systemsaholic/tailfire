@@ -1,0 +1,1929 @@
+/**
+ * Activities Service
+ *
+ * Business logic for managing itinerary activities.
+ * Activities belong to days and can be reordered within/between days.
+ */
+
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common'
+import { EventEmitter2 } from '@nestjs/event-emitter'
+import { eq, and, desc, asc, inArray, sql } from 'drizzle-orm'
+import { DatabaseService } from '../db/database.service'
+import { StorageService } from './storage.service'
+import { TravellerSplitsService } from '../financials/traveller-splits.service'
+import { ActivityTotalsService } from './activity-totals.service'
+import { ActivityTravelersService } from './activity-travelers.service'
+import { AuditEvent } from '../activity-logs/events/audit.event'
+import { sanitizeForAudit, computeAuditDiff } from '../activity-logs/audit-sanitizer'
+import type {
+  ActivityResponseDto,
+  CreateActivityDto,
+  UpdateActivityDto,
+  ReorderActivitiesDto,
+  MoveActivityDto,
+  ActivityFilterDto,
+  PackageResponseDto,
+  PackageLinkedActivityDto,
+  PricingType,
+  ActivityPricingDto,
+  TripPackageTotalsDto,
+} from '@tailfire/shared-types'
+
+// Type for activity thumbnails map
+type ThumbnailMap = Map<string, string>
+
+@Injectable()
+export class ActivitiesService {
+  private readonly logger = new Logger(ActivitiesService.name)
+
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly storageService: StorageService,
+    private readonly travellerSplitsService: TravellerSplitsService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly activityTotalsService: ActivityTotalsService,
+    private readonly activityTravelersService: ActivityTravelersService
+  ) {}
+
+  /**
+   * Get all activities with optional filtering
+   */
+  async findAll(filters: ActivityFilterDto = {}): Promise<ActivityResponseDto[]> {
+    const {
+      itineraryDayId,
+      activityType,
+      status,
+      sortBy = 'sequenceOrder',
+      sortOrder = 'asc',
+      limit = 100,
+      offset = 0,
+    } = filters
+
+    // Build where conditions
+    const conditions = []
+    if (itineraryDayId) {
+      conditions.push(eq(this.db.schema.itineraryActivities.itineraryDayId, itineraryDayId))
+    }
+    if (activityType) {
+      conditions.push(eq(this.db.schema.itineraryActivities.activityType, activityType))
+    }
+    if (status) {
+      conditions.push(eq(this.db.schema.itineraryActivities.status, status))
+    }
+
+    // Map sortBy to actual column reference
+    const sortColumn = this.db.schema.itineraryActivities[sortBy] || this.db.schema.itineraryActivities.sequenceOrder
+
+    const activities = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(
+        sortOrder === 'asc'
+          ? asc(sortColumn)
+          : desc(sortColumn)
+      )
+      .limit(limit)
+      .offset(offset)
+
+    // Fetch thumbnails from activity_media
+    const activityIds = activities.map(a => a.id)
+    const thumbnailMap = await this.fetchThumbnails(activityIds)
+
+    return activities.map(a => this.formatActivityResponse(a, thumbnailMap))
+  }
+
+  /**
+   * Get activities for a specific day
+   */
+  async findByDay(itineraryDayId: string): Promise<ActivityResponseDto[]> {
+    const activities = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.itineraryDayId, itineraryDayId))
+      .orderBy(asc(this.db.schema.itineraryActivities.sequenceOrder))
+
+    // Fetch thumbnails from activity_media
+    const activityIds = activities.map(a => a.id)
+    const thumbnailMap = await this.fetchThumbnails(activityIds)
+
+    return activities.map(a => this.formatActivityResponse(a, thumbnailMap))
+  }
+
+  /**
+   * Get all activities that have a specific parent activity ID
+   * Used for cruise → port_info relationships
+   */
+  async findByParentId(parentActivityId: string): Promise<ActivityResponseDto[]> {
+    const activities = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.parentActivityId, parentActivityId))
+      .orderBy(asc(this.db.schema.itineraryActivities.sequenceOrder))
+
+    // Fetch thumbnails from activity_media
+    const activityIds = activities.map(a => a.id)
+    const thumbnailMap = await this.fetchThumbnails(activityIds)
+
+    return activities.map(a => this.formatActivityResponse(a, thumbnailMap))
+  }
+
+  /**
+   * Delete all activities with a specific parent
+   * Note: CASCADE delete will also remove these when parent is deleted,
+   * but this method allows explicit cleanup during regeneration
+   */
+  async deleteByParentId(parentActivityId: string): Promise<number> {
+    // First get the activities to clean up storage
+    const activities = await this.findByParentId(parentActivityId)
+
+    // Clean up storage for each activity
+    if (this.storageService.isAvailable()) {
+      for (const activity of activities) {
+        try {
+          await this.storageService.deleteComponentDocuments(activity.id)
+        } catch (error) {
+          console.error(`Failed to cleanup storage for activity ${activity.id}:`, error)
+        }
+      }
+    }
+
+    // Delete the activities
+    await this.db.client
+      .delete(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.parentActivityId, parentActivityId))
+
+    return activities.length
+  }
+
+  /**
+   * Check if an activity has any child activities
+   * Efficient existence check without loading all children
+   */
+  async hasChildActivities(parentActivityId: string): Promise<boolean> {
+    const [result] = await this.db.client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.parentActivityId, parentActivityId))
+      .limit(1)
+    return (result?.count ?? 0) > 0
+  }
+
+  /**
+   * Get a single activity by ID
+   * Returns PackageResponseDto for packages (with pricing, details, children, travelers, totals)
+   * Returns ActivityResponseDto with pricing for other activity types
+   */
+  async findOne(id: string): Promise<ActivityResponseDto | PackageResponseDto> {
+    const [activity] = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.id, id))
+      .limit(1)
+
+    if (!activity) {
+      throw new NotFoundException(`Activity with ID ${id} not found`)
+    }
+
+    // Always fetch pricing for all activity types
+    const pricing = await this.getActivityPricing(id)
+
+    // For packages, return full PackageResponseDto with additional data
+    if (activity.activityType === 'package') {
+      return this.buildPackageResponse(activity, pricing)
+    }
+
+    // For other activity types, return ActivityResponseDto with pricing
+    const baseResponse = this.formatActivityResponse(activity)
+    return {
+      ...baseResponse,
+      pricing,
+    }
+  }
+
+  /**
+   * Get activity pricing from activity_pricing table
+   */
+  private async getActivityPricing(activityId: string): Promise<ActivityPricingDto | null> {
+    const [pricing] = await this.db.client
+      .select({
+        totalPriceCents: this.db.schema.activityPricing.totalPriceCents,
+        taxesAndFeesCents: this.db.schema.activityPricing.taxesAndFeesCents,
+        commissionTotalCents: this.db.schema.activityPricing.commissionTotalCents,
+        commissionSplitPercentage: this.db.schema.activityPricing.commissionSplitPercentage,
+        currency: this.db.schema.activityPricing.currency,
+        pricingType: this.db.schema.activityPricing.pricingType,
+      })
+      .from(this.db.schema.activityPricing)
+      .where(eq(this.db.schema.activityPricing.activityId, activityId))
+      .limit(1)
+
+    if (!pricing) return null
+
+    return {
+      totalPriceCents: pricing.totalPriceCents ?? 0,
+      taxesAndFeesCents: pricing.taxesAndFeesCents ?? null,
+      commissionTotalCents: pricing.commissionTotalCents ?? null,
+      commissionSplitPercentage: pricing.commissionSplitPercentage
+        ? parseFloat(pricing.commissionSplitPercentage)
+        : null,
+      currency: pricing.currency || 'CAD',
+      pricingType: (pricing.pricingType || null) as PricingType | null,
+    }
+  }
+
+  /**
+   * Build full PackageResponseDto with pricing, details, children, travelers, and totals
+   */
+  private async buildPackageResponse(
+    activity: any,
+    pricing: ActivityPricingDto | null
+  ): Promise<PackageResponseDto> {
+    const activityId = activity.id
+
+    // Fetch all package-related data in parallel
+    const [packageDetails, children, travelers, totals, tripId] = await Promise.all([
+      this.getPackageDetails(activityId),
+      this.getLinkedActivitiesWithDayInfo(activityId),
+      this.activityTravelersService.findByActivityId(activityId),
+      this.activityTotalsService.calculatePackageTotal(activityId),
+      this.getTripIdForActivity(activityId),
+    ])
+
+    const baseResponse = this.formatActivityResponse(activity)
+
+    // Format cancellation deadline if present (may be Date or ISO string)
+    let formattedCancellationDeadline: string | null = null
+    if (packageDetails?.cancellationDeadline) {
+      const deadline = packageDetails.cancellationDeadline
+      if (typeof deadline === 'object' && deadline !== null && 'toISOString' in deadline) {
+        formattedCancellationDeadline = (deadline as Date).toISOString().split('T')[0] ?? null
+      } else {
+        formattedCancellationDeadline = String(deadline).split('T')[0] ?? null
+      }
+    }
+
+    return {
+      ...baseResponse,
+      pricing,
+      packageDetails: packageDetails
+        ? {
+            supplierId: packageDetails.supplierId,
+            supplierName: packageDetails.supplierName,
+            paymentStatus: packageDetails.paymentStatus || 'unpaid',
+            pricingType: packageDetails.pricingType,
+            cancellationPolicy: packageDetails.cancellationPolicy,
+            cancellationDeadline: formattedCancellationDeadline,
+            termsAndConditions: packageDetails.termsAndConditions,
+            groupBookingNumber: packageDetails.groupBookingNumber,
+          }
+        : null,
+      activities: children,
+      travelers: travelers.map((t) => ({
+        id: t.id,
+        tripTravelerId: t.tripTravelerId,
+        travelerName: t.travelerName,
+        createdAt: t.createdAt,
+      })),
+      totalPriceCents: totals.totalCost,
+      totalPaidCents: totals.totalPaid,
+      totalUnpaidCents: totals.totalUnpaid,
+      tripId: tripId || '',
+    }
+  }
+
+  /**
+   * Get linked activities with day info for packages
+   * Returns activities with day context for display in package UI
+   */
+  async getLinkedActivitiesWithDayInfo(packageId: string): Promise<PackageLinkedActivityDto[]> {
+    const results = await this.db.client
+      .select({
+        id: this.db.schema.itineraryActivities.id,
+        name: this.db.schema.itineraryActivities.name,
+        activityType: this.db.schema.itineraryActivities.activityType,
+        status: this.db.schema.itineraryActivities.status,
+        parentActivityId: this.db.schema.itineraryActivities.parentActivityId,
+        sequenceOrder: this.db.schema.itineraryActivities.sequenceOrder,
+        dayNumber: this.db.schema.itineraryDays.dayNumber,
+        dayDate: this.db.schema.itineraryDays.date,
+        totalPriceCents: this.db.schema.activityPricing.totalPriceCents,
+      })
+      .from(this.db.schema.itineraryActivities)
+      .leftJoin(
+        this.db.schema.itineraryDays,
+        eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
+      )
+      .leftJoin(
+        this.db.schema.activityPricing,
+        eq(this.db.schema.itineraryActivities.id, this.db.schema.activityPricing.activityId)
+      )
+      .where(eq(this.db.schema.itineraryActivities.parentActivityId, packageId))
+      .orderBy(asc(this.db.schema.itineraryActivities.sequenceOrder))
+
+    return results.map((r) => {
+      // Format dayDate - handle both Date objects and ISO strings
+      let formattedDate: string | null = null
+      if (r.dayDate) {
+        if (typeof r.dayDate === 'object' && r.dayDate !== null && 'toISOString' in r.dayDate) {
+          formattedDate = (r.dayDate as Date).toISOString().split('T')[0] ?? null
+        } else {
+          formattedDate = String(r.dayDate).split('T')[0] ?? null
+        }
+      }
+
+      return {
+        id: r.id,
+        name: r.name,
+        activityType: r.activityType as any,
+        status: r.status as any,
+        dayNumber: r.dayNumber,
+        dayDate: formattedDate,
+        parentActivityId: r.parentActivityId,
+        sequenceOrder: r.sequenceOrder,
+        totalPriceCents: r.totalPriceCents ?? null,
+      }
+    })
+  }
+
+  /**
+   * Get trip ID for an activity (resolves through day → itinerary → trip chain)
+   * For floating packages (no day), returns null
+   */
+  private async getTripIdForActivity(activityId: string): Promise<string | null> {
+    const [result] = await this.db.client
+      .select({ tripId: this.db.schema.itineraries.tripId })
+      .from(this.db.schema.itineraryActivities)
+      .leftJoin(
+        this.db.schema.itineraryDays,
+        eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
+      )
+      .leftJoin(
+        this.db.schema.itineraries,
+        eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
+      )
+      .where(eq(this.db.schema.itineraryActivities.id, activityId))
+      .limit(1)
+
+    return result?.tripId || null
+  }
+
+  /**
+   * Create a new activity
+   *
+   * @param dto - Activity creation data
+   * @param actorId - User ID performing the action (for audit logging)
+   * @param tripId - Trip ID (passed from controller to avoid extra lookup)
+   * @param packageDetails - Optional package-specific details (for package activities)
+   */
+  async create(
+    dto: CreateActivityDto,
+    actorId?: string | null,
+    tripId?: string,
+    packageDetails?: {
+      supplierId?: string | null
+      supplierName?: string | null
+      cancellationPolicy?: string | null
+      cancellationDeadline?: string | null
+      termsAndConditions?: string | null
+      groupBookingNumber?: string | null
+    }
+  ): Promise<ActivityResponseDto> {
+    // Package activities can have null itineraryDayId (floating packages)
+    const isPackage = dto.activityType === 'package'
+
+    // For non-packages, verify day exists
+    if (!isPackage || dto.itineraryDayId) {
+      if (dto.itineraryDayId) {
+        await this.verifyDayExists(dto.itineraryDayId)
+      } else if (!isPackage) {
+        throw new BadRequestException('itineraryDayId is required for non-package activities')
+      }
+    }
+
+    // Get trip data (currency and agencyId)
+    let tripCurrency = 'CAD'
+    let agencyId: string | null = null
+    if (dto.itineraryDayId) {
+      const tripData = await this.getTripDataFromDayId(dto.itineraryDayId)
+      tripCurrency = tripData.currency
+      agencyId = tripData.agencyId
+    } else if (tripId) {
+      // For floating packages, get data from trip directly
+      const [trip] = await this.db.client
+        .select({
+          currency: this.db.schema.trips.currency,
+          agencyId: this.db.schema.trips.agencyId,
+        })
+        .from(this.db.schema.trips)
+        .where(eq(this.db.schema.trips.id, tripId))
+        .limit(1)
+      tripCurrency = trip?.currency || 'CAD'
+      agencyId = trip?.agencyId || null
+    }
+
+    if (!agencyId) {
+      throw new BadRequestException('Could not determine agency for activity')
+    }
+
+    // If no sequence order provided, get the next available
+    let sequenceOrder = dto.sequenceOrder ?? 0
+    if (dto.sequenceOrder === undefined && dto.itineraryDayId) {
+      const maxSeq = await this.getMaxSequenceOrder(dto.itineraryDayId)
+      sequenceOrder = maxSeq + 1
+    }
+
+    const [activity] = await this.db.client
+      .insert(this.db.schema.itineraryActivities)
+      .values({
+        agencyId, // Required for RLS
+        itineraryDayId: dto.itineraryDayId || null, // Nullable for packages
+        parentActivityId: dto.parentActivityId || null,
+        activityType: dto.activityType,
+        componentType: dto.activityType, // Default to activityType for backward compatibility
+        name: dto.name,
+        description: dto.description || null,
+        sequenceOrder,
+        startDatetime: dto.startDatetime ? new Date(dto.startDatetime) : null,
+        endDatetime: dto.endDatetime ? new Date(dto.endDatetime) : null,
+        timezone: dto.timezone || null,
+        location: dto.location || null,
+        address: dto.address || null,
+        coordinates: dto.coordinates || null,
+        notes: dto.notes || null,
+        confirmationNumber: dto.confirmationNumber || null,
+        status: dto.status || 'proposed',
+        pricingType: dto.pricingType || null,
+        currency: dto.currency || tripCurrency,
+        photos: dto.photos || null,
+      })
+      .returning()
+
+    if (!activity) {
+      throw new Error('Failed to create activity')
+    }
+
+    // Auto-create activity_pricing row with DTO values
+    let activityPricingId: string | null = null
+    try {
+      const [pricing] = await this.db.client
+        .insert(this.db.schema.activityPricing)
+        .values({
+          agencyId, // Required for RLS
+          activityId: activity.id,
+          currency: dto.currency || tripCurrency,
+          pricingType: dto.pricingType || 'flat_rate',
+          basePrice: '0',
+          totalPriceCents: dto.totalPriceCents ?? 0,
+          taxesAndFeesCents: dto.taxesCents ?? 0,
+          commissionTotalCents: dto.commissionTotalCents ?? null,
+          commissionSplitPercentage: dto.commissionSplitPercentage?.toString() ?? null,
+        })
+        .onConflictDoNothing({ target: this.db.schema.activityPricing.activityId })
+        .returning({ id: this.db.schema.activityPricing.id })
+      activityPricingId = pricing?.id || null
+    } catch (error) {
+      this.logger.warn(`Failed to auto-create activity_pricing for activity ${activity.id}: ${error}`)
+      // Don't fail the activity creation if pricing fails
+    }
+
+    // Package-specific auto-setup: create package_details and payment_schedule_config
+    if (isPackage) {
+      try {
+        // Create package_details record
+        await this.createPackageDetails(activity.id, packageDetails)
+        this.logger.log(`Created package_details for package ${activity.id}`)
+
+        // Create payment_schedule_config (prevents "missing schedule" warnings)
+        if (activityPricingId) {
+          await this.createPaymentScheduleConfig(activityPricingId, agencyId)
+          this.logger.log(`Created payment_schedule_config for package ${activity.id}`)
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to auto-create package details for activity ${activity.id}: ${error}`)
+        // Don't fail the activity creation if package detail setup fails
+      }
+    }
+
+    // Emit audit event (after all DB operations succeed)
+    const resolvedTripId = tripId ?? (dto.itineraryDayId ? await this.getTripIdFromDayId(dto.itineraryDayId) : null)
+    if (resolvedTripId) {
+      this.eventEmitter.emit(
+        'audit.created',
+        new AuditEvent(
+          'activity',
+          activity.id,
+          'created',
+          resolvedTripId,
+          actorId ?? null,
+          `${activity.activityType} - ${activity.name}`,
+          {
+            after: sanitizeForAudit('activity', activity),
+            subType: activity.activityType,
+          }
+        )
+      )
+    }
+
+    return this.formatActivityResponse(activity)
+  }
+
+  /**
+   * Bulk create multiple activities in a single INSERT query.
+   * Used for optimized bulk operations like cruise port schedule generation.
+   *
+   * Note: This skips audit logging and pricing row creation for performance.
+   * Use only for internal batch operations where individual audit trails are not needed.
+   *
+   * @param agencyId - Agency ID (required for RLS)
+   * @param activities - Array of activity data to insert
+   * @returns Array of created activities with IDs
+   */
+  async bulkCreate(
+    agencyId: string,
+    activities: Array<{
+      itineraryDayId: string
+      parentActivityId?: string | null
+      activityType: 'lodging' | 'flight' | 'tour' | 'transportation' | 'dining' | 'options' | 'custom_cruise' | 'port_info'
+      name: string
+      description?: string | null
+      sequenceOrder?: number
+      startDatetime?: string | null
+      endDatetime?: string | null
+      timezone?: string | null
+      location?: string | null
+      address?: string | null
+      coordinates?: { lat: number; lng: number } | null
+      notes?: string | null
+      confirmationNumber?: string | null
+      status?: 'proposed' | 'confirmed' | 'cancelled' | 'optional'
+    }>
+  ): Promise<Array<{ id: string; itineraryDayId: string | null; name: string }>> {
+    if (activities.length === 0) return []
+
+    const start = Date.now()
+
+    // Prepare values for bulk insert
+    const values = activities.map((dto, idx) => ({
+      agencyId, // Required for RLS
+      itineraryDayId: dto.itineraryDayId,
+      parentActivityId: dto.parentActivityId || null,
+      activityType: dto.activityType,
+      componentType: dto.activityType, // Backward compatibility
+      name: dto.name,
+      description: dto.description || null,
+      sequenceOrder: dto.sequenceOrder ?? idx,
+      startDatetime: dto.startDatetime ? new Date(dto.startDatetime) : null,
+      endDatetime: dto.endDatetime ? new Date(dto.endDatetime) : null,
+      timezone: dto.timezone || null,
+      location: dto.location || null,
+      address: dto.address || null,
+      coordinates: dto.coordinates || null,
+      notes: dto.notes || null,
+      confirmationNumber: dto.confirmationNumber || null,
+      status: dto.status || 'proposed',
+    }))
+
+    // Single bulk INSERT with RETURNING
+    const created = await this.db.client
+      .insert(this.db.schema.itineraryActivities)
+      .values(values)
+      .returning({
+        id: this.db.schema.itineraryActivities.id,
+        itineraryDayId: this.db.schema.itineraryActivities.itineraryDayId,
+        name: this.db.schema.itineraryActivities.name,
+      })
+
+    const duration = Date.now() - start
+    // Use debug level for performance metrics to avoid noise in production logs
+    this.logger.debug({
+      message: 'Bulk activity insert completed',
+      event: 'bulk_activity_insert_ms',
+      duration,
+      activityCount: activities.length,
+    })
+
+    return created
+  }
+
+  /**
+   * Update an activity
+   *
+   * @param id - Activity ID
+   * @param dto - Update data
+   * @param actorId - User ID performing the action (for audit logging)
+   * @param tripId - Trip ID (passed from controller to avoid extra lookup)
+   */
+  async update(id: string, dto: UpdateActivityDto, actorId?: string | null, tripId?: string): Promise<ActivityResponseDto> {
+    // Fetch the activity (needed for before state and tripId resolution)
+    const [beforeActivity] = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.id, id))
+      .limit(1)
+
+    if (!beforeActivity) {
+      throw new NotFoundException(`Activity with ID ${id} not found`)
+    }
+
+    // Bypass prevention: block direct booking status changes for packaged activities
+    // Users must use the dedicated /bookings/activities endpoints for booking operations,
+    // which enforce package control rules
+    if ((dto.isBooked !== undefined || dto.bookingDate !== undefined) && beforeActivity.parentActivityId) {
+      // Check if parent is a package
+      const parent = await this.findOneInternal(beforeActivity.parentActivityId)
+      if (parent?.activityType === 'package') {
+        throw new BadRequestException('Activity is linked to a package. Use package booking instead.')
+      }
+    }
+
+    const [activity] = await this.db.client
+      .update(this.db.schema.itineraryActivities)
+      .set({
+        ...(dto.activityType && { activityType: dto.activityType, componentType: dto.activityType }),
+        ...(dto.name && { name: dto.name }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.sequenceOrder !== undefined && { sequenceOrder: dto.sequenceOrder }),
+        ...(dto.startDatetime !== undefined && {
+          startDatetime: dto.startDatetime ? new Date(dto.startDatetime) : null
+        }),
+        ...(dto.endDatetime !== undefined && {
+          endDatetime: dto.endDatetime ? new Date(dto.endDatetime) : null
+        }),
+        ...(dto.timezone !== undefined && { timezone: dto.timezone }),
+        ...(dto.location !== undefined && { location: dto.location }),
+        ...(dto.address !== undefined && { address: dto.address }),
+        ...(dto.coordinates !== undefined && { coordinates: dto.coordinates }),
+        ...(dto.notes !== undefined && { notes: dto.notes }),
+        ...(dto.confirmationNumber !== undefined && { confirmationNumber: dto.confirmationNumber }),
+        ...(dto.status && { status: dto.status }),
+        ...(dto.isBooked !== undefined && { isBooked: dto.isBooked }),
+        ...(dto.bookingDate !== undefined && {
+          bookingDate: dto.bookingDate ? new Date(dto.bookingDate) : null
+        }),
+        ...(dto.pricingType !== undefined && { pricingType: dto.pricingType }),
+        ...(dto.currency && { currency: dto.currency }),
+        ...(dto.photos !== undefined && { photos: dto.photos }),
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.itineraryActivities.id, id))
+      .returning()
+
+    if (!activity) {
+      throw new NotFoundException(`Activity with ID ${id} not found after update`)
+    }
+
+    // Update activity_pricing if any pricing fields are provided
+    const hasPricingUpdates =
+      dto.totalPriceCents !== undefined ||
+      dto.taxesCents !== undefined ||
+      dto.pricingType !== undefined ||
+      dto.commissionTotalCents !== undefined ||
+      dto.commissionSplitPercentage !== undefined
+
+    if (hasPricingUpdates) {
+      // Child pricing guard: block pricing updates on children linked to packages
+      if (beforeActivity.parentActivityId) {
+        const parent = await this.findOneInternal(beforeActivity.parentActivityId)
+        if (parent?.activityType === 'package') {
+          throw new BadRequestException(
+            'Cannot update pricing on activities linked to a package. Unlink from package first.'
+          )
+        }
+      }
+
+      // Update activity_pricing table
+      try {
+        await this.db.client.execute(sql`
+          UPDATE activity_pricing
+          SET
+            total_price_cents = COALESCE(${dto.totalPriceCents ?? null}, total_price_cents),
+            taxes_and_fees_cents = COALESCE(${dto.taxesCents ?? null}, taxes_and_fees_cents),
+            pricing_type = COALESCE(${dto.pricingType ?? null}, pricing_type),
+            commission_total_cents = COALESCE(${dto.commissionTotalCents ?? null}, commission_total_cents),
+            commission_split_percentage = COALESCE(${dto.commissionSplitPercentage?.toString() ?? null}, commission_split_percentage),
+            updated_at = NOW()
+          WHERE activity_id = ${id}
+        `)
+      } catch (error) {
+        this.logger.warn(`Failed to update activity_pricing for activity ${id}: ${error}`)
+        // Don't fail the update if pricing update fails
+      }
+    }
+
+    // Emit audit event (after DB operation succeeds)
+    // For floating activities (null itineraryDayId), we need tripId passed explicitly
+    const resolvedTripId = tripId ?? (beforeActivity.itineraryDayId ? await this.getTripIdFromDayId(beforeActivity.itineraryDayId) : null)
+    if (resolvedTripId) {
+      const auditDiff = computeAuditDiff('activity', beforeActivity, activity)
+
+      // Only emit if there were actual changes
+      if (auditDiff.changedFields.length > 0) {
+        this.eventEmitter.emit(
+          'audit.updated',
+          new AuditEvent(
+            'activity',
+            activity.id,
+            'updated',
+            resolvedTripId,
+            actorId ?? null,
+            `${activity.activityType} - ${activity.name}`,
+            {
+              before: auditDiff.before,
+              after: auditDiff.after,
+              changedFields: auditDiff.changedFields,
+              subType: activity.activityType,
+            }
+          )
+        )
+      }
+    }
+
+    return this.formatActivityResponse(activity)
+  }
+
+  /**
+   * Delete an activity
+   *
+   * @param id - Activity ID
+   * @param actorId - User ID performing the action (for audit logging)
+   * @param tripId - Trip ID (passed from controller to avoid extra lookup)
+   */
+  async remove(id: string, actorId?: string | null, tripId?: string): Promise<void> {
+    // Fetch activity before deletion (needed for audit log)
+    const [activity] = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.id, id))
+      .limit(1)
+
+    if (!activity) {
+      throw new NotFoundException(`Activity with ID ${id} not found`)
+    }
+
+    // Resolve tripId before deletion (while we still have the activity)
+    // For floating activities (null itineraryDayId), we need tripId passed explicitly
+    const resolvedTripId = tripId ?? (activity.itineraryDayId ? await this.getTripIdFromDayId(activity.itineraryDayId) : null)
+
+    // Clean up traveller splits before database delete
+    // Note: CASCADE delete would also remove these, but explicit cleanup ensures
+    // proper logging and potential notification handling
+    try {
+      await this.travellerSplitsService.deleteActivitySplits(id)
+      this.logger.log(`Cleaned up traveller splits for deleted activity ${id}`)
+    } catch (error) {
+      this.logger.warn(`Failed to cleanup splits for activity ${id}: ${error}`)
+      // Continue with deletion - CASCADE will handle it
+    }
+
+    // Clean up storage files before database delete
+    if (this.storageService.isAvailable()) {
+      try {
+        await this.storageService.deleteComponentDocuments(id)
+      } catch (error) {
+        // Log but don't fail - database cleanup should still proceed
+        this.logger.error(`Failed to cleanup storage for activity ${id}:`, error)
+      }
+    }
+
+    await this.db.client
+      .delete(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.id, id))
+
+    // Emit audit event (after DB delete succeeds)
+    if (resolvedTripId) {
+      this.eventEmitter.emit(
+        'audit.deleted',
+        new AuditEvent(
+          'activity',
+          id,
+          'deleted',
+          resolvedTripId,
+          actorId ?? null,
+          `${activity.activityType} - ${activity.name}`,
+          {
+            before: sanitizeForAudit('activity', activity),
+            subType: activity.activityType,
+          }
+        )
+      )
+    }
+  }
+
+  /**
+   * Reorder activities within a day (drag-and-drop)
+   */
+  async reorder(itineraryDayId: string, dto: ReorderActivitiesDto): Promise<ActivityResponseDto[]> {
+    // Verify all activity IDs belong to this day
+    const activityIds = dto.activityOrders.map((a: { id: string; sequenceOrder: number }) => a.id)
+    const activities = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(
+        and(
+          eq(this.db.schema.itineraryActivities.itineraryDayId, itineraryDayId),
+          inArray(this.db.schema.itineraryActivities.id, activityIds)
+        )
+      )
+
+    if (activities.length !== activityIds.length) {
+      throw new BadRequestException('One or more activity IDs are invalid or do not belong to this day')
+    }
+
+    // Update sequence orders
+    await Promise.all(
+      dto.activityOrders.map((order: { id: string; sequenceOrder: number }) =>
+        this.db.client
+          .update(this.db.schema.itineraryActivities)
+          .set({
+            sequenceOrder: order.sequenceOrder,
+            updatedAt: new Date(),
+          })
+          .where(eq(this.db.schema.itineraryActivities.id, order.id))
+      )
+    )
+
+    // Return updated activities
+    return this.findByDay(itineraryDayId)
+  }
+
+  /**
+   * Move activity to a different day
+   * Note: If moving to a different trip, traveller splits are cleared since
+   * they're tied to the original trip's travellers
+   */
+  async move(id: string, dto: MoveActivityDto): Promise<ActivityResponseDto> {
+    // Get current activity with its day info
+    const currentActivity = await this.findOne(id)
+
+    // Floating activities (no itineraryDayId) can be moved by simply assigning a day
+    let currentTripId: string | null = null
+    if (currentActivity.itineraryDayId) {
+      const [currentDay] = await this.db.client
+        .select({ id: this.db.schema.itineraryDays.id })
+        .from(this.db.schema.itineraryDays)
+        .where(eq(this.db.schema.itineraryDays.id, currentActivity.itineraryDayId))
+        .limit(1)
+
+      if (!currentDay) {
+        throw new NotFoundException(`Current day not found`)
+      }
+
+      currentTripId = await this.getTripIdFromDayId(currentActivity.itineraryDayId)
+    }
+
+    // Verify target day exists
+    await this.verifyDayExists(dto.targetDayId)
+
+    // Fetch target day's date for datetime adjustment
+    const [targetDay] = await this.db.client
+      .select({ date: this.db.schema.itineraryDays.date })
+      .from(this.db.schema.itineraryDays)
+      .where(eq(this.db.schema.itineraryDays.id, dto.targetDayId))
+      .limit(1)
+
+    // Calculate timezone-safe datetime adjustments using string manipulation
+    let newStartDatetime: Date | null = null
+    let newEndDatetime: Date | null = null
+
+    const targetDateStr = targetDay?.date // e.g., "2025-03-15"
+
+    if (targetDateStr) {
+      if (currentActivity.startDatetime) {
+        // Extract UTC time portion from existing start and apply to target date
+        const existingStart = new Date(currentActivity.startDatetime)
+        const startIso = existingStart.toISOString()
+        const timePortion = startIso.substring(11, 19) // "HH:mm:ss"
+        newStartDatetime = new Date(`${targetDateStr}T${timePortion}Z`)
+
+        if (currentActivity.endDatetime) {
+          // Preserve duration: compute offset and apply to new start
+          const existingEnd = new Date(currentActivity.endDatetime)
+          const durationMs = existingEnd.getTime() - existingStart.getTime()
+          newEndDatetime = new Date(newStartDatetime.getTime() + durationMs)
+        }
+      } else {
+        // No existing start - default to 09:00 UTC on target date
+        newStartDatetime = new Date(`${targetDateStr}T09:00:00Z`)
+        // Leave endDatetime null if no existing start
+      }
+    }
+    // If targetDateStr is null (undated day), newStartDatetime/newEndDatetime remain null
+    // and the update will preserve existing values via nullish coalescing
+
+    // Check if moving to a different trip (splits would become stale)
+    const targetTripId = await this.getTripIdFromDayId(dto.targetDayId)
+
+    if (currentTripId && targetTripId && currentTripId !== targetTripId) {
+      // Moving to different trip - clear splits as they're no longer valid
+      try {
+        await this.travellerSplitsService.deleteActivitySplits(id)
+        this.logger.log(`Cleared traveller splits for activity ${id} (moved to different trip)`)
+      } catch (error) {
+        this.logger.warn(`Failed to cleanup splits for moved activity ${id}: ${error}`)
+        // Continue with move - splits will be orphaned but not cause issues
+      }
+    }
+
+    // If no sequence order provided, append to end of target day
+    let sequenceOrder = dto.sequenceOrder ?? 0
+    if (dto.sequenceOrder === undefined) {
+      const maxSeq = await this.getMaxSequenceOrder(dto.targetDayId)
+      sequenceOrder = maxSeq + 1
+    }
+
+    // Convert string datetimes back to Date for DB update (findOne returns ISO strings)
+    const existingStartDate = currentActivity.startDatetime ? new Date(currentActivity.startDatetime) : null
+    const existingEndDate = currentActivity.endDatetime ? new Date(currentActivity.endDatetime) : null
+
+    const [activity] = await this.db.client
+      .update(this.db.schema.itineraryActivities)
+      .set({
+        itineraryDayId: dto.targetDayId,
+        sequenceOrder,
+        startDatetime: newStartDatetime ?? existingStartDate,
+        endDatetime: newEndDatetime ?? existingEndDate,
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.itineraryActivities.id, id))
+      .returning()
+
+    return this.formatActivityResponse(activity)
+  }
+
+  // ============================================================================
+  // Helper Methods
+  // ============================================================================
+
+  /**
+   * Format activity for API response.
+   * Both activityType (canonical) and componentType (deprecated) are included
+   * via the spread for backward compatibility.
+   */
+  private formatActivityResponse(activity: any, thumbnailMap?: ThumbnailMap): ActivityResponseDto {
+    // Determine thumbnail: first check activity_media (from thumbnailMap), then fall back to photos array
+    const mediaThumbnail = thumbnailMap?.get(activity.id) || null
+    const photosThumbnail = activity.photos?.[0]?.url || null
+    const thumbnail = mediaThumbnail || photosThumbnail
+
+    return {
+      ...activity,
+      // Note: activityType is canonical, componentType is deprecated (both come from spread)
+      parentActivityId: activity.parentActivityId || null,
+      description: activity.description || null,
+      startDatetime: activity.startDatetime?.toISOString() || null,
+      endDatetime: activity.endDatetime?.toISOString() || null,
+      timezone: activity.timezone || null,
+      location: activity.location || null,
+      address: activity.address || null,
+      coordinates: activity.coordinates || null,
+      notes: activity.notes || null,
+      confirmationNumber: activity.confirmationNumber || null,
+      // Booking tracking
+      isBooked: activity.isBooked ?? false,
+      bookingDate: activity.bookingDate?.toISOString() || null,
+      bookingId: activity.bookingId || null,
+      pricing: null, // Pricing comes from activity_pricing table, fetched separately
+      pricingType: activity.pricingType || null,
+      photos: activity.photos || null,
+      thumbnail,
+      createdAt: activity.createdAt.toISOString(),
+      updatedAt: activity.updatedAt.toISOString(),
+    }
+  }
+
+  /**
+   * Batch fetch thumbnails from activity_media for given activity IDs
+   * Returns a map of activityId -> first image URL
+   */
+  private async fetchThumbnails(activityIds: string[]): Promise<ThumbnailMap> {
+    if (activityIds.length === 0) return new Map()
+
+    // Fetch first image for each activity (ordered by orderIndex)
+    const mediaRecords = await this.db.client
+      .select({
+        activityId: this.db.schema.activityMedia.activityId,
+        fileUrl: this.db.schema.activityMedia.fileUrl,
+        orderIndex: this.db.schema.activityMedia.orderIndex,
+      })
+      .from(this.db.schema.activityMedia)
+      .where(
+        and(
+          inArray(this.db.schema.activityMedia.activityId, activityIds),
+          eq(this.db.schema.activityMedia.mediaType, 'image')
+        )
+      )
+      .orderBy(asc(this.db.schema.activityMedia.orderIndex))
+
+    // Create a map of activityId -> first image URL
+    const thumbnailMap: ThumbnailMap = new Map()
+    for (const record of mediaRecords) {
+      // Only set if we don't already have a thumbnail for this activity (first one wins)
+      if (!thumbnailMap.has(record.activityId)) {
+        thumbnailMap.set(record.activityId, record.fileUrl)
+      }
+    }
+
+    return thumbnailMap
+  }
+
+  private async verifyDayExists(itineraryDayId: string): Promise<void> {
+    const [day] = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryDays)
+      .where(eq(this.db.schema.itineraryDays.id, itineraryDayId))
+      .limit(1)
+
+    if (!day) {
+      throw new NotFoundException(`Itinerary day with ID ${itineraryDayId} not found`)
+    }
+  }
+
+  private async getMaxSequenceOrder(itineraryDayId: string): Promise<number> {
+    const [result] = await this.db.client
+      .select({
+        maxSeq: this.db.schema.itineraryActivities.sequenceOrder,
+      })
+      .from(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.itineraryDayId, itineraryDayId))
+      .orderBy(desc(this.db.schema.itineraryActivities.sequenceOrder))
+      .limit(1)
+
+    return result?.maxSeq ?? -1
+  }
+
+  /**
+   * Get the trip ID for a given day ID by traversing day → itinerary → trip
+   */
+  private async getTripIdFromDayId(dayId: string): Promise<string | null> {
+    const [day] = await this.db.client
+      .select({ itineraryId: this.db.schema.itineraryDays.itineraryId })
+      .from(this.db.schema.itineraryDays)
+      .where(eq(this.db.schema.itineraryDays.id, dayId))
+      .limit(1)
+
+    if (!day) return null
+
+    const [itinerary] = await this.db.client
+      .select({ tripId: this.db.schema.itineraries.tripId })
+      .from(this.db.schema.itineraries)
+      .where(eq(this.db.schema.itineraries.id, day.itineraryId))
+      .limit(1)
+
+    return itinerary?.tripId ?? null
+  }
+
+  /**
+   * Get trip data (currency, agencyId) from day ID
+   * Used to propagate trip-level data to activities
+   */
+  private async getTripDataFromDayId(dayId: string): Promise<{ currency: string; agencyId: string }> {
+    const tripId = await this.getTripIdFromDayId(dayId)
+    if (!tripId) {
+      this.logger.warn(`Could not find trip for dayId ${dayId}, defaulting to CAD currency`)
+      throw new BadRequestException(`Could not find trip for day ${dayId}`)
+    }
+
+    const [trip] = await this.db.client
+      .select({
+        currency: this.db.schema.trips.currency,
+        agencyId: this.db.schema.trips.agencyId,
+      })
+      .from(this.db.schema.trips)
+      .where(eq(this.db.schema.trips.id, tripId))
+      .limit(1)
+
+    if (!trip?.currency) {
+      this.logger.warn(`Trip ${tripId} has no currency set, defaulting to CAD`)
+    }
+
+    if (!trip?.agencyId) {
+      throw new BadRequestException(`Trip ${tripId} has no agency`)
+    }
+
+    return {
+      currency: trip.currency || 'CAD',
+      agencyId: trip.agencyId,
+    }
+  }
+
+  /**
+   * Duplicate an activity within the same day.
+   * Creates a copy with " (Copy)" appended to the name and new sortOrder at end of day.
+   * Performs deep copy: base activity + detail tables + pricing.
+   *
+   * @param dayId - The day ID (from URL path) - source of truth
+   * @param activityId - The activity ID to duplicate
+   * @returns The newly created activity
+   *
+   * Validation:
+   * - Activity must exist
+   * - Activity must belong to the specified dayId
+   * - Throws BadRequestException if validation fails
+   */
+  async duplicate(
+    dayId: string,
+    activityId: string,
+    actorId?: string | null
+  ): Promise<ActivityResponseDto> {
+    // 1. Fetch source activity (validates existence)
+    const sourceActivity = await this.findOne(activityId)
+
+    // 2. Validate activity belongs to specified dayId (prevents cross-day/trip duplication)
+    if (sourceActivity.itineraryDayId !== dayId) {
+      throw new BadRequestException(
+        `Activity ${activityId} does not belong to day ${dayId}`
+      )
+    }
+
+    // 3. Execute all operations in a transaction with proper locking
+    const newActivityId = await this.db.client.transaction(async (tx) => {
+      // 3a. Lock the parent day row to serialize concurrent operations
+      await tx.execute(
+        sql`SELECT id FROM itinerary_days WHERE id = ${dayId} FOR UPDATE`
+      )
+
+      // 3b. Get max sequence order (safe now since we hold the day lock)
+      const [maxSeqResult] = await tx.execute(
+        sql`SELECT COALESCE(MAX(sequence_order), -1) as max_seq
+            FROM itinerary_activities
+            WHERE itinerary_day_id = ${dayId}`
+      ) as unknown as [{ max_seq: number }]
+      const newSequenceOrder = (maxSeqResult?.max_seq ?? -1) + 1
+
+      // 3c. Create the base activity row
+      const [newActivity] = await tx
+        .insert(this.db.schema.itineraryActivities)
+        .values({
+          agencyId: (sourceActivity as any).agencyId, // Required for RLS (exists via spread)
+          itineraryDayId: dayId,
+          activityType: sourceActivity.activityType,
+          componentType: sourceActivity.componentType,
+          name: `${sourceActivity.name} (Copy)`,
+          description: sourceActivity.description || null,
+          sequenceOrder: newSequenceOrder,
+          startDatetime: sourceActivity.startDatetime ? new Date(sourceActivity.startDatetime) : null,
+          endDatetime: sourceActivity.endDatetime ? new Date(sourceActivity.endDatetime) : null,
+          timezone: sourceActivity.timezone || null,
+          location: sourceActivity.location || null,
+          address: sourceActivity.address || null,
+          coordinates: sourceActivity.coordinates || null,
+          notes: sourceActivity.notes || null,
+          confirmationNumber: sourceActivity.confirmationNumber || null,
+          status: sourceActivity.status,
+          pricingType: sourceActivity.pricingType || null,
+          currency: sourceActivity.currency || 'USD',
+          photos: sourceActivity.photos || null,
+        })
+        .returning({ id: this.db.schema.itineraryActivities.id })
+
+      if (!newActivity) {
+        throw new Error('Failed to create duplicate activity')
+      }
+
+      const newId = newActivity.id
+
+      // 3d. Copy type-specific detail table based on activityType
+      await this.copyDetailTable(tx, activityId, newId, sourceActivity.activityType)
+
+      // 3e. Copy activity_pricing if exists
+      await this.copyActivityPricing(tx, activityId, newId)
+
+      return newId
+    })
+
+    this.logger.log(`Duplicated activity ${activityId} -> ${newActivityId} (deep copy)`)
+
+    // Emit audit event for the duplicated activity (after transaction succeeds)
+    const resolvedTripId = await this.getTripIdFromDayId(dayId)
+    if (resolvedTripId) {
+      const newActivity = await this.findOne(newActivityId)
+      this.eventEmitter.emit(
+        'audit.created',
+        new AuditEvent(
+          'activity',
+          newActivityId,
+          'created',
+          resolvedTripId,
+          actorId ?? null,
+          `${newActivity.activityType} - ${newActivity.name} (duplicated)`,
+          {
+            after: sanitizeForAudit('activity', newActivity),
+            subType: newActivity.activityType,
+            sourceId: activityId,
+          }
+        )
+      )
+      return newActivity
+    }
+
+    return this.findOne(newActivityId)
+  }
+
+  /**
+   * Copy type-specific detail table for an activity
+   */
+  private async copyDetailTable(
+    tx: Parameters<Parameters<typeof this.db.client.transaction>[0]>[0],
+    sourceId: string,
+    targetId: string,
+    activityType: string
+  ): Promise<void> {
+    switch (activityType) {
+      case 'flight': {
+        const [source] = await tx
+          .select()
+          .from(this.db.schema.flightDetails)
+          .where(eq(this.db.schema.flightDetails.activityId, sourceId))
+          .limit(1)
+        if (source) {
+          await tx.insert(this.db.schema.flightDetails).values({
+            activityId: targetId,
+            airline: source.airline,
+            flightNumber: source.flightNumber,
+            departureAirportCode: source.departureAirportCode,
+            departureDate: source.departureDate,
+            departureTime: source.departureTime,
+            departureTimezone: source.departureTimezone,
+            departureTerminal: source.departureTerminal,
+            departureGate: source.departureGate,
+            arrivalAirportCode: source.arrivalAirportCode,
+            arrivalDate: source.arrivalDate,
+            arrivalTime: source.arrivalTime,
+            arrivalTimezone: source.arrivalTimezone,
+            arrivalTerminal: source.arrivalTerminal,
+            arrivalGate: source.arrivalGate,
+          })
+        }
+        break
+      }
+      case 'lodging': {
+        const [source] = await tx
+          .select()
+          .from(this.db.schema.lodgingDetails)
+          .where(eq(this.db.schema.lodgingDetails.activityId, sourceId))
+          .limit(1)
+        if (source) {
+          await tx.insert(this.db.schema.lodgingDetails).values({
+            activityId: targetId,
+            // Property info
+            propertyName: source.propertyName,
+            address: source.address,
+            phone: source.phone,
+            website: source.website,
+            // Check-in/out
+            checkInDate: source.checkInDate,
+            checkInTime: source.checkInTime,
+            checkOutDate: source.checkOutDate,
+            checkOutTime: source.checkOutTime,
+            timezone: source.timezone,
+            // Room details
+            roomType: source.roomType,
+            roomCount: source.roomCount,
+            amenities: source.amenities,
+            // Additional
+            specialRequests: source.specialRequests,
+          })
+        }
+        break
+      }
+      case 'transportation': {
+        const [source] = await tx
+          .select()
+          .from(this.db.schema.transportationDetails)
+          .where(eq(this.db.schema.transportationDetails.activityId, sourceId))
+          .limit(1)
+        if (source) {
+          await tx.insert(this.db.schema.transportationDetails).values({
+            activityId: targetId,
+            // Type classification
+            subtype: source.subtype,
+            // Provider
+            providerName: source.providerName,
+            providerPhone: source.providerPhone,
+            providerEmail: source.providerEmail,
+            // Vehicle details
+            vehicleType: source.vehicleType,
+            vehicleModel: source.vehicleModel,
+            vehicleCapacity: source.vehicleCapacity,
+            licensePlate: source.licensePlate,
+            // Pickup details
+            pickupDate: source.pickupDate,
+            pickupTime: source.pickupTime,
+            pickupTimezone: source.pickupTimezone,
+            pickupAddress: source.pickupAddress,
+            pickupNotes: source.pickupNotes,
+            // Dropoff details
+            dropoffDate: source.dropoffDate,
+            dropoffTime: source.dropoffTime,
+            dropoffTimezone: source.dropoffTimezone,
+            dropoffAddress: source.dropoffAddress,
+            dropoffNotes: source.dropoffNotes,
+            // Driver info
+            driverName: source.driverName,
+            driverPhone: source.driverPhone,
+            // Car rental specific
+            rentalPickupLocation: source.rentalPickupLocation,
+            rentalDropoffLocation: source.rentalDropoffLocation,
+            rentalInsuranceType: source.rentalInsuranceType,
+            rentalMileageLimit: source.rentalMileageLimit,
+            // Additional
+            features: source.features,
+            specialRequests: source.specialRequests,
+            flightNumber: source.flightNumber,
+            isRoundTrip: source.isRoundTrip,
+          })
+        }
+        break
+      }
+      case 'dining': {
+        const [source] = await tx
+          .select()
+          .from(this.db.schema.diningDetails)
+          .where(eq(this.db.schema.diningDetails.activityId, sourceId))
+          .limit(1)
+        if (source) {
+          await tx.insert(this.db.schema.diningDetails).values({
+            activityId: targetId,
+            // Restaurant info
+            restaurantName: source.restaurantName,
+            cuisineType: source.cuisineType,
+            mealType: source.mealType,
+            // Reservation
+            reservationDate: source.reservationDate,
+            reservationTime: source.reservationTime,
+            timezone: source.timezone,
+            partySize: source.partySize,
+            // Location
+            address: source.address,
+            phone: source.phone,
+            website: source.website,
+            coordinates: source.coordinates,
+            // Additional
+            priceRange: source.priceRange,
+            dressCode: source.dressCode,
+            dietaryRequirements: source.dietaryRequirements,
+            specialRequests: source.specialRequests,
+            menuUrl: source.menuUrl,
+          })
+        }
+        break
+      }
+      case 'options': {
+        const [source] = await tx
+          .select()
+          .from(this.db.schema.optionsDetails)
+          .where(eq(this.db.schema.optionsDetails.activityId, sourceId))
+          .limit(1)
+        if (source) {
+          await tx.insert(this.db.schema.optionsDetails).values({
+            activityId: targetId,
+            // Option info
+            optionCategory: source.optionCategory,
+            isSelected: source.isSelected,
+            // Availability
+            availabilityStartDate: source.availabilityStartDate,
+            availabilityEndDate: source.availabilityEndDate,
+            bookingDeadline: source.bookingDeadline,
+            // Capacity
+            minParticipants: source.minParticipants,
+            maxParticipants: source.maxParticipants,
+            spotsAvailable: source.spotsAvailable,
+            // Timing
+            durationMinutes: source.durationMinutes,
+            meetingPoint: source.meetingPoint,
+            meetingTime: source.meetingTime,
+            // Provider
+            providerName: source.providerName,
+            providerPhone: source.providerPhone,
+            providerEmail: source.providerEmail,
+            providerWebsite: source.providerWebsite,
+            // Details
+            inclusions: source.inclusions,
+            exclusions: source.exclusions,
+            requirements: source.requirements,
+            whatToBring: source.whatToBring,
+            // Display
+            displayOrder: source.displayOrder,
+            highlightText: source.highlightText,
+            instructionsText: source.instructionsText,
+          })
+        }
+        break
+      }
+      case 'custom_cruise': {
+        const [source] = await tx
+          .select()
+          .from(this.db.schema.customCruiseDetails)
+          .where(eq(this.db.schema.customCruiseDetails.activityId, sourceId))
+          .limit(1)
+        if (source) {
+          await tx.insert(this.db.schema.customCruiseDetails).values({
+            activityId: targetId,
+            // Traveltek Identity
+            traveltekCruiseId: source.traveltekCruiseId,
+            source: source.source,
+            // Cruise Line Info
+            cruiseLineName: source.cruiseLineName,
+            cruiseLineCode: source.cruiseLineCode,
+            cruiseLineId: source.cruiseLineId,
+            shipName: source.shipName,
+            shipCode: source.shipCode,
+            shipClass: source.shipClass,
+            shipImageUrl: source.shipImageUrl,
+            cruiseShipId: source.cruiseShipId,
+            // Voyage Details
+            itineraryName: source.itineraryName,
+            voyageCode: source.voyageCode,
+            region: source.region,
+            cruiseRegionId: source.cruiseRegionId,
+            nights: source.nights,
+            seaDays: source.seaDays,
+            // Departure
+            departurePort: source.departurePort,
+            departurePortId: source.departurePortId,
+            departureDate: source.departureDate,
+            departureTime: source.departureTime,
+            departureTimezone: source.departureTimezone,
+            // Arrival
+            arrivalPort: source.arrivalPort,
+            arrivalPortId: source.arrivalPortId,
+            arrivalDate: source.arrivalDate,
+            arrivalTime: source.arrivalTime,
+            arrivalTimezone: source.arrivalTimezone,
+            // Cabin
+            cabinCategory: source.cabinCategory,
+            cabinCode: source.cabinCode,
+            cabinNumber: source.cabinNumber,
+            cabinDeck: source.cabinDeck,
+            cabinImageUrl: source.cabinImageUrl,
+            cabinDescription: source.cabinDescription,
+            // Booking
+            bookingNumber: source.bookingNumber,
+            fareCode: source.fareCode,
+            bookingDeadline: source.bookingDeadline,
+            // JSON Data
+            portCallsJson: source.portCallsJson,
+            cabinPricingJson: source.cabinPricingJson,
+            shipContentJson: source.shipContentJson,
+            // Additional
+            inclusions: source.inclusions,
+            specialRequests: source.specialRequests,
+          })
+        }
+        break
+      }
+      case 'port_info': {
+        const [source] = await tx
+          .select()
+          .from(this.db.schema.portInfoDetails)
+          .where(eq(this.db.schema.portInfoDetails.activityId, sourceId))
+          .limit(1)
+        if (source) {
+          await tx.insert(this.db.schema.portInfoDetails).values({
+            activityId: targetId,
+            // Port Type
+            portType: source.portType,
+            // Port Info
+            portName: source.portName,
+            portLocation: source.portLocation,
+            // Timing
+            arrivalDate: source.arrivalDate,
+            arrivalTime: source.arrivalTime,
+            departureDate: source.departureDate,
+            departureTime: source.departureTime,
+            timezone: source.timezone,
+            // Port Details
+            dockName: source.dockName,
+            address: source.address,
+            coordinates: source.coordinates,
+            // Contact
+            phone: source.phone,
+            website: source.website,
+            // Excursion
+            excursionNotes: source.excursionNotes,
+            tenderRequired: source.tenderRequired,
+            // Additional
+            specialRequests: source.specialRequests,
+          })
+        }
+        break
+      }
+      // 'activity' type has no detail table - nothing to copy
+    }
+  }
+
+  /**
+   * Copy activity_pricing row if exists
+   */
+  private async copyActivityPricing(
+    tx: Parameters<Parameters<typeof this.db.client.transaction>[0]>[0],
+    sourceId: string,
+    targetId: string
+  ): Promise<void> {
+    const [source] = await tx
+      .select()
+      .from(this.db.schema.activityPricing)
+      .where(eq(this.db.schema.activityPricing.activityId, sourceId))
+      .limit(1)
+
+    if (source) {
+      await tx.insert(this.db.schema.activityPricing).values({
+        agencyId: source.agencyId, // Required for RLS
+        activityId: targetId,
+        pricingType: source.pricingType,
+        basePrice: source.basePrice,
+        totalPriceCents: source.totalPriceCents,
+        taxesAndFeesCents: source.taxesAndFeesCents,
+        currency: source.currency,
+        invoiceType: source.invoiceType,
+        commissionTotalCents: source.commissionTotalCents,
+        commissionSplitPercentage: source.commissionSplitPercentage,
+        commissionExpectedDate: source.commissionExpectedDate,
+        termsAndConditions: source.termsAndConditions,
+        cancellationPolicy: source.cancellationPolicy,
+        supplier: source.supplier,
+        bookingReference: source.bookingReference,
+      })
+    }
+  }
+
+  // ============================================================================
+  // Internal Helpers (used by package guard logic)
+  // ============================================================================
+
+  /**
+   * Internal find that returns raw DB row (used by guards that need activityType)
+   */
+  private async findOneInternal(id: string): Promise<any | null> {
+    const [activity] = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(eq(this.db.schema.itineraryActivities.id, id))
+      .limit(1)
+    return activity || null
+  }
+
+  // ============================================================================
+  // Package-Specific Methods
+  // ============================================================================
+
+  /**
+   * Link activities to a package.
+   * Sets the parentActivityId of the specified activities to the package ID.
+   *
+   * Validation:
+   * - Package must exist and be of type 'package'
+   * - Activities cannot be packages themselves (no nesting)
+   * - Prevents circular parent/child relationships
+   *
+   * @param packageId - The package activity ID
+   * @param activityIds - Array of activity IDs to link
+   */
+  async linkChildrenToPackage(packageId: string, activityIds: string[]): Promise<void> {
+    if (activityIds.length === 0) return
+
+    // Verify package exists and is of type 'package'
+    const pkg = await this.findOneInternal(packageId)
+    if (!pkg) {
+      throw new NotFoundException(`Package activity ${packageId} not found`)
+    }
+    if (pkg.activityType !== 'package') {
+      throw new BadRequestException('Can only link children to package activities')
+    }
+
+    // Verify all activities exist and none are packages
+    const activities = await this.db.client
+      .select()
+      .from(this.db.schema.itineraryActivities)
+      .where(inArray(this.db.schema.itineraryActivities.id, activityIds))
+
+    if (activities.length !== activityIds.length) {
+      throw new BadRequestException('One or more activity IDs are invalid')
+    }
+
+    // Check none are packages (prevent nesting)
+    const packageActivities = activities.filter(a => a.activityType === 'package')
+    if (packageActivities.length > 0) {
+      throw new BadRequestException('Cannot nest packages. Packages cannot be children of other packages.')
+    }
+
+    // Check for cycles (prevent an activity from being its own ancestor)
+    for (const activityId of activityIds) {
+      await this.validateNoParentCycle(activityId, packageId)
+    }
+
+    // Link all activities to the package
+    await this.db.client
+      .update(this.db.schema.itineraryActivities)
+      .set({ parentActivityId: packageId, updatedAt: new Date() })
+      .where(inArray(this.db.schema.itineraryActivities.id, activityIds))
+  }
+
+  /**
+   * Unlink activities from a package.
+   * Sets the parentActivityId to NULL for the specified activities.
+   *
+   * @param packageId - The package activity ID
+   * @param activityIds - Array of activity IDs to unlink
+   */
+  async unlinkChildrenFromPackage(packageId: string, activityIds: string[]): Promise<void> {
+    if (activityIds.length === 0) return
+
+    await this.db.client
+      .update(this.db.schema.itineraryActivities)
+      .set({ parentActivityId: null, updatedAt: new Date() })
+      .where(
+        and(
+          inArray(this.db.schema.itineraryActivities.id, activityIds),
+          eq(this.db.schema.itineraryActivities.parentActivityId, packageId)
+        )
+      )
+  }
+
+  /**
+   * Get all unlinked activities for a trip (activities not in any package)
+   * Used for the activity linker UI.
+   *
+   * @param tripId - Trip ID
+   */
+  async findUnlinkedByTrip(tripId: string): Promise<ActivityResponseDto[]> {
+    const activities = await this.db.client
+      .select({
+        activity: this.db.schema.itineraryActivities,
+      })
+      .from(this.db.schema.itineraryActivities)
+      .innerJoin(
+        this.db.schema.itineraryDays,
+        eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
+      )
+      .innerJoin(
+        this.db.schema.itineraries,
+        eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
+      )
+      .where(
+        and(
+          eq(this.db.schema.itineraries.tripId, tripId),
+          sql`${this.db.schema.itineraryActivities.parentActivityId} IS NULL`,
+          sql`${this.db.schema.itineraryActivities.activityType} != 'package'`
+        )
+      )
+      .orderBy(asc(this.db.schema.itineraryActivities.sequenceOrder))
+
+    return activities.map(r => this.formatActivityResponse(r.activity))
+  }
+
+  /**
+   * Get all packages for a trip
+   *
+   * @param tripId - Trip ID
+   */
+  async findPackagesByTrip(tripId: string): Promise<ActivityResponseDto[]> {
+    const activities = await this.db.client
+      .select({
+        activity: this.db.schema.itineraryActivities,
+      })
+      .from(this.db.schema.itineraryActivities)
+      .leftJoin(
+        this.db.schema.itineraryDays,
+        eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
+      )
+      .leftJoin(
+        this.db.schema.itineraries,
+        eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
+      )
+      .where(
+        and(
+          eq(this.db.schema.itineraries.tripId, tripId),
+          eq(this.db.schema.itineraryActivities.activityType, 'package')
+        )
+      )
+      .orderBy(asc(this.db.schema.itineraryActivities.sequenceOrder))
+
+    return activities.map(r => this.formatActivityResponse(r.activity))
+  }
+
+  /**
+   * Validate that setting parentActivityId won't create a cycle.
+   * Walks up the parent chain to ensure the proposed parent is not a descendant of the child.
+   *
+   * @param childId - The activity that would become a child
+   * @param proposedParentId - The activity that would become the parent
+   */
+  private async validateNoParentCycle(childId: string, proposedParentId: string): Promise<void> {
+    const MAX_DEPTH = 10 // Safety limit for recursion
+    let currentId: string | null = proposedParentId
+    let depth = 0
+
+    while (currentId && depth < MAX_DEPTH) {
+      if (currentId === childId) {
+        throw new BadRequestException('Cannot create circular parent/child relationship')
+      }
+      const parent = await this.findOneInternal(currentId)
+      currentId = parent?.parentActivityId || null
+      depth++
+    }
+
+    if (depth >= MAX_DEPTH) {
+      throw new BadRequestException('Parent chain too deep - possible circular reference')
+    }
+  }
+
+  /**
+   * Create package-specific details record
+   * Called after creating a package activity
+   *
+   * @param activityId - The package activity ID
+   * @param details - Package-specific details
+   */
+  async createPackageDetails(
+    activityId: string,
+    details?: {
+      supplierId?: string | null
+      supplierName?: string | null
+      cancellationPolicy?: string | null
+      cancellationDeadline?: string | null
+      termsAndConditions?: string | null
+      groupBookingNumber?: string | null
+    }
+  ): Promise<void> {
+    const [activity] = await this.db.client
+      .select({
+        id: this.db.schema.itineraryActivities.id,
+        tripId: this.db.schema.itineraries.tripId,
+      })
+      .from(this.db.schema.itineraryActivities)
+      .leftJoin(
+        this.db.schema.itineraryDays,
+        eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
+      )
+      .leftJoin(
+        this.db.schema.itineraries,
+        eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
+      )
+      .where(eq(this.db.schema.itineraryActivities.id, activityId))
+      .limit(1)
+
+    if (!activity?.tripId) {
+      throw new NotFoundException(`Trip not found for activity ${activityId}`)
+    }
+
+    await this.db.client
+      .insert(this.db.schema.packageDetails)
+      .values({
+        tripId: activity.tripId,
+        activityId,
+        supplierId: details?.supplierId || null,
+        supplierName: details?.supplierName || null,
+        cancellationPolicy: details?.cancellationPolicy || null,
+        cancellationDeadline: details?.cancellationDeadline || null,
+        termsAndConditions: details?.termsAndConditions || null,
+        groupBookingNumber: details?.groupBookingNumber || null,
+      })
+      .onConflictDoNothing({ target: this.db.schema.packageDetails.activityId })
+  }
+
+  /**
+   * Update package-specific details
+   *
+   * @param activityId - The package activity ID
+   * @param details - Package-specific details to update
+   */
+  async updatePackageDetails(
+    activityId: string,
+    details: {
+      supplierId?: string | null
+      supplierName?: string | null
+      paymentStatus?: 'unpaid' | 'deposit_paid' | 'paid' | 'refunded' | 'partially_refunded'
+      pricingType?: 'flat_rate' | 'per_person'
+      cancellationPolicy?: string | null
+      cancellationDeadline?: string | null
+      termsAndConditions?: string | null
+      groupBookingNumber?: string | null
+    }
+  ): Promise<void> {
+    await this.db.client
+      .update(this.db.schema.packageDetails)
+      .set({
+        ...(details.supplierId !== undefined && { supplierId: details.supplierId }),
+        ...(details.supplierName !== undefined && { supplierName: details.supplierName }),
+        ...(details.paymentStatus !== undefined && { paymentStatus: details.paymentStatus }),
+        ...(details.pricingType !== undefined && { pricingType: details.pricingType }),
+        ...(details.cancellationPolicy !== undefined && { cancellationPolicy: details.cancellationPolicy }),
+        ...(details.cancellationDeadline !== undefined && { cancellationDeadline: details.cancellationDeadline }),
+        ...(details.termsAndConditions !== undefined && { termsAndConditions: details.termsAndConditions }),
+        ...(details.groupBookingNumber !== undefined && { groupBookingNumber: details.groupBookingNumber }),
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.packageDetails.activityId, activityId))
+  }
+
+  /**
+   * Get package details for an activity
+   *
+   * @param activityId - The package activity ID
+   */
+  async getPackageDetails(activityId: string): Promise<any | null> {
+    const [details] = await this.db.client
+      .select()
+      .from(this.db.schema.packageDetails)
+      .where(eq(this.db.schema.packageDetails.activityId, activityId))
+      .limit(1)
+    return details || null
+  }
+
+  /**
+   * Create payment_schedule_config for a package
+   * Called after creating a package activity to prevent "missing schedule" warnings
+   *
+   * @param activityPricingId - The activity_pricing ID for the package
+   * @param agencyId - Agency ID (required for RLS)
+   */
+  async createPaymentScheduleConfig(activityPricingId: string, agencyId: string): Promise<void> {
+    await this.db.client
+      .insert(this.db.schema.paymentScheduleConfig)
+      .values({
+        agencyId, // Required for RLS
+        activityPricingId,
+        scheduleType: 'full', // Use 'full' as default (pay entire balance upfront)
+      })
+      .onConflictDoNothing({ target: this.db.schema.paymentScheduleConfig.activityPricingId })
+  }
+
+  /**
+   * Get trip totals for packages
+   * Returns aggregated financial data for all packages in a trip.
+   *
+   * @param tripId - Trip ID
+   */
+  async getTripPackageTotals(tripId: string): Promise<TripPackageTotalsDto> {
+    type TotalsRow = {
+      total_packages: string
+      grand_total_cents: string
+      total_collected_cents: string
+      expected_commission_cents: string
+      pending_commission_cents: string
+    }
+
+    // Payment chain: activity → activity_pricing → payment_schedule_config → expected_payment_items → payment_transactions
+    const [result] = await this.db.client.execute(sql`
+      WITH trip_packages AS (
+        SELECT ia.id, ia.is_booked
+        FROM itinerary_activities ia
+        LEFT JOIN itinerary_days id ON ia.itinerary_day_id = id.id
+        LEFT JOIN itineraries i ON id.itinerary_id = i.id
+        WHERE ia.activity_type = 'package'
+          AND (
+            i.trip_id = ${tripId}
+            OR (ia.itinerary_day_id IS NULL AND EXISTS (
+              SELECT 1 FROM itinerary_activities child
+              JOIN itinerary_days cid ON child.itinerary_day_id = cid.id
+              JOIN itineraries ci ON cid.itinerary_id = ci.id
+              WHERE child.parent_activity_id = ia.id
+                AND ci.trip_id = ${tripId}
+            ))
+          )
+      ),
+      package_totals AS (
+        SELECT
+          tp.id,
+          tp.is_booked,
+          COALESCE(ap.total_price_cents, 0) as price_cents,
+          COALESCE(ap.commission_total_cents, 0) as commission_cents
+        FROM trip_packages tp
+        LEFT JOIN activity_pricing ap ON ap.activity_id = tp.id
+      ),
+      payments AS (
+        SELECT
+          tp.id as package_id,
+          COALESCE(SUM(ptx.amount_cents), 0) as paid_cents
+        FROM trip_packages tp
+        LEFT JOIN activity_pricing ap ON ap.activity_id = tp.id
+        LEFT JOIN payment_schedule_config psc ON psc.activity_pricing_id = ap.id
+        LEFT JOIN expected_payment_items epi ON epi.payment_schedule_config_id = psc.id
+        LEFT JOIN payment_transactions ptx ON ptx.expected_payment_item_id = epi.id
+        GROUP BY tp.id
+      )
+      SELECT
+        COUNT(DISTINCT pt.id)::text as total_packages,
+        COALESCE(SUM(pt.price_cents), 0)::text as grand_total_cents,
+        COALESCE(SUM(p.paid_cents), 0)::text as total_collected_cents,
+        COALESCE(SUM(pt.commission_cents) FILTER (WHERE pt.is_booked = true), 0)::text as expected_commission_cents,
+        COALESCE(SUM(pt.commission_cents) FILTER (WHERE pt.is_booked = false), 0)::text as pending_commission_cents
+      FROM package_totals pt
+      LEFT JOIN payments p ON p.package_id = pt.id
+    `) as unknown as TotalsRow[]
+
+    const grandTotal = Number(result?.grand_total_cents ?? 0)
+    const totalCollected = Number(result?.total_collected_cents ?? 0)
+
+    return {
+      totalPackages: Number(result?.total_packages ?? 0),
+      grandTotalCents: grandTotal,
+      totalCollectedCents: totalCollected,
+      outstandingCents: grandTotal - totalCollected,
+      expectedCommissionCents: Number(result?.expected_commission_cents ?? 0),
+      pendingCommissionCents: Number(result?.pending_commission_cents ?? 0),
+    }
+  }
+}

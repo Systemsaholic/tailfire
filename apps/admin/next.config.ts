@@ -1,0 +1,68 @@
+import type { NextConfig } from 'next'
+
+const nextConfig: NextConfig = {
+  reactStrictMode: true,
+
+  // Transpile workspace packages
+  transpilePackages: ['@tailfire/shared-types'],
+
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+
+  // External image domains (cruise ship images and logos from Traveltek, R2 storage)
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'static.traveltek.net',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'pub-0ab7614dd4094206aa5c733bea70d570.r2.dev',
+        pathname: '/**',
+      },
+    ],
+  },
+
+  // Environment variables to expose to the client
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1',
+  },
+
+  // Cloudflare Pages compatibility
+  output: 'standalone',
+
+  // Redirect legacy /packages/* URLs to /activities/* equivalents
+  // Packages are activities with activityType='package' - no separate pages needed
+  async redirects() {
+    return [
+      // /trips/:id/packages/new → /trips/:id/activities/new?type=package
+      {
+        source: '/trips/:id/packages/new',
+        destination: '/trips/:id/activities/new?type=package',
+        permanent: false,
+      },
+      // /trips/:id/packages/:packageId → /trips/:id/activities/:packageId/edit?type=package
+      {
+        source: '/trips/:id/packages/:packageId',
+        destination: '/trips/:id/activities/:packageId/edit?type=package',
+        permanent: false,
+      },
+      // Legacy /bookings/* routes also redirect to /activities/*
+      {
+        source: '/trips/:id/bookings/new',
+        destination: '/trips/:id/activities/new?type=package',
+        permanent: false,
+      },
+      {
+        source: '/trips/:id/bookings/:bookingId',
+        destination: '/trips/:id/activities/:bookingId/edit?type=package',
+        permanent: false,
+      },
+    ]
+  },
+}
+
+export default nextConfig

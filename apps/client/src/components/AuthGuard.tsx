@@ -1,0 +1,49 @@
+"use client";
+
+import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useMockAuth } from "@/lib/mock-auth";
+import { Skeleton } from "@tailfire/ui-public";
+
+type AuthGuardProps = {
+  children: ReactNode;
+  fallback?: ReactNode;
+  redirectTo?: string;
+};
+
+export function AuthGuard({ children, fallback, redirectTo }: AuthGuardProps) {
+  const { user, loading } = useMockAuth();
+  const router = useRouter();
+
+  // Show loading state while checking auth
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-phoenix-charcoal p-8">
+        <div className="max-w-4xl mx-auto space-y-4">
+          <Skeleton className="h-12 w-64 bg-phoenix-charcoal/50" />
+          <Skeleton className="h-64 w-full bg-phoenix-charcoal/50" />
+          <Skeleton className="h-32 w-full bg-phoenix-charcoal/50" />
+        </div>
+      </div>
+    );
+  }
+
+  // User is not authenticated
+  if (!user) {
+    // If redirectTo is provided, redirect to that URL
+    if (redirectTo) {
+      router.push(redirectTo);
+      return null;
+    }
+    // If fallback is provided, show it
+    if (fallback) {
+      return <>{fallback}</>;
+    }
+    // Default: redirect to login
+    router.push("/login");
+    return null;
+  }
+
+  // User is authenticated, render children
+  return <>{children}</>;
+}
