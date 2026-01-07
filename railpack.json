@@ -5,6 +5,7 @@
     "install": {
       "commands": [
         { "type": "copy", "paths": ["."] },
+        "ls -la",
         "corepack enable",
         "pnpm install --frozen-lockfile"
       ]
