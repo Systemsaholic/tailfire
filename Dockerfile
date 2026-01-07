@@ -59,7 +59,7 @@ COPY --from=builder /app/pnpm-lock.yaml ./
 
 # Copy built packages
 COPY --from=builder /app/packages/database/dist ./packages/database/dist
-COPY --from=builder /app/packages/database/drizzle ./packages/database/drizzle
+COPY --from=builder /app/packages/database/src/migrations ./packages/database/src/migrations
 COPY --from=builder /app/packages/database/package.json ./packages/database/
 
 COPY --from=builder /app/packages/shared-types/dist ./packages/shared-types/dist
