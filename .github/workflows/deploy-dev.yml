@@ -77,84 +77,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build workspace packages
-        run: pnpm --filter @tailfire/database --filter @tailfire/shared-types build
-
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Pull Vercel Environment (Admin)
-        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: ./apps/admin
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_ADMIN_PROJECT_ID }}
-
-      - name: Build Admin
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: ./apps/admin
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_ADMIN_PROJECT_ID }}
-
       - name: Deploy Admin (Preview)
-        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --token=${{ secrets.VERCEL_TOKEN }}
         working-directory: ./apps/admin
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_ADMIN_PROJECT_ID }}
-
-      - name: Pull Vercel Environment (OTA)
-        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: ./apps/ota
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_OTA_PROJECT_ID }}
-
-      - name: Build OTA
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: ./apps/ota
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_OTA_PROJECT_ID }}
 
       - name: Deploy OTA (Preview)
-        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --token=${{ secrets.VERCEL_TOKEN }}
         working-directory: ./apps/ota
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_OTA_PROJECT_ID }}
 
-      - name: Pull Vercel Environment (Client)
-        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: ./apps/client
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_CLIENT_PROJECT_ID }}
-
-      - name: Build Client
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: ./apps/client
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_CLIENT_PROJECT_ID }}
-
       - name: Deploy Client (Preview)
-        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --token=${{ secrets.VERCEL_TOKEN }}
         working-directory: ./apps/client
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
