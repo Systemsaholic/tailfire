@@ -4,6 +4,7 @@
   "steps": {
     "install": {
       "commands": [
+        { "type": "copy", "paths": ["."] },
         "corepack enable",
         "pnpm install --frozen-lockfile"
       ]
