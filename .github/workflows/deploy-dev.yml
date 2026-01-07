@@ -85,7 +85,7 @@ jobs:
           curl -s -X PATCH "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_ADMIN_PROJECT_ID }}" \
             -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":"apps/admin","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build","framework":"nextjs"}'
+            -d '{"rootDirectory":"apps/admin","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build","framework":"nextjs"}'
 
       - name: Deploy Admin (Preview)
         run: vercel deploy --token=${{ secrets.VERCEL_TOKEN }}
