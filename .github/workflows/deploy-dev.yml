@@ -146,8 +146,9 @@ jobs:
     steps:
       - name: Health check API (retry)
         run: |
+          # Using Railway domain directly (SSL cert for custom domain pending)
           for i in {1..10}; do
-            if curl -sf https://api-dev.tailfire.ca/api/v1/health; then
+            if curl -sf https://tailfire-api-dev-dev.up.railway.app/api/v1/health; then
               echo "✅ API health check passed"
               exit 0
             fi
