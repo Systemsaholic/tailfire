@@ -2,7 +2,16 @@
   "$schema": "https://schema.railpack.com",
   "provider": "node",
   "steps": {
+    "install": {
+      "commands": [
+        {
+          "type": "exec",
+          "command": "corepack enable && pnpm install --frozen-lockfile"
+        }
+      ]
+    },
     "build": {
+      "inputs": [{ "step": "install" }],
       "commands": [
         {
           "type": "exec",
@@ -12,6 +21,7 @@
     }
   },
   "deploy": {
+    "inputs": [{ "step": "build" }],
     "startCommand": "pnpm --filter @tailfire/api start"
   }
 }
