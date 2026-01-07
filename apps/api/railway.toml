@@ -1,0 +1,8 @@
+[build]
+buildCommand = "pnpm --filter @tailfire/api build"
+
+[deploy]
+startCommand = "pnpm --filter @tailfire/api start"
+healthcheckPath = "/api/v1/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
