@@ -89,7 +89,7 @@ origin: (origin, callback) => {
 
 | Variable | Local | Railway Dev | Railway Prod |
 |----------|-------|-------------|--------------|
-| `NODE_ENV` | `development` | `production` | `production` |
+| `NODE_ENV` | `development` | `development` | `production` |
 | `PORT` | `3101` | (Railway assigns) | (Railway assigns) |
 | `DATABASE_URL` | Dev Supabase | Dev Supabase | Prod Supabase |
 | `SUPABASE_URL` | Dev project URL | Dev project URL | Prod project URL |
@@ -138,6 +138,36 @@ origin: (origin, callback) => {
 |------|--------|-------|
 | **Direct TCP** | `postgresql://postgres:[password]@db.[ref].supabase.co:5432/postgres` | Migrations (requires service role) |
 | **Pooler** | `postgresql://postgres.[ref]:[password]@aws-1-ca-central-1.pooler.supabase.com:6543/postgres` | Application runtime |
+
+---
+
+## Railway Quick Reference
+
+Quick reference for Railway API deployment configuration:
+
+| Setting | Development | Production |
+|---------|-------------|------------|
+| **Domain** | `api-dev.tailfire.ca` | `api.tailfire.ca` |
+| **Git Branch** | `develop` | `main` |
+| **NODE_ENV** | `development` | `production` |
+| **Supabase Project** | `gaqacfstpnmwphekjzae` | `cmktvanwglszgadjrorm` |
+| **Health Check** | `/api/v1/health` | `/api/v1/health` |
+| **Migrations** | CI/CD (not runtime) | CI/CD (not runtime) |
+
+### Key Differences Between Environments
+
+| Variable | Must Differ? | Notes |
+|----------|--------------|-------|
+| `NODE_ENV` | Yes | `development` vs `production` |
+| `DATABASE_URL` | Yes | Different Supabase projects |
+| `SUPABASE_*` keys | Yes | Different Supabase projects |
+| `JWT_SECRET` | Yes | Security: unique per environment |
+| `CORS_ORIGINS` | Yes | Different frontend domains |
+| `ADMIN_URL` | Yes | Different admin domains |
+| `ENABLE_SWAGGER_DOCS` | Yes | `true` in dev, `false` in prod |
+| `RUN_MIGRATIONS_ON_STARTUP` | No | `false` in both (CI/CD handles) |
+
+See [API Deployment](./DEPLOYMENT_API.md) for full Railway configuration details.
 
 ---
 

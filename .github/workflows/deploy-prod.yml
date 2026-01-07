@@ -85,12 +85,12 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Configure Vercel project for monorepo
+      - name: Set root directory
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_ADMIN_PROJECT_ID }}" \
             -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":"apps/admin","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build","framework":"nextjs"}'
+            -d '{"rootDirectory":"apps/admin"}'
 
       - name: Deploy Admin (Prod)
         run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
@@ -108,12 +108,12 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Configure Vercel project for monorepo
+      - name: Set root directory
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_OTA_PROJECT_ID }}" \
             -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":"apps/ota","installCommand":"pnpm install","framework":"nextjs"}'
+            -d '{"rootDirectory":"apps/ota"}'
 
       - name: Deploy OTA (Prod)
         run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
@@ -131,12 +131,12 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Configure Vercel project for monorepo
+      - name: Set root directory
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_CLIENT_PROJECT_ID }}" \
             -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":"apps/client","installCommand":"pnpm install","framework":"nextjs"}'
+            -d '{"rootDirectory":"apps/client"}'
 
       - name: Deploy Client (Prod)
         run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}

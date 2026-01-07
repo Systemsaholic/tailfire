@@ -28,6 +28,8 @@ Tailfire uses two primary deployment workflows:
 │  3. Deploy Admin to Vercel Preview (after migrations)           │
 │  4. Deploy OTA to Vercel Preview (after migrations)             │
 │  5. Deploy Client to Vercel Preview (after migrations)          │
+│  6. Smoke Test API (after Vercel deploys)                       │
+│     └─ Health check with retry logic                            │
 │                                                                 │
 │  Note: API deploys separately via Railway auto-deploy           │
 │                                                                 │
@@ -46,6 +48,8 @@ Tailfire uses two primary deployment workflows:
 │  3. Deploy Admin to Vercel Production (after migrations)        │
 │  4. Deploy OTA to Vercel Production (after migrations)          │
 │  5. Deploy Client to Vercel Production (after migrations)       │
+│  6. Smoke Test API (after Vercel deploys)                       │
+│     └─ Health check with retry logic                            │
 │                                                                 │
 │  Note: API deploys separately via Railway auto-deploy           │
 │                                                                 │
@@ -159,6 +163,7 @@ In Railway project settings:
 | `deploy-admin` | Deploy Admin to Vercel Preview | `deploy-api-migrations`, `deploy-ota-migrations` |
 | `deploy-ota` | Deploy OTA to Vercel Preview | `deploy-api-migrations`, `deploy-ota-migrations` |
 | `deploy-client` | Deploy Client to Vercel Preview | `deploy-api-migrations`, `deploy-ota-migrations` |
+| `smoke-test` | Health check API with retry logic | `deploy-admin`, `deploy-ota`, `deploy-client` |
 
 ### `deploy-prod.yml`
 
@@ -169,6 +174,32 @@ In Railway project settings:
 | `deploy-admin` | Deploy Admin to Vercel Production | `deploy-api-migrations`, `deploy-ota-migrations` |
 | `deploy-ota` | Deploy OTA to Vercel Production | `deploy-api-migrations`, `deploy-ota-migrations` |
 | `deploy-client` | Deploy Client to Vercel Production | `deploy-api-migrations`, `deploy-ota-migrations` |
+| `smoke-test` | Health check API with retry logic | `deploy-admin`, `deploy-ota`, `deploy-client` |
+
+---
+
+## GitHub Check Names (Branch Protection)
+
+Use these exact check names when configuring branch protection rules in GitHub:
+
+| Check Name | Purpose |
+|------------|---------|
+| `Deploy API Migrations (Drizzle)` | Drizzle migrations |
+| `Deploy OTA Migrations (Supabase)` | FDW/Supabase migrations |
+| `Deploy Admin to Vercel` | Admin app deployment |
+| `Deploy OTA to Vercel` | OTA app deployment |
+| `Deploy Client to Vercel` | Client app deployment |
+| `Smoke Test API` | API health check |
+
+### Configuring Branch Protection
+
+To require these checks before merging:
+
+1. Go to GitHub repository **Settings** → **Branches**
+2. Add or edit branch protection rule for `main` (and/or `develop`)
+3. Enable **Require status checks to pass before merging**
+4. Search for and select the check names above
+5. Enable **Require branches to be up to date before merging** (recommended)
 
 ---
 

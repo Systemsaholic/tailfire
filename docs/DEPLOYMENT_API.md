@@ -13,6 +13,116 @@ The Tailfire API is deployed to Railway with the following environments:
 
 ---
 
+## Railway Environments
+
+The Railway project has two environments, each tied to a specific Git branch and Supabase project:
+
+### Environment Configuration
+
+| Setting | Development | Production |
+|---------|-------------|------------|
+| **Domain** | `api-dev.tailfire.ca` | `api.tailfire.ca` |
+| **Git Branch** | `develop` | `main` |
+| **NODE_ENV** | `development` | `production` |
+| **Supabase Project** | `gaqacfstpnmwphekjzae` | `cmktvanwglszgadjrorm` |
+
+### Environment Variables by Environment
+
+These variables **must be different** between Dev and Prod:
+
+| Variable | Development | Production |
+|----------|-------------|------------|
+| `NODE_ENV` | `development` | `production` |
+| `DATABASE_URL` | Dev Supabase pooler URL | Prod Supabase pooler URL |
+| `SUPABASE_URL` | `https://gaqacfstpnmwphekjzae.supabase.co` | `https://cmktvanwglszgadjrorm.supabase.co` |
+| `SUPABASE_ANON_KEY` | Dev anon key | Prod anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Dev service role key | Prod service role key |
+| `SUPABASE_JWT_SECRET` | Dev JWT secret | Prod JWT secret |
+| `JWT_SECRET` | Dev-specific secret | Prod-specific secret |
+| `CORS_ORIGINS` | Dev allowlist (see below) | Prod allowlist (see below) |
+| `ADMIN_URL` | `https://tailfire-dev.phoenixvoyages.ca` | `https://tailfire.phoenixvoyages.ca` |
+| `ENABLE_SWAGGER_DOCS` | `true` | `false` |
+
+### CORS Origins by Environment
+
+**Development:**
+```
+https://tailfire-dev.phoenixvoyages.ca,https://ota-dev.phoenixvoyages.ca,https://client-dev.phoenixvoyages.ca,http://localhost:3100,http://localhost:3102,http://localhost:3103
+```
+
+**Production:**
+```
+https://tailfire.phoenixvoyages.ca,https://ota.phoenixvoyages.ca,https://client.phoenixvoyages.ca,https://phoenixvoyages.ca,https://www.phoenixvoyages.ca
+```
+
+### Migrations Guard
+
+Migrations are handled by CI/CD, **not at runtime**:
+
+| Variable | Development | Production |
+|----------|-------------|------------|
+| `RUN_MIGRATIONS_ON_STARTUP` | `false` | `false` |
+
+> **Note:** Set `RUN_MIGRATIONS_ON_STARTUP=true` only for emergency migrations. CI/CD runs migrations before Railway deploys.
+
+---
+
+## DNS Configuration
+
+Custom domains require DNS configuration to point to Railway.
+
+### Production Domain Setup (`api.tailfire.ca`)
+
+**Current Status:** The api-prod service is running in Railway. The domain `api.tailfire.ca` requires DNS configuration.
+
+**Required DNS Record:**
+
+| Type | Name | Value |
+|------|------|-------|
+| CNAME | `api` | Railway CNAME target |
+
+**Where to find the CNAME target:**
+1. Go to Railway dashboard
+2. Select the `api-prod` service
+3. Navigate to **Settings** → **Domains**
+4. Click on `api.tailfire.ca` to view the CNAME target
+
+### Development Domain Setup (`api-dev.tailfire.ca`)
+
+| Type | Name | Value |
+|------|------|-------|
+| CNAME | `api-dev` | Railway CNAME target (from api-dev service) |
+
+### Temporary Access
+
+While waiting for DNS propagation, use Railway's generated domain for testing:
+- Go to Railway service → **Settings** → **Domains**
+- Click **Generate Domain** to get a `*.railway.app` URL
+
+### Validation
+
+After DNS is configured, verify:
+
+1. **Health Check:**
+   ```bash
+   curl https://api.tailfire.ca/api/v1/health
+   # Should return: {"status":"ok","timestamp":"..."}
+   ```
+
+2. **SSL Certificate:**
+   - Railway automatically provisions SSL after DNS resolves
+   - Certificate issuance may take a few minutes after DNS propagation
+
+### DNS Propagation
+
+DNS changes can take up to 48 hours to propagate globally, though typically complete within minutes to a few hours. Use tools like `dig` or online DNS checkers to verify:
+
+```bash
+dig api.tailfire.ca CNAME
+```
+
+---
+
 ## Build Strategy
 
 Railway uses **Railpack** (or the project Dockerfile) to build the API. The build runs from the **repository root**, not `apps/api`.
