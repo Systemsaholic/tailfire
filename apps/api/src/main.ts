@@ -8,19 +8,28 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard'
 import { RolesGuard } from './auth/guards/roles.guard'
 
 async function bootstrap() {
-  // Run database migrations on startup
   const databaseUrl = process.env.DATABASE_URL
   if (!databaseUrl) {
     throw new Error('DATABASE_URL environment variable is required')
   }
 
-  console.info('🔄 Running database migrations...')
-  try {
-    await runMigrations(databaseUrl)
-    console.info('✅ Database migrations completed')
-  } catch (error) {
-    console.error('❌ Migration failed:', error)
-    process.exit(1)
+  // Only run migrations in development or when explicitly enabled
+  // CI/CD handles migrations in production environments
+  const shouldRunMigrations =
+    process.env.NODE_ENV === 'development' ||
+    process.env.RUN_MIGRATIONS_ON_STARTUP === 'true'
+
+  if (shouldRunMigrations) {
+    console.info('🔄 Running database migrations...')
+    try {
+      await runMigrations(databaseUrl)
+      console.info('✅ Database migrations completed')
+    } catch (error) {
+      console.error('❌ Migration failed:', error)
+      process.exit(1)
+    }
+  } else {
+    console.info('⏭️  Skipping migrations (CI/CD handles production migrations)')
   }
 
   const app = await NestFactory.create(AppModule, {

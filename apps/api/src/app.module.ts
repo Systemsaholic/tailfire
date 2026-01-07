@@ -27,6 +27,7 @@ import { CruiseRepositoryModule } from './cruise-repository/cruise-repository.mo
 import { TemplatesModule } from './templates/templates.module'
 import { UserProfilesModule } from './user-profiles/user-profiles.module'
 import { UsersModule } from './users/users.module'
+import { HealthModule } from './health/health.module'
 
 @Module({
   imports: [
@@ -92,6 +93,9 @@ import { UsersModule } from './users/users.module'
 
     // User Management (Admin)
     UsersModule,
+
+    // Health check for Railway/monitoring
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [

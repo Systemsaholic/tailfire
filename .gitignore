@@ -7,3 +7,5 @@ coverage
 .next
 .env
 .env.*
+*.tsbuildinfo
+apps/ota/supabase/.temp/
