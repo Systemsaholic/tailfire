@@ -6,7 +6,7 @@
       "commands": [
         {
           "type": "exec",
-          "command": "pnpm --filter @tailfire/api build"
+          "command": "pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/database build && pnpm --filter @tailfire/api build"
         }
       ]
     }
