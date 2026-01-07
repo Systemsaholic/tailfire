@@ -1,27 +1,100 @@
 # Tailfire Monorepo
 
-Travel management platform built with Turborepo, pnpm workspaces, and modern tooling.
+Next-generation travel agency management platform built with Turborepo, pnpm workspaces, and modern tooling.
 
 ## Structure
 
-- `apps/admin` - B2B Admin Dashboard (Next.js)
-- `apps/api` - Backend API (NestJS)
-- `apps/client` - Customer-facing app (Next.js)
-- `apps/ota` - OTA booking platform (Next.js)
-- `packages/` - Shared libraries (config, types, database, UI)
+```
+tailfire/
+├── apps/
+│   ├── admin/     # B2B Admin Dashboard (Next.js) - Port 3100
+│   ├── api/       # Backend API (NestJS) - Port 3101
+│   ├── client/    # Customer-facing app (Next.js) - Port 3103
+│   └── ota/       # OTA booking platform (Next.js) - Port 3102
+├── packages/
+│   ├── config/    # ESLint & TypeScript configs
+│   ├── database/  # Drizzle ORM schema & migrations
+│   ├── shared-types/  # TypeScript type definitions
+│   ├── api-client/    # API client library
+│   └── ui-public/     # Shared UI components
+└── docs/          # Project documentation
+```
 
-## Getting Started
+## Quick Start
 
 ```bash
+# Install dependencies
 pnpm install
+
+# Configure environment
+cp apps/api/.env.example apps/api/.env
+cp apps/admin/.env.example apps/admin/.env.local
+# Edit with your Supabase credentials
+
+# Run migrations (first time)
+cd apps/api && pnpm db:migrate && cd ../..
+
+# Start all apps
 pnpm dev
 ```
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Local Development](./docs/LOCAL_DEV.md) | Ports, startup commands, database setup |
+| [Environment Configuration](./docs/ENVIRONMENTS.md) | Domains, CORS, environment variables |
+| [CI/CD Pipeline](./docs/CI_CD.md) | GitHub Actions, deployment flow |
+| [API Deployment](./docs/DEPLOYMENT_API.md) | Railway settings, health checks |
+
+### App-Specific Documentation
+
+| App | Documentation |
+|-----|---------------|
+| [API](./apps/api/README.md) | NestJS backend, database, storage providers |
+| [Admin](./apps/admin/README.md) | B2B dashboard, state management, components |
+| [Database](./packages/database/README.md) | Schema, migrations, Drizzle ORM |
+| [Shared Types](./packages/shared-types/README.md) | Type definitions, API contracts |
+
+### Operational Guides
+
+| Guide | Description |
+|-------|-------------|
+| [Seed Runbook](./scripts/SEED-RUNBOOK.md) | Database seeding for dev/prod |
+| [FDW Setup](./apps/ota/supabase/FDW_SETUP.md) | Catalog data access via Foreign Data Wrapper |
+| [Migrations](./packages/database/MIGRATIONS.md) | Migration conventions and workflow |
+
 ## Deployment
 
-- **Dev**: Push to `develop` → GitHub Actions → Vercel Preview
-- **Prod**: Push to `main` → GitHub Actions → Vercel Production
+| Environment | Trigger | Platforms |
+|-------------|---------|-----------|
+| **Development** | Push to `develop` | Railway (API), Vercel Preview (frontends) |
+| **Production** | Push to `main` | Railway (API), Vercel Production (frontends) |
 
-## CI/CD Status
+### Production Domains
 
-Pipeline configured: 2026-01-06
+- **API**: `api.tailfire.ca`
+- **Admin**: `tailfire.phoenixvoyages.ca`
+- **OTA**: `ota.phoenixvoyages.ca`
+- **Client**: `client.phoenixvoyages.ca`
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| **Monorepo** | Turborepo + pnpm workspaces |
+| **Backend** | NestJS 10+, Drizzle ORM |
+| **Frontend** | Next.js 15, shadcn/ui, TanStack Query |
+| **Database** | Supabase PostgreSQL |
+| **Auth** | Supabase Auth + JWT |
+| **Storage** | Cloudflare R2, Backblaze B2, Supabase Storage |
+
+## Scripts
+
+```bash
+pnpm dev          # Start all apps in dev mode
+pnpm build        # Build all packages
+pnpm lint         # Run ESLint
+pnpm typecheck    # Run TypeScript type checking
+pnpm test         # Run tests
+```
