@@ -1,0 +1,14 @@
+# Railway Configuration for Tailfire API
+# https://docs.railway.app/guides/config-as-code
+
+[build]
+builder = "nixpacks"
+buildCommand = "pnpm install --frozen-lockfile && pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/api build"
+watchPatterns = ["/apps/api/**", "/packages/database/**", "/packages/shared-types/**"]
+
+[deploy]
+startCommand = "pnpm --filter @tailfire/api start:prod"
+healthcheckPath = "/api/v1/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+numReplicas = 1
