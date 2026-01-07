@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
+    "build:api": "pnpm --filter @tailfire/api build",
+    "start": "pnpm --filter @tailfire/api start",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "test": "turbo test"

@@ -30,11 +30,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build database package
+        run: pnpm --filter @tailfire/database build
+
       - name: Run Drizzle migrations
         working-directory: apps/api
         env:
           DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
-        run: pnpm drizzle-kit push
+        run: pnpm db:migrate
 
   deploy-ota-migrations:
     name: Deploy OTA Migrations (Supabase)
@@ -73,49 +76,89 @@ jobs:
         run: echo "OTA migration completed - FDW no-ops in Prod via guard logic"
 
   deploy-admin:
-    name: Deploy Admin App
+    name: Deploy Admin to Vercel (Prod)
     runs-on: ubuntu-latest
     needs: [deploy-api-migrations, deploy-ota-migrations]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy Admin to Vercel (Prod)
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_ADMIN_PROJECT_ID }}
-          vercel-args: '--prod'
-          working-directory: ./apps/admin
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Set root directory
+        run: |
+          curl -s -X PATCH "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_ADMIN_PROJECT_ID }}" \
+            -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"rootDirectory":"apps/admin"}'
+
+      - name: Deploy Admin (Prod)
+        run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_ADMIN_PROJECT_ID }}
 
   deploy-ota:
-    name: Deploy OTA App
+    name: Deploy OTA to Vercel (Prod)
     runs-on: ubuntu-latest
     needs: [deploy-api-migrations, deploy-ota-migrations]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy OTA to Vercel (Prod)
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_OTA_PROJECT_ID }}
-          vercel-args: '--prod'
-          working-directory: ./apps/ota
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Set root directory
+        run: |
+          curl -s -X PATCH "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_OTA_PROJECT_ID }}" \
+            -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"rootDirectory":"apps/ota"}'
+
+      - name: Deploy OTA (Prod)
+        run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_OTA_PROJECT_ID }}
 
   deploy-client:
-    name: Deploy Client App
+    name: Deploy Client to Vercel (Prod)
     runs-on: ubuntu-latest
     needs: [deploy-api-migrations, deploy-ota-migrations]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy Client to Vercel (Prod)
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_CLIENT_PROJECT_ID }}
-          vercel-args: '--prod'
-          working-directory: ./apps/client
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Set root directory
+        run: |
+          curl -s -X PATCH "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_CLIENT_PROJECT_ID }}" \
+            -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"rootDirectory":"apps/client"}'
+
+      - name: Deploy Client (Prod)
+        run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_CLIENT_PROJECT_ID }}
+
+  smoke-test:
+    name: Smoke Test API
+    runs-on: ubuntu-latest
+    needs: [deploy-admin, deploy-ota, deploy-client]
+    steps:
+      - name: Health check API (retry)
+        run: |
+          # Using Railway domain directly for reliable SSL
+          for i in {1..10}; do
+            if curl -sf https://api-prod-production-c75c.up.railway.app/api/v1/health; then
+              echo "✅ API health check passed"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "❌ API health check failed after 10 attempts"
+          exit 1
