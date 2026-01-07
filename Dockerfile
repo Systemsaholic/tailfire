@@ -21,8 +21,8 @@ COPY --from=deps /app/packages/database/node_modules ./packages/database/node_mo
 COPY --from=deps /app/packages/shared-types/node_modules ./packages/shared-types/node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY . .
-RUN pnpm --filter @tailfire/shared-types build
 RUN pnpm --filter @tailfire/database build
+RUN pnpm --filter @tailfire/shared-types build
 RUN pnpm --filter @tailfire/api build
 
 # Production runner
