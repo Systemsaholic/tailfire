@@ -143,3 +143,21 @@ jobs:
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_CLIENT_PROJECT_ID }}
+
+  smoke-test:
+    name: Smoke Test API
+    runs-on: ubuntu-latest
+    needs: [deploy-admin, deploy-ota, deploy-client]
+    steps:
+      - name: Health check API (retry)
+        run: |
+          for i in {1..10}; do
+            if curl -sf https://api.tailfire.ca/api/v1/health; then
+              echo "✅ API health check passed"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "❌ API health check failed after 10 attempts"
+          exit 1
