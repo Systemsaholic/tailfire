@@ -101,7 +101,7 @@ jobs:
             -d '{"rootDirectory":"apps/admin"}'
 
       - name: Deploy Admin (Prod)
-        run: vercel deploy --prod --token=$VERCEL_TOKEN
+        run: VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN
 
   deploy-ota:
     name: Deploy OTA to Vercel (Prod)
@@ -127,7 +127,7 @@ jobs:
             -d '{"rootDirectory":"apps/ota"}'
 
       - name: Deploy OTA (Prod)
-        run: vercel deploy --prod --token=$VERCEL_TOKEN
+        run: VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN
 
   deploy-client:
     name: Deploy Client to Vercel (Prod)
@@ -153,7 +153,7 @@ jobs:
             -d '{"rootDirectory":"apps/client"}'
 
       - name: Deploy Client (Prod)
-        run: vercel deploy --prod --token=$VERCEL_TOKEN
+        run: VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN
 
   smoke-test:
     name: Smoke Test API
