@@ -25,6 +25,11 @@ export class StorageService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    if (process.env.DISABLE_STORAGE_INIT === 'true') {
+      this.logger.warn('Storage provider initialization disabled by DISABLE_STORAGE_INIT')
+      return
+    }
+
     // Initialize storage providers
     await this.initializeProviders()
   }
