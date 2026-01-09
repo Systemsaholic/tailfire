@@ -309,6 +309,27 @@
       "when": 1767830400000,
       "tag": "20260107000000_enable_rls_api_lockdown",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1736380800000,
+      "tag": "20260109000000_sync_activity_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1736467200000,
+      "tag": "20260110000000_prod_baseline",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1736535600000,
+      "tag": "20260109170000_add_user_timezone",
+      "breakpoints": true
     }
   ]
 }
