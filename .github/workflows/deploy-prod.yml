@@ -1,4 +1,4 @@
-name: Deploy to Prod
+name: Deploy to Production
 
 on:
   push:
@@ -39,9 +39,10 @@ jobs:
         working-directory: apps/api
         run: pnpm db:migrate
 
-  deploy-ota-migrations:
-    name: Deploy OTA Migrations (Supabase)
+  deploy-api:
+    name: Deploy API to Railway
     runs-on: ubuntu-latest
+    needs: [deploy-api-migrations]
     steps:
       - uses: actions/checkout@v4
 
@@ -51,36 +52,33 @@ jobs:
           doppler-token: ${{ secrets.DOPPLER_TOKEN_PRD }}
           inject-env-vars: true
 
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
 
-      - name: Link to Prod project
-        working-directory: apps/ota
-        run: supabase link --project-ref $SUPABASE_PROJECT_REF
-
-      - name: Push OTA migrations
-        working-directory: apps/ota
+      - name: Deploy to Railway
         run: |
-          # FDW migration will NO-OP in Prod (local catalog schema exists)
-          # Guard logic: IF has_catalog AND NOT has_foreign_catalog THEN RETURN
-          # This keeps supabase_migrations table in sync across environments
-          supabase db push --linked
+          railway link --project $RAILWAY_PROJECT_ID --environment production
+          railway up --service api-prod --detach
 
-      - name: Verify catalog access
-        working-directory: apps/ota
+      - name: Wait for deployment to be ready
         run: |
-          # Hard gate: fail pipeline if catalog access is broken
-          supabase db query "SELECT 1 FROM catalog.cruise_lines LIMIT 1"
-
-      - name: Log migration result
-        run: echo "OTA migration completed - FDW no-ops in Prod via guard logic"
+          echo "Waiting for Railway deployment to start..."
+          sleep 30
+          for i in {1..20}; do
+            if curl -sf https://api.tailfire.ca/api/v1/health; then
+              echo "API deployment ready"
+              exit 0
+            fi
+            echo "Attempt $i/20 - waiting 15s..."
+            sleep 15
+          done
+          echo "API deployment not ready after 5 minutes"
+          exit 1
 
   deploy-admin:
-    name: Deploy Admin to Vercel (Prod)
+    name: Deploy Admin to Vercel
     runs-on: ubuntu-latest
-    needs: [deploy-api-migrations, deploy-ota-migrations]
+    needs: [deploy-api-migrations]
     steps:
       - uses: actions/checkout@v4
 
@@ -100,13 +98,13 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"rootDirectory":"apps/admin"}'
 
-      - name: Deploy Admin (Prod)
+      - name: Deploy Admin (Production)
         run: VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN
 
   deploy-ota:
-    name: Deploy OTA to Vercel (Prod)
+    name: Deploy OTA to Vercel
     runs-on: ubuntu-latest
-    needs: [deploy-api-migrations, deploy-ota-migrations]
+    needs: [deploy-api-migrations]
     steps:
       - uses: actions/checkout@v4
 
@@ -126,13 +124,13 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"rootDirectory":"apps/ota"}'
 
-      - name: Deploy OTA (Prod)
+      - name: Deploy OTA (Production)
         run: VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN
 
   deploy-client:
-    name: Deploy Client to Vercel (Prod)
+    name: Deploy Client to Vercel
     runs-on: ubuntu-latest
-    needs: [deploy-api-migrations, deploy-ota-migrations]
+    needs: [deploy-api-migrations]
     steps:
       - uses: actions/checkout@v4
 
@@ -152,24 +150,29 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"rootDirectory":"apps/client"}'
 
-      - name: Deploy Client (Prod)
+      - name: Deploy Client (Production)
         run: VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN
 
   smoke-test:
-    name: Smoke Test API
+    name: Smoke Test All Services
     runs-on: ubuntu-latest
-    needs: [deploy-admin, deploy-ota, deploy-client]
+    needs: [deploy-api, deploy-admin, deploy-ota, deploy-client]
     steps:
-      - name: Health check API (retry)
+      - name: Health check API
         run: |
-          # Using Railway domain directly for reliable SSL
-          for i in {1..10}; do
-            if curl -sf https://api-prod-production-c75c.up.railway.app/api/v1/health; then
-              echo "✅ API health check passed"
-              exit 0
-            fi
-            echo "Attempt $i failed, retrying in 10s..."
-            sleep 10
-          done
-          echo "❌ API health check failed after 10 attempts"
-          exit 1
+          if curl -sf https://api.tailfire.ca/api/v1/health; then
+            echo "API health check passed"
+          else
+            echo "API health check failed"
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          echo "All production deployments completed successfully!"
+          echo ""
+          echo "Endpoints:"
+          echo "  API:    https://api.tailfire.ca"
+          echo "  Admin:  https://tailfire.phoenixvoyages.ca"
+          echo "  OTA:    https://ota.phoenixvoyages.ca"
+          echo "  Client: https://client.phoenixvoyages.ca"

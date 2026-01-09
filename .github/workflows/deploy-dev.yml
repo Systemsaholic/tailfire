@@ -72,6 +72,42 @@ jobs:
           # Hard gate: fail pipeline if FDW is broken
           supabase db query "SELECT 1 FROM catalog.cruise_lines LIMIT 1"
 
+  deploy-api:
+    name: Deploy API to Railway
+    runs-on: ubuntu-latest
+    needs: [deploy-api-migrations]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch secrets from Doppler
+        uses: dopplerhq/secrets-fetch-action@v1.3.1
+        with:
+          doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
+          inject-env-vars: true
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: |
+          railway link --project $RAILWAY_PROJECT_ID --environment dev
+          railway up --service api-dev --detach
+
+      - name: Wait for deployment to be ready
+        run: |
+          echo "Waiting for Railway deployment to start..."
+          sleep 30
+          for i in {1..20}; do
+            if curl -sf https://api-dev-dev-13dd.up.railway.app/api/v1/health; then
+              echo "✅ API deployment ready"
+              exit 0
+            fi
+            echo "Attempt $i/20 - waiting 15s..."
+            sleep 15
+          done
+          echo "❌ API deployment not ready after 5 minutes"
+          exit 1
+
   deploy-admin:
     name: Deploy Admin to Vercel
     runs-on: ubuntu-latest
@@ -151,20 +187,25 @@ jobs:
         run: VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN
 
   smoke-test:
-    name: Smoke Test API
+    name: Smoke Test All Services
     runs-on: ubuntu-latest
-    needs: [deploy-admin, deploy-ota, deploy-client]
+    needs: [deploy-api, deploy-admin, deploy-ota, deploy-client]
     steps:
-      - name: Health check API (retry)
+      - name: Health check API
         run: |
-          # Using Railway domain directly (SSL cert for custom domain pending)
-          for i in {1..10}; do
-            if curl -sf https://tailfire-api-dev-dev.up.railway.app/api/v1/health; then
-              echo "✅ API health check passed"
-              exit 0
-            fi
-            echo "Attempt $i failed, retrying in 10s..."
-            sleep 10
-          done
-          echo "❌ API health check failed after 10 attempts"
-          exit 1
+          if curl -sf https://api-dev-dev-13dd.up.railway.app/api/v1/health; then
+            echo "✅ API health check passed"
+          else
+            echo "❌ API health check failed"
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          echo "🚀 All dev deployments completed successfully!"
+          echo ""
+          echo "Endpoints:"
+          echo "  API:    https://api-dev-dev-13dd.up.railway.app"
+          echo "  Admin:  Vercel preview URL (check workflow output)"
+          echo "  OTA:    Vercel preview URL (check workflow output)"
+          echo "  Client: Vercel preview URL (check workflow output)"
