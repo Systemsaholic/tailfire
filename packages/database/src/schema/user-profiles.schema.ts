@@ -76,6 +76,9 @@ export const userProfiles = pgTable('user_profiles', {
   emailSignatureConfig: jsonb('email_signature_config').default({}),
   platformPreferences: jsonb('platform_preferences').default({}),
 
+  // User Timezone (IANA format, e.g., 'America/Toronto')
+  timezone: varchar('timezone', { length: 64 }),
+
   // Licensing & Commission (default empty objects)
   licensingInfo: jsonb('licensing_info').default({}),
   commissionSettings: jsonb('commission_settings').default({}),

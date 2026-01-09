@@ -13,11 +13,9 @@ async function bootstrap() {
     throw new Error('DATABASE_URL environment variable is required')
   }
 
-  // Only run migrations in development or when explicitly enabled
-  // CI/CD handles migrations in production environments
-  const shouldRunMigrations =
-    process.env.NODE_ENV === 'development' ||
-    process.env.RUN_MIGRATIONS_ON_STARTUP === 'true'
+  // Only run migrations when explicitly enabled via environment variable
+  // CI/CD handles migrations for deployed environments (dev, staging, prod)
+  const shouldRunMigrations = process.env.RUN_MIGRATIONS_ON_STARTUP === 'true'
 
   if (shouldRunMigrations) {
     console.info('🔄 Running database migrations...')

@@ -79,6 +79,12 @@ export class ExternalApiRegistryService {
       `Registered provider: ${provider.config.provider} for ${provider.config.category} (priority: ${priority})`
     )
 
+    if (process.env.DISABLE_EXTERNAL_API_BOOTSTRAP === 'true') {
+      this.logger.warn('External API bootstrap disabled by DISABLE_EXTERNAL_API_BOOTSTRAP')
+      this.buildActiveProviderLists()
+      return
+    }
+
     // Immediately load credentials for this provider
     await this.loadCredentialsForProvider(key, provider)
 

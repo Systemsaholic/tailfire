@@ -54,6 +54,11 @@ export class ReferenceDataService implements OnModuleInit {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async onModuleInit() {
+    if (process.env.DISABLE_REFERENCE_CACHE === 'true') {
+      this.logger.warn('Reference data cache preload disabled by DISABLE_REFERENCE_CACHE')
+      return
+    }
+
     // Pre-load cache on startup
     await this.refreshCache()
   }

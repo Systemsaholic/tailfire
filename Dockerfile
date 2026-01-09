@@ -71,12 +71,12 @@ COPY --from=builder /app/apps/api/package.json ./apps/api/
 # Install production dependencies only
 RUN pnpm install --frozen-lockfile --prod
 
-# Expose port (NestJS default)
-EXPOSE 3101
+# Expose port (Railway injects PORT)
+EXPOSE ${PORT:-3101}
 
-# Health check
+# Health check using PORT env var (Railway injects this)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3101/api/v1/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+  CMD node -e "const port = process.env.PORT || 3101; require('http').get('http://localhost:' + port + '/api/v1/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
 
 # Start the API
 CMD ["node", "apps/api/dist/main.js"]
