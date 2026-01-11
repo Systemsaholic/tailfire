@@ -54,7 +54,7 @@ jobs:
 
       - name: Inject FDW password
         run: |
-          sed -i "s/__FDW_PASSWORD__/$FDW_CATALOG_PASSWORD/" \
+          sed -i "s|__FDW_PASSWORD__|$FDW_CATALOG_PASSWORD|" \
             packages/database/src/migrations/20260104205000_setup_catalog_fdw.sql
 
       - name: Run Drizzle migrations
