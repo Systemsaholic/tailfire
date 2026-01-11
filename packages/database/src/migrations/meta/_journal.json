@@ -337,6 +337,20 @@
       "when": 1736023800000,
       "tag": "20260104205000_setup_catalog_fdw",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1768165339262,
+      "tag": "20260111210112_create_storage_buckets",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1768165339263,
+      "tag": "20260111210113_storage_rls_policies",
+      "breakpoints": true
     }
   ]
 }
