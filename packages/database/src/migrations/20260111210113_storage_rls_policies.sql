@@ -1,0 +1,24 @@
+-- Phase 12: Storage RLS Policies
+-- NO-OP: RLS policies applied via Supabase Dashboard (storage.objects requires supabase_storage_admin role)
+--
+-- Policies to apply in Dashboard → Storage → Policies:
+--
+-- DOCUMENTS BUCKET (Private - user owns their files):
+--   - documents_select_own: SELECT WHERE bucket_id='documents' AND owner=auth.uid()
+--   - documents_insert_authenticated: INSERT WHERE bucket_id='documents' AND owner=auth.uid()
+--   - documents_update_own: UPDATE WHERE bucket_id='documents' AND owner=auth.uid()
+--   - documents_delete_own: DELETE WHERE bucket_id='documents' AND owner=auth.uid()
+--
+-- MEDIA BUCKET (Public read, authenticated write):
+--   - media_select_public: SELECT WHERE bucket_id='media' (anon, authenticated)
+--   - media_insert_authenticated: INSERT WHERE bucket_id='media' (authenticated)
+--   - media_update_own: UPDATE WHERE bucket_id='media' AND owner=auth.uid()
+--   - media_delete_own: DELETE WHERE bucket_id='media' AND owner=auth.uid()
+--
+-- AVATARS BUCKET (Public read, user writes to own folder):
+--   - avatars_select_public: SELECT WHERE bucket_id='avatars' (anon, authenticated)
+--   - avatars_insert_own_folder: INSERT WHERE bucket_id='avatars' AND (storage.foldername(name))[1]=auth.uid()::text
+--   - avatars_update_own: UPDATE WHERE bucket_id='avatars' AND (storage.foldername(name))[1]=auth.uid()::text
+--   - avatars_delete_own: DELETE WHERE bucket_id='avatars' AND (storage.foldername(name))[1]=auth.uid()::text
+
+SELECT 1;
