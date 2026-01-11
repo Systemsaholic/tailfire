@@ -88,25 +88,9 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Verify Railway auth
-        run: |
-          echo "Checking Railway token..."
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "ERROR: RAILWAY_TOKEN is not set in Doppler"
-            exit 1
-          fi
-          echo "RAILWAY_TOKEN is set (length: ${#RAILWAY_TOKEN})"
-          if ! railway whoami; then
-            echo ""
-            echo "ERROR: Railway token is invalid or expired."
-            echo "To fix: Generate new token in Railway dashboard -> Settings -> Tokens"
-            echo "Then update RAILWAY_TOKEN in Doppler (dev config)"
-            exit 1
-          fi
-
       - name: Deploy to Railway
         run: |
-          railway link --project $RAILWAY_PROJECT_ID --environment dev
+          # Project tokens are scoped to environment, no link needed
           railway up --service api-dev --detach
 
       - name: Wait for deployment to be ready
