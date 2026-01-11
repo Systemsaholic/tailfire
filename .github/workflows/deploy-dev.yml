@@ -18,13 +18,14 @@ jobs:
           doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
           inject-env-vars: true
 
-      - name: Verify direct DB connection (not pooler)
+      - name: Verify DB connection mode
         run: |
-          if echo "$DATABASE_URL" | grep -q "pooler.supabase.com"; then
-            echo "❌ DATABASE_URL uses pooler. Migrations require direct connection (db.<ref>.supabase.co)."
+          # Transaction pooler (port 6543) doesn't support DDL - reject it
+          if echo "$DATABASE_URL" | grep -q ":6543"; then
+            echo "❌ DATABASE_URL uses transaction pooler (port 6543). Migrations require session mode (port 5432)."
             exit 1
           fi
-          echo "✅ DATABASE_URL uses direct connection"
+          echo "✅ DATABASE_URL uses valid connection mode for migrations"
 
       - name: Guard against Supabase migrations
         run: |
