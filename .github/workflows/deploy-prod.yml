@@ -18,6 +18,30 @@ jobs:
           doppler-token: ${{ secrets.DOPPLER_TOKEN_PRD }}
           inject-env-vars: true
 
+      - name: Verify DB connection mode
+        run: |
+          # Transaction pooler (port 6543) doesn't support DDL - reject it
+          if echo "$DATABASE_URL" | grep -q ":6543"; then
+            echo "❌ DATABASE_URL uses transaction pooler (port 6543). Migrations require session mode (port 5432)."
+            exit 1
+          fi
+          # Log connection mode for debugging (without exposing secrets)
+          if echo "$DATABASE_URL" | grep -q "pooler.supabase.com"; then
+            echo "✅ Using Supavisor session pooler (port 5432) - OK for migrations"
+            echo "   Note: Session pooler is acceptable for DDL given GitHub Actions IPv6 limitations"
+          else
+            echo "✅ Using direct database connection (port 5432)"
+          fi
+
+      - name: Guard against Supabase migrations
+        run: |
+          if find apps/ota/supabase/migrations -maxdepth 1 -name "*.sql" -not -path "*/_archive/*" 2>/dev/null | grep -q .; then
+            echo "❌ Found .sql files in apps/ota/supabase/migrations/"
+            echo "All migrations must be in packages/database/src/migrations/ (Drizzle)"
+            exit 1
+          fi
+          echo "✅ No Supabase migrations found (Drizzle-only)"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
         with:
@@ -57,7 +81,7 @@ jobs:
 
       - name: Deploy to Railway
         run: |
-          railway link --project $RAILWAY_PROJECT_ID --environment production
+          # Project tokens are scoped to environment, no link needed
           railway up --service api-prod --detach
 
       - name: Wait for deployment to be ready
@@ -66,13 +90,13 @@ jobs:
           sleep 30
           for i in {1..20}; do
             if curl -sf https://api.tailfire.ca/api/v1/health; then
-              echo "API deployment ready"
+              echo "✅ API deployment ready"
               exit 0
             fi
             echo "Attempt $i/20 - waiting 15s..."
             sleep 15
           done
-          echo "API deployment not ready after 5 minutes"
+          echo "❌ API deployment not ready after 5 minutes"
           exit 1
 
   deploy-admin:
@@ -161,15 +185,15 @@ jobs:
       - name: Health check API
         run: |
           if curl -sf https://api.tailfire.ca/api/v1/health; then
-            echo "API health check passed"
+            echo "✅ API health check passed"
           else
-            echo "API health check failed"
+            echo "❌ API health check failed"
             exit 1
           fi
 
       - name: Summary
         run: |
-          echo "All production deployments completed successfully!"
+          echo "🚀 All production deployments completed successfully!"
           echo ""
           echo "Endpoints:"
           echo "  API:    https://api.tailfire.ca"

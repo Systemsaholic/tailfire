@@ -330,6 +330,13 @@
       "when": 1736535600000,
       "tag": "20260109170000_add_user_timezone",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1736023800000,
+      "tag": "20260104205000_setup_catalog_fdw",
+      "breakpoints": true
     }
   ]
 }
