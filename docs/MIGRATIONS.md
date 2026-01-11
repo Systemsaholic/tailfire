@@ -55,7 +55,7 @@ Migrations require **session mode** (port 5432). Transaction pooler (port 6543) 
 GitHub Actions does not support IPv6, so CI uses the **Supavisor session pooler**:
 
 ```
-postgres://postgres.<PROJECT_REF>:<PASSWORD>@aws-0-<REGION>.pooler.supabase.com:5432/postgres
+postgres://postgres.<PROJECT_REF>:<PASSWORD>@aws-1-ca-central-1.pooler.supabase.com:5432/postgres
 ```
 
 Get the exact connection string from the Supabase dashboard → Connect → Session pooler.
