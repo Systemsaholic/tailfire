@@ -25,7 +25,13 @@ jobs:
             echo "❌ DATABASE_URL uses transaction pooler (port 6543). Migrations require session mode (port 5432)."
             exit 1
           fi
-          echo "✅ DATABASE_URL uses valid connection mode for migrations"
+          # Log connection mode for debugging (without exposing secrets)
+          if echo "$DATABASE_URL" | grep -q "pooler.supabase.com"; then
+            echo "✅ Using Supavisor session pooler (port 5432) - OK for migrations"
+            echo "   Note: Session pooler is acceptable for DDL given GitHub Actions IPv6 limitations"
+          else
+            echo "✅ Using direct database connection (port 5432)"
+          fi
 
       - name: Guard against Supabase migrations
         run: |

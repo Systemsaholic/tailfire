@@ -40,14 +40,36 @@ The guard checks if `catalog.cruise_lines` is a regular table (`relkind='r'`) vs
 
 ## Database Connection Requirements
 
-Migrations require a **direct database connection**, not the pooler:
+Migrations require **session mode** (port 5432). Transaction pooler (port 6543) does **not** support DDL operations.
 
-| Environment | Correct URL Pattern |
-|-------------|---------------------|
-| Dev | `db.gaqacfstpnmwphekjzae.supabase.co:5432` |
-| Prod | `db.cmktvanwglszgadjrorm.supabase.co:5432` |
+### Connection Options
 
-The CI pipeline validates this before running migrations.
+| Mode | Port | DDL Support | Notes |
+|------|------|-------------|-------|
+| Direct connection | 5432 | ✅ | IPv6 only - not available in GitHub Actions |
+| Session pooler | 5432 | ✅ | IPv4 compatible - used in CI/CD |
+| Transaction pooler | 6543 | ❌ | Does not support migrations |
+
+### CI/CD Connection (GitHub Actions)
+
+GitHub Actions does not support IPv6, so CI uses the **Supavisor session pooler**:
+
+```
+postgres://postgres.<PROJECT_REF>:<PASSWORD>@aws-0-<REGION>.pooler.supabase.com:5432/postgres
+```
+
+Get the exact connection string from the Supabase dashboard → Connect → Session pooler.
+
+| Environment | Dashboard |
+|-------------|-----------|
+| Dev | [gaqacfstpnmwphekjzae](https://supabase.com/dashboard/project/gaqacfstpnmwphekjzae?showConnect=true) |
+| Prod | [cmktvanwglszgadjrorm](https://supabase.com/dashboard/project/cmktvanwglszgadjrorm?showConnect=true) |
+
+### Local Development
+
+For local development, you can use either direct connection (if your network supports IPv6) or the session pooler.
+
+The CI pipeline validates connection mode before running migrations.
 
 ## Creating New Migrations
 
