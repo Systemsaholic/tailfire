@@ -88,6 +88,16 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
+      - name: Verify Railway auth
+        run: |
+          echo "Checking Railway token..."
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "ERROR: RAILWAY_TOKEN is not set"
+            exit 1
+          fi
+          echo "RAILWAY_TOKEN is set (length: ${#RAILWAY_TOKEN})"
+          railway whoami || echo "Auth check failed - token may be invalid"
+
       - name: Deploy to Railway
         run: |
           railway link --project $RAILWAY_PROJECT_ID --environment dev
