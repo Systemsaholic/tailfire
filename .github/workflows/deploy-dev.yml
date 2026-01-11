@@ -59,6 +59,8 @@ jobs:
 
       - name: Run Drizzle migrations
         working-directory: apps/api
+        env:
+          NODE_OPTIONS: "--dns-result-order=ipv4first"
         run: pnpm db:migrate
 
   deploy-api:
