@@ -92,11 +92,17 @@ jobs:
         run: |
           echo "Checking Railway token..."
           if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "ERROR: RAILWAY_TOKEN is not set"
+            echo "ERROR: RAILWAY_TOKEN is not set in Doppler"
             exit 1
           fi
           echo "RAILWAY_TOKEN is set (length: ${#RAILWAY_TOKEN})"
-          railway whoami || echo "Auth check failed - token may be invalid"
+          if ! railway whoami; then
+            echo ""
+            echo "ERROR: Railway token is invalid or expired."
+            echo "To fix: Generate new token in Railway dashboard -> Settings -> Tokens"
+            echo "Then update RAILWAY_TOKEN in Doppler (dev config)"
+            exit 1
+          fi
 
       - name: Deploy to Railway
         run: |
