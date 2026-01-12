@@ -56,6 +56,7 @@ export class ItinerariesService {
       .insert(this.db.schema.itineraries)
       .values({
         tripId,
+        agencyId: trip.agencyId,
         name: dto.name,
         description: dto.description,
         coverPhoto: dto.coverPhoto || null,
