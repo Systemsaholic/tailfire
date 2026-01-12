@@ -43,6 +43,7 @@ export function LoginForm() {
         } else {
           setError(error.message)
         }
+        setIsLoading(false)
         return
       }
 
