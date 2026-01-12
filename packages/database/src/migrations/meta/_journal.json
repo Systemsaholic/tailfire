@@ -379,6 +379,13 @@
       "when": 1768240800000,
       "tag": "20260112170000_add_booking_tracking_to_activities",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1768244400000,
+      "tag": "20260112180000_rename_component_id_to_activity_id",
+      "breakpoints": true
     }
   ]
 }
