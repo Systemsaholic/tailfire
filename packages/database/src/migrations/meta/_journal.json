@@ -365,6 +365,20 @@
       "when": 1768234980000,
       "tag": "20260112162300_add_itineraries_agency_id",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1768236300000,
+      "tag": "20260112164500_add_days_activities_agency_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1768240800000,
+      "tag": "20260112170000_add_booking_tracking_to_activities",
+      "breakpoints": true
     }
   ]
 }
