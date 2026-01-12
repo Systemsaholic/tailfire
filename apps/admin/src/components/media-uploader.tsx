@@ -532,7 +532,6 @@ export function MediaUploader({
           </TabsContent>
           <TabsContent value="stock" className="mt-4">
             <UnsplashPicker
-              baseUrl={baseUrl}
               onSelect={handleUnsplashSelect}
               isSelecting={externalMediaMutation.isPending}
             />

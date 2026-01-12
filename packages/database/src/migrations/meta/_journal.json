@@ -351,6 +351,13 @@
       "when": 1736636473000,
       "tag": "20260111210113_storage_rls_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1736636474000,
+      "tag": "20251231200000_jwt_custom_claims_hook",
+      "breakpoints": true
     }
   ]
 }

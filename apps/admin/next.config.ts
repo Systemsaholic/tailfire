@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
 
   // External image domains (cruise ship images and logos from Traveltek, R2 storage)
   images: {
+    qualities: [75, 85, 100],
     remotePatterns: [
       {
         protocol: 'https',

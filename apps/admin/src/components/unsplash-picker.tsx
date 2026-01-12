@@ -12,10 +12,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Search, Loader2, ImageIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { ApiError } from '@/lib/api'
-
-// Default API URL
-const DEFAULT_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1'
+import { api, ApiError } from '@/lib/api'
 
 // Unsplash photo types
 interface UnsplashPhoto {
@@ -51,8 +48,6 @@ interface UnsplashSearchResponse {
 }
 
 interface UnsplashPickerProps {
-  /** Base API URL (defaults to NEXT_PUBLIC_API_URL) */
-  baseUrl?: string
   /** Callback when a photo is selected */
   onSelect: (photo: UnsplashPhoto) => void
   /** Whether a selection is being processed (disables further selections) */
@@ -77,7 +72,6 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export function UnsplashPicker({
-  baseUrl = DEFAULT_API_URL,
   onSelect,
   isSelecting = false,
 }: UnsplashPickerProps) {
@@ -111,16 +105,7 @@ export function UnsplashPicker({
         perPage: '20',
       })
 
-      const response = await fetch(
-        `${baseUrl.replace(/\/+$/, '')}/unsplash/search?${params.toString()}`
-      )
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: 'Search failed' }))
-        throw new ApiError(response.status, error.message)
-      }
-
-      return response.json() as Promise<UnsplashSearchResponse>
+      return api.get<UnsplashSearchResponse>(`/unsplash/search?${params.toString()}`)
     },
     enabled: debouncedQuery.trim().length > 0,
     staleTime: 5 * 60 * 1000, // 5 minutes (matches server cache)

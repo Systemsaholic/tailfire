@@ -202,7 +202,7 @@ export default function ForgotPasswordPage() {
           alt="Tropical beach at sunset with palm trees silhouetted against orange sky"
           fill
           className="object-cover"
-          loading="lazy"
+          priority
           quality={85}
           sizes="50vw"
         />

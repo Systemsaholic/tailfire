@@ -30,21 +30,29 @@ Run in the **Dev** database:
 SELECT vault.create_secret('fdw_password', '<STRONG_PASSWORD>');
 ```
 
-## Migration Placeholders
+## Migration Location
 
-Edit the FDW migration file:
-`tailfire/apps/ota/supabase/migrations/20260104205000_setup_catalog_fdw.sql`
+The FDW migration is now managed by **Drizzle ORM**:
 
-Replace:
-- `<PROD_DB_HOST>` with `db.<prod-project-ref>.supabase.co`
-- `<PROD_FDW_USER>` with `fdw_catalog_ro` (or your chosen read-only user)
+```
+packages/database/src/migrations/20260104205000_setup_catalog_fdw.sql
+```
+
+**Password Injection**: The migration contains a `__FDW_PASSWORD__` placeholder.
+- CI automatically injects from Doppler secret `FDW_CATALOG_PASSWORD` (dev only)
+- Production skips FDW setup via environment guard (catalog is local)
 
 ## Apply the Migration
 
-Use your standard Supabase migration workflow for `apps/ota`.
+Run from project root:
+
+```bash
+cd apps/api && pnpm db:migrate
+```
+
 The migration:
-- Skips FDW setup if `catalog` already exists locally.
-- Otherwise recreates `catalog` as a foreign schema with the allowlisted tables.
+- Skips FDW setup if `catalog.cruise_lines` is a local table (Production)
+- Otherwise recreates `catalog` as a foreign schema with the allowlisted tables (Dev)
 
 ## Notes
 

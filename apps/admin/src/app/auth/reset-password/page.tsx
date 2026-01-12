@@ -203,7 +203,7 @@ export default function ResetPasswordPage() {
             alt="Tropical beach at sunset with palm trees silhouetted against orange sky"
             fill
             className="object-cover"
-            loading="lazy"
+            priority
             quality={85}
             sizes="50vw"
           />
@@ -288,7 +288,7 @@ export default function ResetPasswordPage() {
             alt="Tropical beach at sunset with palm trees silhouetted against orange sky"
             fill
             className="object-cover"
-            loading="lazy"
+            priority
             quality={85}
             sizes="50vw"
           />
@@ -453,7 +453,7 @@ export default function ResetPasswordPage() {
           alt="Tropical beach at sunset with palm trees silhouetted against orange sky"
           fill
           className="object-cover"
-          loading="lazy"
+          priority
           quality={85}
           sizes="50vw"
         />

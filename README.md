@@ -20,6 +20,18 @@ tailfire/
 └── docs/          # Project documentation
 ```
 
+## Architecture
+
+Tailfire is designed as a **single-agency, multi-branch** platform:
+
+- **Single Agency**: One travel agency organization (Phoenix Voyages)
+- **Multiple Branches**: Support for future expansion to multiple physical or virtual branch locations
+- **Centralized Management**: Admin dashboard manages all branches from a single interface
+- **Shared Catalog**: All branches access the same cruise/tour catalog data
+- **Branch-Scoped Data**: Bookings, clients, and transactions are scoped to individual branches
+
+This is **not** a multi-tenant SaaS platform. The codebase serves a single agency with the flexibility to scale across multiple branches while maintaining centralized control.
+
 ## Quick Start
 
 ```bash
@@ -42,10 +54,14 @@ pnpm dev
 
 | Document | Description |
 |----------|-------------|
+| [Architecture](./docs/ARCHITECTURE.md) | System design, data flow, key decisions |
+| [Security Model](./docs/SECURITY.md) | Authentication, authorization, RLS |
+| [Database Architecture](./docs/DATABASE_ARCHITECTURE.md) | Schema, FDW, migrations |
 | [Local Development](./docs/LOCAL_DEV.md) | Ports, startup commands, database setup |
 | [Environment Configuration](./docs/ENVIRONMENTS.md) | Domains, CORS, environment variables |
 | [CI/CD Pipeline](./docs/CI_CD.md) | GitHub Actions, deployment flow |
 | [API Deployment](./docs/DEPLOYMENT_API.md) | Railway settings, health checks |
+| [Testing Guide](./docs/TESTING.md) | Test frameworks, patterns, CI integration |
 
 ### App-Specific Documentation
 
@@ -63,6 +79,7 @@ pnpm dev
 | [Seed Runbook](./scripts/SEED-RUNBOOK.md) | Database seeding for dev/prod |
 | [FDW Setup](./apps/ota/supabase/FDW_SETUP.md) | Catalog data access via Foreign Data Wrapper |
 | [Migrations](./packages/database/MIGRATIONS.md) | Migration conventions and workflow |
+| [Release Checklist](./docs/RELEASE_CHECKLIST.md) | Local-first release flow |
 
 ## Deployment
 

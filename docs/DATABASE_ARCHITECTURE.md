@@ -1,0 +1,457 @@
+# Database Architecture
+
+This document provides a deep dive into the database schema organization, Drizzle ORM setup, and the FDW (Foreign Data Wrapper) architecture.
+
+## Schema Organization
+
+Tailfire uses two PostgreSQL schemas:
+
+| Schema | Purpose | Table Count |
+|--------|---------|-------------|
+| `public` | Application data (multi-tenant) | ~47 tables |
+| `catalog` | Cruise reference data (read-only) | 16 tables |
+
+---
+
+## Catalog Schema
+
+**Location**: `packages/database/src/schema/cruise-*.schema.ts`
+
+The catalog schema contains read-only cruise reference data from Traveltek:
+
+### Reference Tables
+
+| Table | Purpose |
+|-------|---------|
+| `cruise_lines` | Cruise line companies with provider ID mapping |
+| `cruise_ships` | Individual ships with line references |
+| `cruise_regions` | Geographic regions for sailings |
+| `cruise_ports` | Embark/disembark ports with coordinates |
+
+### Ship Assets
+
+| Table | Purpose |
+|-------|---------|
+| `cruise_ship_images` | Ship gallery/hero images |
+| `cruise_ship_decks` | Ship deck plans |
+| `cruise_ship_cabin_types` | Cabin categories per ship |
+| `cruise_cabin_images` | Cabin type images |
+
+### Sailing Data
+
+| Table | Purpose |
+|-------|---------|
+| `cruise_sailings` | Individual sailing departures with prices |
+| `cruise_sailing_cabin_prices` | Price breakdown by cabin type (CAD) |
+| `cruise_sailing_stops` | Port-of-call details |
+| `cruise_sailing_regions` | Region mapping for sailings |
+| `cruise_alternate_sailings` | Alternative sailing options |
+
+### Sync Operations
+
+| Table | Purpose |
+|-------|---------|
+| `cruise_sync_raw` | Raw API data from Traveltek |
+| `cruise_sync_history` | Sync operation tracking/metrics |
+| `cruise_ftp_file_sync` | FTP file transfer tracking |
+
+### Schema Definition
+
+```typescript
+// packages/database/src/schema/catalog.schema.ts
+import { pgSchema } from 'drizzle-orm/pg-core'
+
+export const catalogSchema = pgSchema('catalog')
+
+// All cruise tables use catalogSchema.table()
+export const cruiseLines = catalogSchema.table('cruise_lines', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  provider: varchar('provider', { length: 100 }).notNull().default('traveltek'),
+  providerIdentifier: varchar('provider_identifier', { length: 100 }).notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  // ... more fields
+})
+```
+
+---
+
+## Public Schema
+
+**Location**: `packages/database/src/schema/*.schema.ts` (non-cruise files)
+
+The public schema contains all application data:
+
+### Core Multi-Tenancy
+
+| Table | Purpose |
+|-------|---------|
+| `agencies` | Agency organizations (multi-tenancy root) |
+| `user_profiles` | User data extending auth.users |
+
+### Trip Management
+
+| Table | Purpose |
+|-------|---------|
+| `trips` | Trip records with travelers |
+| `itineraries` | Trip itineraries |
+| `itinerary_days` | Day-by-day breakdown |
+| `itinerary_templates` | Reusable itinerary templates |
+
+### Activities (Polymorphic)
+
+| Table | Purpose |
+|-------|---------|
+| `activities` | Base activity records (all types) |
+| `activity_media` | Photos/videos for activities |
+| `activity_documents` | Attached documents |
+| `activity_pricing` | Cost breakdown |
+| `activity_suppliers` | Vendor information |
+| `activity_travelers` | Per-traveler assignments |
+
+### Component Detail Tables
+
+| Table | Activity Type |
+|-------|---------------|
+| `flight_details` | Flight bookings |
+| `lodging_details` | Hotels, resorts |
+| `dining_details` | Restaurant reservations |
+| `transportation_details` | Car rentals, transfers |
+| `custom_cruise_details` | Custom cruise bookings |
+| `port_info_details` | Port day information |
+| `options_details` | Optional add-ons |
+
+### CRM & Contacts
+
+| Table | Purpose |
+|-------|---------|
+| `contacts` | Customer records |
+| `tags` | Tagging system |
+
+### Financials
+
+| Table | Purpose |
+|-------|---------|
+| `financials` | Financial records |
+| `payment_templates` | Payment schedule templates |
+
+---
+
+## Drizzle ORM Setup
+
+### Client Factory
+
+**Location**: `packages/database/src/client.ts`
+
+```typescript
+export function createDbClient(connectionString: string, options = {}) {
+  // Detect Supabase pooler (port 6543 or pooler.supabase.com)
+  const isPooledConnection =
+    connectionString.includes('pooler.supabase.com') ||
+    connectionString.includes(':6543/')
+
+  const sql = postgres(connectionString, {
+    max: 10,
+    prepare: !isPooledConnection,  // Disable prepared statements for pooler
+    ...options,
+  })
+
+  return drizzle(sql, { schema })
+}
+```
+
+**Key Feature**: Automatic detection of Supabase pooler connections to disable prepared statements (required for transaction pooling).
+
+### Configuration
+
+**Location**: `packages/database/drizzle.config.ts`
+
+```typescript
+export default defineConfig({
+  schema: './src/schema/index.ts',
+  out: './src/migrations',
+  dialect: 'postgresql',
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+  verbose: true,
+  strict: true,
+})
+```
+
+### Schema Export
+
+**Location**: `packages/database/src/schema/index.ts`
+
+All schemas are exported from a single entry point:
+- Catalog schema definition
+- All 16 cruise tables
+- All ~47 public tables
+- Relations and enums
+
+---
+
+## FDW Architecture
+
+### Overview
+
+The Foreign Data Wrapper allows Development to read catalog data from Production:
+
+| Environment | Project Ref | catalog Schema |
+|-------------|-------------|----------------|
+| **Production** | `cmktvanwglszgadjrorm` | Local tables (ordinary PostgreSQL) |
+| **Development** | `gaqacfstpnmwphekjzae` | Foreign tables (via FDW to Prod) |
+
+### FDW Migration
+
+**Location**: `packages/database/src/migrations/20260104205000_setup_catalog_fdw.sql`
+
+#### Guard Clause
+
+The migration detects the environment by checking if `catalog.cruise_lines` exists as a local table:
+
+```sql
+DO $$
+BEGIN
+  -- Check if catalog.cruise_lines exists as a local table ('r' = ordinary table)
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    WHERE n.nspname = 'catalog'
+      AND c.relname = 'cruise_lines'
+      AND c.relkind = 'r'
+  ) THEN
+    RAISE NOTICE 'Local catalog tables exist - skipping FDW setup (Production)';
+    RETURN;
+  END IF;
+
+  -- FDW setup code runs here (Development only)
+END $$;
+```
+
+#### Foreign Server Creation
+
+```sql
+CREATE EXTENSION IF NOT EXISTS postgres_fdw;
+
+CREATE SERVER prod_catalog
+  FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (
+    host 'db.cmktvanwglszgadjrorm.supabase.co',
+    port '5432',
+    dbname 'postgres'
+  );
+```
+
+#### User Mapping
+
+```sql
+CREATE USER MAPPING FOR current_user
+  SERVER prod_catalog
+  OPTIONS (
+    user 'fdw_catalog_ro',
+    password '__FDW_PASSWORD__'  -- Substituted by CI pipeline
+  );
+```
+
+**Note**: `__FDW_PASSWORD__` is replaced during CI/CD deployment. Never commit the actual password.
+
+#### Schema Import
+
+```sql
+IMPORT FOREIGN SCHEMA catalog
+  LIMIT TO (
+    cruise_alternate_sailings,
+    cruise_cabin_images,
+    cruise_ftp_file_sync,
+    cruise_lines,
+    cruise_ports,
+    cruise_regions,
+    cruise_sailing_cabin_prices,
+    cruise_sailing_regions,
+    cruise_sailing_stops,
+    cruise_sailings,
+    cruise_ship_cabin_types,
+    cruise_ship_decks,
+    cruise_ship_images,
+    cruise_ships,
+    cruise_sync_history,
+    cruise_sync_raw
+  )
+  FROM SERVER prod_catalog
+  INTO catalog;
+```
+
+#### Permissions
+
+```sql
+GRANT USAGE ON SCHEMA catalog TO service_role, authenticated;
+GRANT SELECT ON ALL TABLES IN SCHEMA catalog TO service_role, authenticated;
+```
+
+### Production Setup (Read-Only User)
+
+On the **Production** database, create the read-only user:
+
+```sql
+-- Create read-only user for FDW
+CREATE USER fdw_catalog_ro WITH PASSWORD '<STRONG_PASSWORD>';
+
+-- Grant access to catalog schema
+GRANT USAGE ON SCHEMA catalog TO fdw_catalog_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA catalog TO fdw_catalog_ro;
+
+-- Auto-grant on future tables
+ALTER DEFAULT PRIVILEGES IN SCHEMA catalog
+  GRANT SELECT ON TABLES TO fdw_catalog_ro;
+```
+
+### Development Setup (Vault Secret)
+
+On the **Development** database, store the password in Supabase Vault:
+
+```sql
+SELECT vault.create_secret('fdw_password', '<STRONG_PASSWORD>');
+```
+
+---
+
+## Migration Strategy
+
+### Migration System
+
+Tailfire uses **Drizzle-only** migrations:
+
+- **Location**: `packages/database/src/migrations/`
+- **Tracking**: `migrations/meta/_journal.json`
+- **Total**: 89 SQL files, 48 tracked entries
+
+### Migration Types
+
+| Type | Format | Example |
+|------|--------|---------|
+| Auto-generated | `0000_name.sql` | `0002_add_bidirectional_relationship_constraint.sql` |
+| Manual | `YYYYMMDDHHmmss_name.sql` | `20260104205000_setup_catalog_fdw.sql` |
+
+### Key Migrations
+
+| Migration | Purpose |
+|-----------|---------|
+| `20251130100000_cruise_data_repository.sql` | Comprehensive cruise schema |
+| `20260104205000_setup_catalog_fdw.sql` | FDW setup with guard clause |
+| `20260105000000_move_cruise_tables_to_catalog_schema.sql` | Schema reorganization |
+| `20251231300000_enable_rls_policies.sql` | Row-level security |
+| `20260107000000_enable_rls_api_lockdown.sql` | RLS lockdown |
+| `20251231200000_jwt_custom_claims_hook.sql` | JWT claim injection |
+
+### Migration Execution
+
+**Location**: `packages/database/src/migrate.ts`
+
+Migrations run from `apps/api` only:
+
+```typescript
+export async function runMigrations(connectionString: string) {
+  const sql = postgres(connectionString, { max: 1 })
+  const db = drizzle(sql)
+
+  await migrate(db, { migrationsFolder })
+}
+```
+
+**Commands** (from `apps/api`):
+
+```bash
+pnpm db:generate  # Generate migration from schema changes
+pnpm db:migrate   # Run pending migrations
+pnpm db:reset     # Reset database (dev only)
+```
+
+### Deprecated: Supabase CLI Migrations
+
+Supabase CLI migrations are archived in `apps/ota/supabase/migrations/_archive/`. All new migrations use Drizzle.
+
+---
+
+## Key Tables Deep Dive
+
+### agencies
+
+Multi-tenancy root table:
+
+```typescript
+export const agencies = pgTable('agencies', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull(),
+  slug: varchar('slug', { length: 100 }).unique(),
+  isActive: boolean('is_active').default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+})
+```
+
+### user_profiles
+
+Extends `auth.users` with application data:
+
+```typescript
+export const userProfiles = pgTable('user_profiles', {
+  id: uuid('id').primaryKey(),  // Matches auth.users.id
+  agencyId: uuid('agency_id').notNull().references(() => agencies.id),
+  role: userRoleEnum('role').notNull().default('user'),
+  status: userStatusEnum('status').notNull().default('pending'),
+  licensingInfo: jsonb('licensing_info'),
+  commissionSettings: jsonb('commission_settings'),
+  platformPreferences: jsonb('platform_preferences'),
+})
+```
+
+### trips
+
+Trip management with agency scoping:
+
+```typescript
+export const trips = pgTable('trips', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  agencyId: uuid('agency_id').notNull(),  // Denormalized for RLS
+  ownerId: uuid('owner_id').notNull(),    // User who created
+  status: tripStatusEnum('status').notNull().default('draft'),
+  // ... more fields
+})
+```
+
+### activities
+
+Polymorphic activity system:
+
+```typescript
+export const activities = pgTable('activities', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  componentType: componentTypeEnum('component_type').notNull(),
+  parentActivityId: uuid('parent_activity_id'),  // Self-referential for packages
+  // ... common fields
+})
+
+// Component types: flight, cruise, lodging, transportation, dining,
+//                  entertainment, excursion, insurance, custom, port_info
+```
+
+---
+
+## Database Connection Types
+
+| Type | Port | Use Case |
+|------|------|----------|
+| **Direct TCP** | 5432 | Migrations, admin operations |
+| **Session Pooler** | 5432 | OK for migrations (IPv6 workaround) |
+| **Transaction Pooler** | 6543 | Application runtime only |
+
+**Important**: Transaction pooler (6543) does not support DDL operations. Migrations must use direct or session mode.
+
+---
+
+## Related Documentation
+
+- [Architecture Overview](./ARCHITECTURE.md) - High-level system design
+- [Security Model](./SECURITY.md) - RLS policies and auth
+- [CI/CD Pipeline](./CI_CD.md) - Migration deployment
+- [FDW Setup Guide](../apps/ota/supabase/FDW_SETUP.md) - Detailed FDW instructions
