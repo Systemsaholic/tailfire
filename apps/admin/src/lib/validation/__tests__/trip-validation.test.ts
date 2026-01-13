@@ -362,7 +362,7 @@ describe('toTripDefaults', () => {
     const defaults = toTripDefaults()
 
     expect(defaults.name).toBe('')
-    expect(defaults.tripType).toBe('')
+    expect(defaults.tripType).toBe('leisure')
     expect(defaults.status).toBe('draft')
     expect(defaults.tags).toEqual([])
     expect(defaults.startDate).toBe('')
@@ -494,7 +494,7 @@ describe('toTripApiPayload', () => {
     expect('addDatesLater' in payload).toBe(false)
   })
 
-  it('converts empty string tripType to undefined', () => {
+  it('converts empty string tripType to leisure', () => {
     const formData: TripFormValues = {
       name: 'Test Trip',
       tripType: '',
@@ -508,7 +508,7 @@ describe('toTripApiPayload', () => {
 
     const payload = toTripApiPayload(formData)
 
-    expect(payload.tripType).toBeUndefined()
+    expect(payload.tripType).toBe('leisure')
   })
 
   it('converts empty string timezone to undefined', () => {

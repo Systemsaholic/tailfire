@@ -93,7 +93,7 @@ export function toTripDefaults(trip?: TripResponseDto | null): TripFormValues {
   if (!trip) {
     return {
       name: '',
-      tripType: '',
+      tripType: 'leisure',
       status: 'draft',
       tags: [],
       startDate: '',
@@ -133,7 +133,7 @@ export function toTripApiPayload(
 ): CreateTripDto {
   return {
     name: data.name,
-    tripType: data.tripType || undefined,
+    tripType: data.tripType || 'leisure',
     status: data.status,
     tags: data.tags.length > 0 ? data.tags : undefined,
     startDate: data.addDatesLater ? undefined : (data.startDate || undefined),

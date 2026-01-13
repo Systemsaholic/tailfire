@@ -428,6 +428,13 @@
       "when": 1768330192000,
       "tag": "20260113040952_floating_packages_support",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1768348800000,
+      "tag": "20260114000000_fix_trip_reference_null_type",
+      "breakpoints": true
     }
   ]
 }
