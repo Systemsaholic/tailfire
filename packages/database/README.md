@@ -90,11 +90,24 @@ SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 | `agencies.schema.ts` | agencies, branches | Agency structure |
 | `contacts.schema.ts` | contacts, relationships, groups | Contact management |
 | `trips.schema.ts` | trips, travelers, itineraries | Trip management |
+| `activities.schema.ts` | activities, activity_* | Trip activities (tours, dining, packages, etc.) |
 | `bookings.schema.ts` | bookings, booking_* | All 7 booking types |
 | `financials.schema.ts` | payments, commissions, trust ledger | Financial management |
 | `tasks.schema.ts` | tasks | Task management |
 | `cruise.schema.ts` | cruise_catalogue, ships, ports | Cruise catalogue |
 | `lookups.schema.ts` | countries, currencies, etc. | Lookup tables |
+
+## Schema Notes
+
+### Floating Packages
+
+Package activities are "floating" - they exist at the trip level rather than being tied to a specific itinerary day. This is implemented with:
+
+- `itinerary_day_id` is nullable for package activities
+- `trip_id` column provides the trip-level association
+- Database constraint ensures either `itinerary_day_id` is set OR (`trip_id` is set AND `type = 'package'`)
+
+See `apps/admin/docs/activity-form-patterns.md` for frontend implementation patterns.
 
 ## Development
 
