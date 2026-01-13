@@ -101,6 +101,9 @@ export function PackageForm({
   const [activeTab, setActiveTab] = useState<PackageTab>(defaultTab)
   const [currentPackageId, setCurrentPackageId] = useState<string | null>(packageId || null)
 
+  // Safety net ref to prevent duplicate creation race condition
+  const createInProgressRef = useRef(false)
+
   // Fetch package data if not provided
   const { data: fetchedPackageData } = useBooking(packageId || null, {
     enabled: !!packageId && !initialPackageData,
@@ -177,6 +180,9 @@ export function PackageForm({
 
   // Watch all form values for auto-save
   const watchedValues = useWatch({ control })
+  // Create stable string representation for dependency comparison
+  // useWatch returns new object reference every render - JSON.stringify creates stable primitive
+  const watchedValuesKey = useMemo(() => JSON.stringify(watchedValues), [watchedValues])
 
   // Auto-save effect
   useEffect(() => {
@@ -189,20 +195,35 @@ export function PackageForm({
     }
 
     autoSaveTimeoutRef.current = setTimeout(async () => {
+      // SAFETY NET: Check refs to prevent duplicate creation race condition
+      if (createInProgressRef.current) {
+        return
+      }
+
       setAutoSaveStatus('saving')
       try {
         const formData = getValues()
 
         let response
-        if (currentPackageId) {
+        // Use ref for immediate check (state may be stale)
+        if (currentPackageId || packageIdRef.current) {
+          const id = currentPackageId || packageIdRef.current!
           const updatePayload = toPackageUpdatePayload(formData)
-          response = await updateBooking.mutateAsync({ id: currentPackageId, data: updatePayload })
+          response = await updateBooking.mutateAsync({ id, data: updatePayload })
         } else {
-          const createPayload = toPackageApiPayload(formData, tripId)
-          response = await createBooking.mutateAsync(createPayload)
+          // Mark create as in progress before API call
+          createInProgressRef.current = true
+          try {
+            const createPayload = toPackageApiPayload(formData, tripId)
+            response = await createBooking.mutateAsync(createPayload)
+          } finally {
+            createInProgressRef.current = false
+          }
         }
 
-        if (!currentPackageId && response.id) {
+        if (response.id && !packageIdRef.current) {
+          // Update ref immediately (synchronous) before React state update
+          packageIdRef.current = response.id
           setCurrentPackageId(response.id)
         }
 
@@ -224,7 +245,7 @@ export function PackageForm({
       }
     }
   }, [
-    watchedValues,
+    watchedValuesKey, // Use stable string instead of object reference
     isDirty,
     isValid,
     isValidating,

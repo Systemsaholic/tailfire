@@ -207,6 +207,10 @@ export function TransportationForm({
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
 
+  // Safety net refs to prevent duplicate creation race condition
+  const activityIdRef = useRef<string | null>(activity?.id || null)
+  const createInProgressRef = useRef(false)
+
   // Activity pricing ID (gated on this for payment schedule)
   const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
 
@@ -464,13 +468,33 @@ export function TransportationForm({
     }
 
     const timer = setTimeout(async () => {
+      // SAFETY NET: Check refs to prevent duplicate creation race condition
+      if (createInProgressRef.current) {
+        return
+      }
+
       setSaveStatus('saving')
 
       try {
-        const response = await saveFn(getValues())
+        // Check if we're creating (no activity yet)
+        const isCreating = !activityId && !activityIdRef.current
+        if (isCreating) {
+          createInProgressRef.current = true
+        }
+
+        let response
+        try {
+          response = await saveFn(getValues())
+        } finally {
+          if (isCreating) {
+            createInProgressRef.current = false
+          }
+        }
 
         // Update activity ID on create
-        if (!activityId && response.id) {
+        if (response.id && !activityIdRef.current) {
+          // Update ref immediately (synchronous) before React state update
+          activityIdRef.current = response.id
           setActivityId(response.id)
         }
 

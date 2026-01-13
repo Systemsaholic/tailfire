@@ -386,6 +386,48 @@
       "when": 1768244400000,
       "tag": "20260112180000_rename_component_id_to_activity_id",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1768248000000,
+      "tag": "0040_add_aerodatabox_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1768251600000,
+      "tag": "0041_add_amadeus_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1768255800000,
+      "tag": "20260112123000_add_missing_api_providers",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1768262400000,
+      "tag": "20260112200000_add_tour_package_enum_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1768270800000,
+      "tag": "20260112220000_add_missing_custom_cruise_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1768330192000,
+      "tag": "20260113040952_floating_packages_support",
+      "breakpoints": true
     }
   ]
 }

@@ -205,6 +205,8 @@ export function LodgingForm({
 
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
+  // Note: lodging-form already has a guard that prevents auto-save for new activities
+  // (if (!activityId) return) so createInProgressRef is not needed here
 
   // Activity pricing ID (gated on this for payment schedule)
   const [activityPricingId, setActivityPricingId] = useState<string | null>(null)

@@ -109,6 +109,10 @@ export function TourForm({
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
 
+  // Safety net refs to prevent duplicate creation race condition
+  const activityIdRef = useRef<string | null>(activity?.id || null)
+  const createInProgressRef = useRef(false)
+
   // Activity pricing ID (gated on this for payment schedule)
   const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
 
@@ -148,7 +152,7 @@ export function TourForm({
   // Initialize react-hook-form with Zod validation
   const form = useForm<TourFormData>({
     resolver: zodResolver(tourFormSchema),
-    defaultValues: toTourDefaults(null, dayDate, trip?.currency),
+    defaultValues: toTourDefaults({ itineraryDayId: dayId }, dayDate, trip?.currency),
     mode: 'onSubmit',
   })
 
@@ -304,6 +308,9 @@ export function TourForm({
 
   // Watch all form values for auto-save
   const watchedValues = useWatch({ control })
+  // Create stable string representation for dependency comparison
+  // useWatch returns new object reference every render - JSON.stringify creates stable primitive
+  const watchedValuesKey = useMemo(() => JSON.stringify(watchedValues), [watchedValues])
 
   // Auto-save effect
   useEffect(() => {
@@ -316,18 +323,33 @@ export function TourForm({
     }
 
     autoSaveTimeoutRef.current = setTimeout(async () => {
+      // SAFETY NET: Check refs to prevent duplicate creation race condition
+      if (createInProgressRef.current) {
+        return
+      }
+
       setAutoSaveStatus('saving')
       try {
         const formData = getValues()
 
         let response
-        if (activityId) {
-          response = await updateTour.mutateAsync({ id: activityId, data: formData })
+        // Use ref for immediate check (state may be stale)
+        if (activityId || activityIdRef.current) {
+          const id = activityId || activityIdRef.current!
+          response = await updateTour.mutateAsync({ id, data: formData })
         } else {
-          response = await createTour.mutateAsync(formData)
+          // Mark create as in progress before API call
+          createInProgressRef.current = true
+          try {
+            response = await createTour.mutateAsync(formData)
+          } finally {
+            createInProgressRef.current = false
+          }
         }
 
-        if (!activityId && response.id) {
+        if (response.id && !activityIdRef.current) {
+          // Update ref immediately (synchronous) before React state update
+          activityIdRef.current = response.id
           setActivityId(response.id)
         }
         if ((response as any).activityPricingId && (response as any).activityPricingId !== activityPricingId) {
@@ -352,7 +374,7 @@ export function TourForm({
       }
     }
   }, [
-    watchedValues,
+    watchedValuesKey, // Use stable string instead of object reference
     isDirty,
     isValid,
     isValidating,

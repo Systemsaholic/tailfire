@@ -438,6 +438,7 @@ export class ActivitiesService {
       .values({
         agencyId, // Required for RLS
         itineraryDayId: dto.itineraryDayId || null, // Nullable for packages
+        tripId: tripId || null, // For floating packages (packages without a specific day)
         parentActivityId: dto.parentActivityId || null,
         activityType: dto.activityType,
         componentType: dto.activityType, // Default to activityType for backward compatibility

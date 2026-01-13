@@ -86,6 +86,10 @@ export function PortInfoForm({
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
 
+  // Safety net refs to prevent duplicate creation race condition
+  const activityIdRef = useRef<string | null>(activity?.id || null)
+  const createInProgressRef = useRef(false)
+
   // Booking status state
   const [showBookingModal, setShowBookingModal] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
@@ -131,6 +135,9 @@ export function PortInfoForm({
 
   // Watch all form values for auto-save
   const watchedValues = useWatch({ control })
+  // Create stable string representation for dependency comparison
+  // useWatch returns new object reference every render - JSON.stringify creates stable primitive
+  const watchedValuesKey = useMemo(() => JSON.stringify(watchedValues), [watchedValues])
   const portNameValue = useWatch({ control, name: 'portInfoDetails.portName' })
 
   // Auto-generate activity name from port name
@@ -263,20 +270,35 @@ export function PortInfoForm({
 
     // Debounce the save
     autoSaveTimeoutRef.current = setTimeout(async () => {
+      // SAFETY NET: Check refs to prevent duplicate creation race condition
+      if (createInProgressRef.current) {
+        return
+      }
+
       setAutoSaveStatus('saving')
 
       try {
         const formData = getValues()
         const payload = toPortInfoApiPayload(formData)
 
-        if (activityId) {
+        // Use ref for immediate check (state may be stale)
+        if (activityId || activityIdRef.current) {
           // Update existing
-          await updatePortInfo.mutateAsync({ id: activityId, data: payload.portInfoDetails || {} })
+          const id = activityId || activityIdRef.current!
+          await updatePortInfo.mutateAsync({ id, data: payload.portInfoDetails || {} })
         } else {
-          // Create new
-          const result = await createPortInfo.mutateAsync(payload)
-          if (result?.id) {
-            setActivityId(result.id)
+          // Mark create as in progress before API call
+          createInProgressRef.current = true
+          try {
+            // Create new
+            const result = await createPortInfo.mutateAsync(payload)
+            if (result?.id) {
+              // Update ref immediately (synchronous) before React state update
+              activityIdRef.current = result.id
+              setActivityId(result.id)
+            }
+          } finally {
+            createInProgressRef.current = false
           }
         }
 
@@ -298,7 +320,7 @@ export function PortInfoForm({
       }
     }
   }, [
-    watchedValues,
+    watchedValuesKey, // Use stable string instead of object reference
     isDirty,
     isValid,
     isValidating,

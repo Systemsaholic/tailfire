@@ -61,6 +61,9 @@ export const itineraryActivities = pgTable('itinerary_activities', {
   id: uuid('id').primaryKey().defaultRandom(),
   // Nullable for package activities that float (not tied to a specific day)
   itineraryDayId: uuid('itinerary_day_id').references(() => itineraryDays.id, { onDelete: 'cascade' }),
+  // Trip ID for floating packages (packages don't belong to a specific day)
+  // Note: FK constraint added via migration to avoid circular reference issues
+  tripId: uuid('trip_id'),
 
   // Agency Association (denormalized for RLS, required)
   agencyId: uuid('agency_id').notNull(),

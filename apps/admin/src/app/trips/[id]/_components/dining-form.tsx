@@ -119,6 +119,10 @@ export function DiningForm({
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
 
+  // Safety net refs to prevent duplicate creation race condition
+  const activityIdRef = useRef<string | null>(activity?.id || null)
+  const createInProgressRef = useRef(false)
+
   // Activity pricing ID (gated on this for payment schedule)
   const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
 
@@ -291,6 +295,9 @@ export function DiningForm({
 
   // Watch all form values for auto-save
   const watchedValues = useWatch({ control })
+  // Create stable string representation for dependency comparison
+  // useWatch returns new object reference every render - JSON.stringify creates stable primitive
+  const watchedValuesKey = useMemo(() => JSON.stringify(watchedValues), [watchedValues])
 
   // Auto-save effect with validation gating
   useEffect(() => {
@@ -306,20 +313,35 @@ export function DiningForm({
 
     // Debounce the save
     autoSaveTimeoutRef.current = setTimeout(async () => {
+      // SAFETY NET: Check refs to prevent duplicate creation race condition
+      if (createInProgressRef.current) {
+        return
+      }
+
       setAutoSaveStatus('saving')
       try {
         const formData = getValues()
         const payload = toDiningApiPayload(formData)
 
         let response
-        if (activityId) {
-          response = await updateDining.mutateAsync({ id: activityId, data: payload })
+        // Use ref for immediate check (state may be stale)
+        if (activityId || activityIdRef.current) {
+          const id = activityId || activityIdRef.current!
+          response = await updateDining.mutateAsync({ id, data: payload })
         } else {
-          response = await createDining.mutateAsync(payload)
+          // Mark create as in progress before API call
+          createInProgressRef.current = true
+          try {
+            response = await createDining.mutateAsync(payload)
+          } finally {
+            createInProgressRef.current = false
+          }
         }
 
         // Update activity ID on first save
-        if (!activityId && response.id) {
+        if (response.id && !activityIdRef.current) {
+          // Update ref immediately (synchronous) before React state update
+          activityIdRef.current = response.id
           setActivityId(response.id)
         }
         if (response.activityPricingId && response.activityPricingId !== activityPricingId) {
@@ -344,7 +366,7 @@ export function DiningForm({
       }
     }
   }, [
-    watchedValues,
+    watchedValuesKey, // Use stable string instead of object reference
     isDirty,
     isValid,
     isValidating,

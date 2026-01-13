@@ -62,7 +62,7 @@ export class ActivityTotalsService {
         SELECT pa.id as activity_id, COALESCE(SUM(ptx.amount_cents), 0) as paid
         FROM package_activities pa
         LEFT JOIN activity_pricing ap ON ap.activity_id = pa.id
-        LEFT JOIN payment_schedule_config psc ON psc.activity_pricing_id = ap.id
+        LEFT JOIN payment_schedule_config psc ON psc.component_pricing_id = ap.id
         LEFT JOIN expected_payment_items epi ON epi.payment_schedule_config_id = psc.id
         LEFT JOIN payment_transactions ptx ON ptx.expected_payment_item_id = epi.id
         GROUP BY pa.id
@@ -123,7 +123,7 @@ export class ActivityTotalsService {
         SELECT ac.root_id, COALESCE(SUM(ptx.amount_cents), 0) as paid
         FROM all_costs ac
         LEFT JOIN activity_pricing ap ON ap.activity_id = ac.root_id
-        LEFT JOIN payment_schedule_config psc ON psc.activity_pricing_id = ap.id
+        LEFT JOIN payment_schedule_config psc ON psc.component_pricing_id = ap.id
         LEFT JOIN expected_payment_items epi ON epi.payment_schedule_config_id = psc.id
         LEFT JOIN payment_transactions ptx ON ptx.expected_payment_item_id = epi.id
         GROUP BY ac.root_id
@@ -182,7 +182,7 @@ export class ActivityTotalsService {
         COALESCE(
           (SELECT SUM(ptx.amount_cents)
            FROM activity_pricing ap2
-           LEFT JOIN payment_schedule_config psc ON psc.activity_pricing_id = ap2.id
+           LEFT JOIN payment_schedule_config psc ON psc.component_pricing_id = ap2.id
            LEFT JOIN expected_payment_items epi ON epi.payment_schedule_config_id = psc.id
            LEFT JOIN payment_transactions ptx ON ptx.expected_payment_item_id = epi.id
            WHERE ap2.activity_id = ${activityId}),

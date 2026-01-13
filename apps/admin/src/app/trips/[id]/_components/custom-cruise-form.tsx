@@ -162,6 +162,11 @@ export function CustomCruiseForm({
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
 
+  // Safety net refs to prevent duplicate creation race condition
+  // These are updated synchronously (unlike React state) to prevent multiple creates
+  const activityIdRef = useRef<string | null>(activity?.id || null)
+  const createInProgressRef = useRef(false)
+
   // Activity pricing ID (gated on this for payment schedule)
   const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
 
@@ -521,6 +526,13 @@ export function CustomCruiseForm({
 
     // Debounce auto-save
     autoSaveTimeoutRef.current = setTimeout(async () => {
+      // SAFETY NET: Check refs synchronously to prevent duplicate creation race condition
+      // React state updates (setActivityId) are async, so we use refs for immediate checks
+      if (createInProgressRef.current) {
+        // Another create is already in flight - skip this auto-save
+        return
+      }
+
       try {
         setAutoSaveStatus('saving')
 
@@ -543,17 +555,29 @@ export function CustomCruiseForm({
 
         const payload = toCustomCruiseApiPayload(formData)
 
-        if (activityId) {
+        // Use ref for immediate check (state may be stale due to async nature)
+        if (activityId || activityIdRef.current) {
           // Update existing - send full payload (not just customCruiseDetails)
+          const id = activityId || activityIdRef.current!
           await updateCustomCruise.mutateAsync({
-            id: activityId,
+            id,
             data: payload as any,
           })
         } else {
-          // Create new
-          const response = await createCustomCruise.mutateAsync(payload)
-          if (response.id) {
-            setActivityId(response.id)
+          // SAFETY NET: Mark create as in progress BEFORE the API call
+          createInProgressRef.current = true
+
+          try {
+            // Create new
+            const response = await createCustomCruise.mutateAsync(payload)
+            if (response.id) {
+              // Update ref immediately (synchronous) before React state update
+              activityIdRef.current = response.id
+              setActivityId(response.id)
+            }
+          } finally {
+            // Always clear the flag, even on error
+            createInProgressRef.current = false
           }
         }
 

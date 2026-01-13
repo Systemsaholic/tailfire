@@ -145,6 +145,10 @@ export function OptionsForm({
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
 
+  // Safety net refs to prevent duplicate creation race condition
+  const activityIdRef = useRef<string | null>(activity?.id || null)
+  const createInProgressRef = useRef(false)
+
   // Activity pricing ID (gated on this for payment schedule)
   const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
 
@@ -175,9 +179,10 @@ export function OptionsForm({
   const lastSavedSnapshotRef = useRef<string | null>(null)
 
   // Initialize form with RHF + Zod
+  // Pass dayId to defaults so itineraryDayId is set for non-pendingDay mode
   const form = useForm<OptionsFormData>({
     resolver: zodResolver(optionsFormSchema),
-    defaultValues: toOptionsDefaults(null, dayDate, trip?.currency),
+    defaultValues: toOptionsDefaults({ itineraryDayId: dayId } as any, dayDate, trip?.currency),
     mode: 'onSubmit', // Validate on submit to avoid render-time issues
   })
 
@@ -366,20 +371,35 @@ export function OptionsForm({
     }
 
     const saveTimer = setTimeout(async () => {
+      // SAFETY NET: Check refs to prevent duplicate creation race condition
+      if (createInProgressRef.current) {
+        return
+      }
+
       try {
         setSaveStatus('saving')
         const formData = getValues()
         const apiPayload = toOptionsApiPayload(formData)
 
         let response: any
-        if (activityId) {
-          response = await updateOptions.mutateAsync({ id: activityId, data: { optionsDetails: apiPayload.optionsDetails } })
+        // Use ref for immediate check (state may be stale)
+        if (activityId || activityIdRef.current) {
+          const id = activityId || activityIdRef.current!
+          response = await updateOptions.mutateAsync({ id, data: { optionsDetails: apiPayload.optionsDetails } })
         } else {
-          response = await createOptions.mutateAsync(apiPayload)
+          // Mark create as in progress before API call
+          createInProgressRef.current = true
+          try {
+            response = await createOptions.mutateAsync(apiPayload)
+          } finally {
+            createInProgressRef.current = false
+          }
         }
 
         // Update activity ID on create
-        if (!activityId && response?.id) {
+        if (response?.id && !activityIdRef.current) {
+          // Update ref immediately (synchronous) before React state update
+          activityIdRef.current = response.id
           setActivityId(response.id)
         }
 

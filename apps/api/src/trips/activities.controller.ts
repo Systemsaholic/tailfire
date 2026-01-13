@@ -230,7 +230,8 @@ export class ActivitiesGlobalController {
     @Body() dto: CreateActivityDto,
     @Req() req: Request
   ): Promise<ActivityResponseDto | PackageResponseDto> {
-    const result = await this.activitiesService.create(dto, getActorId(req))
+    // Pass tripId for floating packages that need it for agency resolution
+    const result = await this.activitiesService.create(dto, getActorId(req), dto.tripId ?? undefined)
     // For packages, return full response with all related data
     if (dto.activityType === 'package') {
       return this.activitiesService.findOne(result.id)

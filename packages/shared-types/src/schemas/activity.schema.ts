@@ -22,6 +22,7 @@ import { coordinatesSchema, photoSchema } from './common.schema'
  * Matches the existing CreateActivityDto interface.
  */
 export const createActivityDtoSchema = z.object({
+  tripId: z.string().uuid().nullable().optional(), // Required for floating packages (no itineraryDayId)
   itineraryDayId: z.string().uuid().nullable().optional(), // Nullable for floating packages
   parentActivityId: z.string().uuid().nullable().optional(),
   activityType: activityTypeSchema,
