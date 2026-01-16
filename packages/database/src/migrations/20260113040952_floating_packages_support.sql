@@ -19,7 +19,9 @@ ALTER TABLE itinerary_activities
 ADD CONSTRAINT chk_activity_has_parent
 CHECK (
   (itinerary_day_id IS NOT NULL) OR
-  (trip_id IS NOT NULL AND activity_type = 'package')
+  -- Cast to text to avoid "unsafe use of new enum value" error
+  -- when this migration runs in the same transaction as the enum value addition
+  (trip_id IS NOT NULL AND activity_type::text = 'package')
 );
 
 -- 4. Backfill trip_id for existing activities (derive from itinerary_day -> itineraries -> trip)
