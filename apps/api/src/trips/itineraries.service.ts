@@ -21,6 +21,7 @@ export class ItinerariesService {
   /**
    * Create a new itinerary for a trip
    * If created with 'approved' status, enforces single-approved rule
+   * Auto-selects if this is the first itinerary for the trip
    */
   async create(
     tripId: string,
@@ -37,6 +38,15 @@ export class ItinerariesService {
       throw new NotFoundException('Trip not found')
     }
 
+    // Check if this is the first itinerary for the trip
+    const existingCount = await this.db.client
+      .select({ count: sql<number>`count(*)` })
+      .from(this.db.schema.itineraries)
+      .where(eq(this.db.schema.itineraries.tripId, tripId))
+      .then(result => Number(result[0]?.count ?? 0))
+
+    const isFirstItinerary = existingCount === 0
+
     // If creating with approved status, archive any existing approved itineraries
     const isApproved = dto.status === 'approved'
     if (isApproved) {
@@ -52,6 +62,9 @@ export class ItinerariesService {
         )
     }
 
+    // Auto-select if approved OR if this is the first itinerary
+    const shouldSelect = isApproved || isFirstItinerary
+
     const [itinerary] = await this.db.client
       .insert(this.db.schema.itineraries)
       .values({
@@ -64,7 +77,7 @@ export class ItinerariesService {
         startDate: dto.startDate || null,
         endDate: dto.endDate || null,
         status: dto.status || 'draft',
-        isSelected: isApproved, // Set isSelected=true if approved
+        isSelected: shouldSelect,
         sequenceOrder: dto.sequenceOrder || 0,
       })
       .returning()
@@ -74,6 +87,7 @@ export class ItinerariesService {
 
   /**
    * Find all itineraries with optional filters
+   * Auto-selects the only itinerary if filtering by isSelected=true and none are selected
    */
   async findAll(
     filters: ItineraryFilterDto,
@@ -103,11 +117,34 @@ export class ItinerariesService {
       conditions.push(eq(this.db.schema.itineraries.isSelected, filters.isSelected))
     }
 
-    const itineraries = await this.db.client
+    let itineraries = await this.db.client
       .select()
       .from(this.db.schema.itineraries)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(asc(this.db.schema.itineraries.createdAt))
+
+    // Auto-select if: filtering by isSelected=true, no results, tripId provided, and exactly one itinerary exists
+    if (filters.isSelected === true && itineraries.length === 0 && filters.tripId) {
+      const allTripItineraries = await this.db.client
+        .select()
+        .from(this.db.schema.itineraries)
+        .where(eq(this.db.schema.itineraries.tripId, filters.tripId))
+        .orderBy(asc(this.db.schema.itineraries.createdAt))
+
+      const onlyItinerary = allTripItineraries[0]
+      if (allTripItineraries.length === 1 && onlyItinerary) {
+        // Auto-select the only itinerary
+        const [updated] = await this.db.client
+          .update(this.db.schema.itineraries)
+          .set({ isSelected: true, updatedAt: new Date() })
+          .where(eq(this.db.schema.itineraries.id, onlyItinerary.id))
+          .returning()
+
+        if (updated) {
+          itineraries = [updated]
+        }
+      }
+    }
 
     return itineraries.map((itinerary) => this.mapToResponseDto(itinerary))
   }
