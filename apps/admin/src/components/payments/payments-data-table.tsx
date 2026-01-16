@@ -3,7 +3,7 @@
 /**
  * Payments Data Table
  *
- * ShadCN Data Table implementation for displaying trip payments in TERN style
+ * Displays expected payment items and historical transactions for a trip.
  */
 
 import * as React from 'react'
@@ -30,36 +30,16 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { ActivityIconBadge } from '@/components/ui/activity-icon-badge'
+import { RecordPaymentModal } from '@/components/packages/record-payment-modal'
 import { DollarSign } from 'lucide-react'
+import { useTripExpectedPayments, useTripPaymentTransactions } from '@/hooks/use-payment-schedules'
+import { useBookingStatus } from '@/hooks/use-booking-status'
+import { formatCurrency } from '@/lib/pricing/currency-helpers'
 
-import { ActivityResponseDto } from '@tailfire/shared-types'
-
-function getPaymentTypeLabel(_activity: ActivityResponseDto): string {
-  // For now, showing estimated cost as expected payment
-  // TODO: Fetch actual payment schedule and show deposit/final/installment
-  return 'Full Amount'
-}
-
-function getPaymentStatus(activity: ActivityResponseDto): { label: string; variant: 'default' | 'secondary' | 'outline' } {
-  if (activity.status === 'confirmed') {
-    return { label: 'Pending', variant: 'default' }
-  }
-  if (activity.status === 'proposed') {
-    return { label: 'Upcoming', variant: 'secondary' }
-  }
-  return { label: 'Not Set', variant: 'outline' }
-}
-
-function formatCostCents(costCents: number | null | undefined, currency: string): string {
-  if (!costCents) return `${currency} 0.00`
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency,
-  }).format(costCents / 100)
-}
+import type { ActivityResponseDto } from '@tailfire/shared-types'
+import type { TripExpectedPaymentDto } from '@tailfire/shared-types/api'
 
 function formatDate(date: string | null): string {
   if (!date) return '–'
@@ -68,6 +48,19 @@ function formatDate(date: string | null): string {
     month: 'short',
     day: 'numeric',
   })
+}
+
+function statusBadgeVariant(status: TripExpectedPaymentDto['status']): 'default' | 'secondary' | 'outline' {
+  switch (status) {
+    case 'paid':
+      return 'secondary'
+    case 'partial':
+    case 'overdue':
+      return 'default'
+    case 'pending':
+    default:
+      return 'outline'
+  }
 }
 
 interface PaymentsDataTableProps {
@@ -82,19 +75,38 @@ export function PaymentsDataTable({ activities, tripId }: PaymentsDataTableProps
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [rowSelection, setRowSelection] = React.useState({})
+  const [selectedPayment, setSelectedPayment] = React.useState<TripExpectedPaymentDto | null>(null)
+  const [recordPaymentOpen, setRecordPaymentOpen] = React.useState(false)
+
+  const { data: expectedPayments = [] } = useTripExpectedPayments(tripId)
+  const { data: paymentTransactions = [] } = useTripPaymentTransactions(tripId)
+  const { data: bookingStatus } = useBookingStatus(tripId)
+  const sortedTransactions = React.useMemo(() => {
+    return [...paymentTransactions].sort((a, b) => {
+      return new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime()
+    })
+  }, [paymentTransactions])
+
+  const parentActivities = React.useMemo(
+    () => activities.filter((activity) => !activity.parentActivityId),
+    [activities]
+  )
+
+  const missingScheduleActivities = React.useMemo(() => {
+    if (!bookingStatus?.activities) return []
+    return parentActivities.filter((activity) => {
+      const status = bookingStatus.activities[activity.id]
+      if (!status) return false
+      return Boolean(activity.pricing) && !status.hasPaymentSchedule
+    })
+  }, [parentActivities, bookingStatus])
 
   const handleRowClick = (activityId: string, event: React.MouseEvent) => {
-    // Prevent navigation if clicking on interactive elements
     const target = event.target as HTMLElement
-    if (
-      target.closest('button') ||
-      target.closest('input[type="checkbox"]') ||
-      target.closest('a')
-    ) {
+    if (target.closest('button') || target.closest('a')) {
       return
     }
 
-    // Guard against missing activityId
     if (!activityId || !tripId) {
       console.warn('Missing activityId or tripId for navigation', { activityId, tripId })
       return
@@ -103,97 +115,84 @@ export function PaymentsDataTable({ activities, tripId }: PaymentsDataTableProps
     router.push(`/trips/${tripId}/activities/${activityId}/edit?tab=booking`)
   }
 
-  const expectedPaymentsColumns: ColumnDef<ActivityResponseDto>[] = [
+  const handleRecordPayment = (payment: TripExpectedPaymentDto) => {
+    setSelectedPayment(payment)
+    setRecordPaymentOpen(true)
+  }
+
+  const expectedPaymentsColumns: ColumnDef<TripExpectedPaymentDto>[] = [
     {
-      id: 'select',
-      header: ({ table }) => (
-        <Checkbox
-          checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && 'indeterminate')
-          }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      ),
-      cell: ({ row }) => (
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      ),
-      enableSorting: false,
-      enableHiding: false,
-    },
-    {
-      accessorKey: 'name',
+      accessorKey: 'activityName',
       header: 'Item',
       cell: ({ row }) => {
-        const activity = row.original
-
+        const payment = row.original
         return (
           <div className="flex items-center gap-2">
-            <ActivityIconBadge type={activity.activityType} size="md" />
-            <span className="font-medium">{activity.name}</span>
+            <ActivityIconBadge type={payment.activityType} size="md" />
+            <div>
+              <div className="font-medium">{payment.activityName}</div>
+              <div className="text-xs text-gray-500">{payment.paymentName}</div>
+            </div>
           </div>
         )
       },
     },
     {
-      id: 'payment',
+      accessorKey: 'paymentName',
       header: 'Payment',
-      cell: ({ row }) => {
-        const activity = row.original
-        return <span className="text-gray-600">{getPaymentTypeLabel(activity)}</span>
-      },
+      cell: ({ row }) => <span className="text-gray-600">{row.original.paymentName}</span>,
     },
     {
-      id: 'due',
+      accessorKey: 'dueDate',
       header: 'Due',
-      cell: ({ row }) => {
-        const activity = row.original
-        // TODO: Fetch actual payment schedule due dates
-        return <span className="text-gray-500">{formatDate(activity.startDatetime)}</span>
-      },
+      cell: ({ row }) => <span className="text-gray-500">{formatDate(row.original.dueDate)}</span>,
     },
     {
-      id: 'expected',
+      accessorKey: 'expectedAmountCents',
       header: 'Expected',
-      cell: ({ row }) => {
-        const activity = row.original
-        return <span className="font-medium">{formatCostCents(activity.pricing?.totalPriceCents, activity.pricing?.currency || activity.currency)}</span>
-      },
+      cell: ({ row }) => (
+        <span className="font-medium">
+          {formatCurrency(row.original.expectedAmountCents, row.original.currency)}
+        </span>
+      ),
     },
     {
-      id: 'remaining',
+      accessorKey: 'remainingCents',
       header: 'Remaining',
-      cell: ({ row }) => {
-        const activity = row.original
-        // TODO: Calculate remaining based on actual payments
-        return <span className="text-amber-600">{formatCostCents(activity.pricing?.totalPriceCents, activity.pricing?.currency || activity.currency)}</span>
-      },
+      cell: ({ row }) => (
+        <span className="text-amber-600">
+          {formatCurrency(row.original.remainingCents, row.original.currency)}
+        </span>
+      ),
     },
     {
-      id: 'status',
+      accessorKey: 'status',
       header: 'Status',
+      cell: ({ row }) => (
+        <Badge variant={statusBadgeVariant(row.original.status)}>{row.original.status}</Badge>
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
       cell: ({ row }) => {
-        const activity = row.original
-        const status = getPaymentStatus(activity)
-        return <Badge variant={status.variant as any}>{status.label}</Badge>
+        const payment = row.original
+        return (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleRecordPayment(payment)}
+            disabled={payment.isLocked}
+          >
+            Record Payment
+          </Button>
+        )
       },
     },
   ]
 
-  // Filter out child activities (port_info under cruises, options under activities)
-  // Memoize to prevent infinite loops
-  const parentActivities = React.useMemo(
-    () => activities.filter(a => !a.parentActivityId),
-    [activities]
-  )
-
   const table = useReactTable({
-    data: parentActivities,
+    data: expectedPayments,
     columns: expectedPaymentsColumns,
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
@@ -213,18 +212,43 @@ export function PaymentsDataTable({ activities, tripId }: PaymentsDataTableProps
 
   return (
     <div className="space-y-6">
-      {/* Expected Payments Section */}
-      <div className="bg-white border border-gray-200 rounded-lg">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900">Expected Payments</h2>
-          <div className="flex gap-3">
-            <Button variant="outline">Generate Invoice</Button>
-            <Button>New Item</Button>
+      {missingScheduleActivities.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-lg">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-900">Missing Payment Schedules</h2>
+            <p className="text-sm text-gray-500">
+              These activities have pricing but no payment schedule configured.
+            </p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {missingScheduleActivities.map((activity) => (
+              <div key={activity.id} className="flex items-center justify-between px-6 py-4">
+                <div className="flex items-center gap-2">
+                  <ActivityIconBadge type={activity.activityType} size="md" />
+                  <div>
+                    <div className="font-medium">{activity.name}</div>
+                    <div className="text-xs text-gray-500">Schedule not configured</div>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => router.push(`/trips/${tripId}/activities/${activity.id}/edit?tab=booking`)}
+                >
+                  Configure Schedule
+                </Button>
+              </div>
+            ))}
           </div>
         </div>
+      )}
 
-        {/* Table */}
+      {/* Expected Payments Section */}
+      <div className="bg-white border border-gray-200 rounded-lg">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-900">Expected Payments</h2>
+        </div>
+
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -245,33 +269,23 @@ export function PaymentsDataTable({ activities, tripId }: PaymentsDataTableProps
             </TableHeader>
             <TableBody>
               {table.getRowModel().rows?.length ? (
-                table.getRowModel().rows.map((row) => {
-                  const activity = row.original
-
-                  return (
-                    <TableRow
-                      key={row.id}
-                      data-state={row.getIsSelected() && 'selected'}
-                      onClick={(e) => handleRowClick(activity.id, e)}
-                      className="cursor-pointer hover:bg-gray-50"
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(
-                            cell.column.columnDef.cell,
-                            cell.getContext()
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  )
-                })
+                table.getRowModel().rows.map((row) => (
+                  <TableRow
+                    key={row.id}
+                    data-state={row.getIsSelected() && 'selected'}
+                    onClick={(e) => handleRowClick(row.original.activityId, e)}
+                    className="cursor-pointer hover:bg-gray-50"
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
               ) : (
                 <TableRow>
-                  <TableCell
-                    colSpan={expectedPaymentsColumns.length}
-                    className="h-24 text-center"
-                  >
+                  <TableCell colSpan={expectedPaymentsColumns.length} className="h-24 text-center">
                     <div className="flex flex-col items-center justify-center py-12">
                       <DollarSign className="h-12 w-12 text-gray-400 mb-4" />
                       <p className="text-sm text-gray-500">No expected payments yet</p>
@@ -289,22 +303,74 @@ export function PaymentsDataTable({ activities, tripId }: PaymentsDataTableProps
 
       {/* Past Payments Section */}
       <div className="bg-white border border-gray-200 rounded-lg">
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <h2 className="text-xl font-semibold text-gray-900">Past Payments and Authorizations</h2>
         </div>
 
-        {/* Placeholder Content */}
-        <div className="p-12">
-          <div className="flex flex-col items-center justify-center text-center">
-            <DollarSign className="h-12 w-12 text-gray-400 mb-4" />
-            <p className="text-sm text-gray-500">No past payments recorded yet</p>
-            <p className="text-xs text-gray-400 mt-1">
-              Payment history will appear here once payments are recorded
-            </p>
-          </div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Item</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Amount</TableHead>
+                <TableHead>Method</TableHead>
+                <TableHead>Reference</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sortedTransactions.length ? (
+                sortedTransactions.map((transaction) => (
+                  <TableRow key={transaction.id}>
+                    <TableCell>{formatDate(transaction.transactionDate)}</TableCell>
+                    <TableCell>
+                      <div className="text-sm font-medium">{transaction.activityName}</div>
+                      <div className="text-xs text-gray-500">{transaction.paymentName}</div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{transaction.transactionType}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {formatCurrency(transaction.amountCents, transaction.currency)}
+                    </TableCell>
+                    <TableCell>{transaction.paymentMethod || '—'}</TableCell>
+                    <TableCell>{transaction.referenceNumber || '—'}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={6} className="h-24 text-center">
+                    <div className="flex flex-col items-center justify-center py-12">
+                      <DollarSign className="h-12 w-12 text-gray-400 mb-4" />
+                      <p className="text-sm text-gray-500">No past payments recorded yet</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Payment history will appear here once payments are recorded
+                      </p>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </div>
       </div>
+
+      {selectedPayment && (
+        <RecordPaymentModal
+          open={recordPaymentOpen}
+          onOpenChange={(open) => {
+            setRecordPaymentOpen(open)
+            if (!open) {
+              setSelectedPayment(null)
+            }
+          }}
+          expectedPaymentItem={selectedPayment}
+          activityPricingId={selectedPayment.activityPricingId}
+          tripId={tripId}
+          currency={selectedPayment.currency}
+        />
+      )}
     </div>
   )
 }

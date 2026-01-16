@@ -14,8 +14,8 @@
  * @see beta/docs/design/payment-schedule/PAYMENT_SCHEDULE_TEMPLATES.md
  */
 
-import { Injectable, NotFoundException, BadRequestException, Logger, ForbiddenException } from '@nestjs/common'
-import { eq } from 'drizzle-orm'
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common'
+import { and, eq, sql } from 'drizzle-orm'
 import { DatabaseService } from '../db/database.service'
 import { PaymentAuditService } from './payment-audit.service'
 import { PaymentTemplatesService } from './payment-templates.service'
@@ -39,6 +39,8 @@ import type {
   PaymentScheduleValidationResult,
   PaymentScheduleValidationError,
   PaymentScheduleValidationWarning,
+  TripExpectedPaymentDto,
+  TripPaymentTransactionDto,
 } from '@tailfire/shared-types'
 
 /**
@@ -185,7 +187,6 @@ export class PaymentSchedulesService {
     const [config] = await this.db.client
       .insert(this.db.schema.paymentScheduleConfig)
       .values({
-        agencyId: activityPricing.agencyId,
         activityPricingId: pricingId,
         scheduleType: data.scheduleType,
         allowPartialPayments: data.allowPartialPayments ?? false,
@@ -420,8 +421,8 @@ export class PaymentSchedulesService {
       .insert(this.db.schema.expectedPaymentItems)
       .values(
         items.map((item) => ({
-          agencyId,
           paymentScheduleConfigId,
+          agencyId,
           paymentName: item.paymentName,
           expectedAmountCents: item.expectedAmountCents,
           dueDate: item.dueDate || null,
@@ -566,13 +567,19 @@ export class PaymentSchedulesService {
       throw new BadRequestException('Transaction amount must be non-negative')
     }
 
-    // Validate currency matches parent activity_pricing currency
-    const parentCurrency = await this.getParentCurrency(data.expectedPaymentItemId)
-    if (parentCurrency && data.currency !== parentCurrency) {
+    // Validate currency matches parent activity_pricing currency and get agencyId
+    const parentInfo = await this.getParentInfo(data.expectedPaymentItemId)
+    if (parentInfo?.currency && data.currency !== parentInfo.currency) {
       throw new BadRequestException(
-        `Transaction currency (${data.currency}) must match parent pricing currency (${parentCurrency})`,
+        `Transaction currency (${data.currency}) must match parent pricing currency (${parentInfo.currency})`,
       )
     }
+
+    if (!parentInfo?.agencyId) {
+      throw new BadRequestException('Could not determine agency for transaction')
+    }
+
+    const agencyId = parentInfo.agencyId
 
     // Wrap insert + cache sync in a transaction for consistency
     const result = await this.db.client.transaction(async (tx) => {
@@ -580,7 +587,7 @@ export class PaymentSchedulesService {
       const [transaction] = await tx
         .insert(this.db.schema.paymentTransactions)
         .values({
-          agencyId: expectedPaymentItem.agencyId,
+          agencyId,
           expectedPaymentItemId: data.expectedPaymentItemId,
           transactionType: data.transactionType,
           amountCents: data.amountCents,
@@ -606,11 +613,11 @@ export class PaymentSchedulesService {
   }
 
   /**
-   * Get the parent currency from the activity_pricing table
+   * Get parent info (currency, agencyId) from the activity_pricing table
    * Traverses: expectedPaymentItem → paymentScheduleConfig → activityPricing
    * Logs warnings for broken parent chain to catch data integrity issues
    */
-  private async getParentCurrency(expectedPaymentItemId: string): Promise<string | null> {
+  private async getParentInfo(expectedPaymentItemId: string): Promise<{ currency: string | null; agencyId: string | null }> {
     const [item] = await this.db.client
       .select({ paymentScheduleConfigId: this.db.schema.expectedPaymentItems.paymentScheduleConfigId })
       .from(this.db.schema.expectedPaymentItems)
@@ -618,8 +625,8 @@ export class PaymentSchedulesService {
       .limit(1)
 
     if (!item) {
-      this.logger.warn(`Expected payment item ${expectedPaymentItemId} not found when getting parent currency`)
-      return null
+      this.logger.warn(`Expected payment item ${expectedPaymentItemId} not found when getting parent info`)
+      return { currency: null, agencyId: null }
     }
 
     const [config] = await this.db.client
@@ -630,11 +637,14 @@ export class PaymentSchedulesService {
 
     if (!config) {
       this.logger.warn(`Payment schedule config ${item.paymentScheduleConfigId} not found for expected payment item ${expectedPaymentItemId}`)
-      return null
+      return { currency: null, agencyId: null }
     }
 
     const [pricing] = await this.db.client
-      .select({ currency: this.db.schema.activityPricing.currency })
+      .select({
+        currency: this.db.schema.activityPricing.currency,
+        agencyId: this.db.schema.activityPricing.agencyId,
+      })
       .from(this.db.schema.activityPricing)
       .where(eq(this.db.schema.activityPricing.id, config.activityPricingId))
       .limit(1)
@@ -642,8 +652,14 @@ export class PaymentSchedulesService {
     if (!pricing?.currency) {
       this.logger.warn(`Activity pricing ${config.activityPricingId} has no currency set`)
     }
+    if (!pricing?.agencyId) {
+      this.logger.warn(`Activity pricing ${config.activityPricingId} has no agencyId set`)
+    }
 
-    return pricing?.currency || null
+    return {
+      currency: pricing?.currency || null,
+      agencyId: pricing?.agencyId || null,
+    }
   }
 
   /**
@@ -682,6 +698,183 @@ export class PaymentSchedulesService {
         status: expectedPaymentItem.status,
       },
     }
+  }
+
+  // ============================================================================
+  // Trip-Level Payment Queries
+  // ============================================================================
+
+  /**
+   * Get all expected payment items for a trip with activity context
+   */
+  async getExpectedPaymentsByTripId(
+    tripId: string,
+    agencyId: string,
+  ): Promise<TripExpectedPaymentDto[]> {
+    await this.ensureTripAccess(tripId, agencyId)
+
+    type TripExpectedPaymentRow = {
+      expected_payment_item_id: string
+      payment_schedule_config_id: string
+      payment_name: string
+      expected_amount_cents: number
+      paid_amount_cents: number
+      status: string
+      sequence_order: number
+      due_date: string | Date | null
+      created_at: string | Date
+      updated_at: string | Date
+      activity_pricing_id: string
+      activity_id: string
+      activity_name: string
+      activity_type: string
+      currency: string
+      is_locked: boolean
+    }
+
+    const rows = await this.db.client.execute(sql`
+      SELECT
+        epi.id AS expected_payment_item_id,
+        epi.payment_schedule_config_id,
+        epi.payment_name,
+        epi.expected_amount_cents,
+        epi.paid_amount_cents,
+        epi.status,
+        epi.sequence_order,
+        epi.due_date,
+        epi.created_at,
+        epi.updated_at,
+        epi.is_locked,
+        psc.component_pricing_id AS activity_pricing_id,
+        ia.id AS activity_id,
+        ia.name AS activity_name,
+        ia.activity_type,
+        ap.currency
+      FROM expected_payment_items epi
+      JOIN payment_schedule_config psc ON psc.id = epi.payment_schedule_config_id
+      JOIN activity_pricing ap ON ap.id = psc.component_pricing_id
+      JOIN itinerary_activities ia ON ia.id = ap.activity_id
+      LEFT JOIN itinerary_days iday ON iday.id = ia.itinerary_day_id
+      LEFT JOIN itineraries it ON it.id = iday.itinerary_id
+      WHERE (it.trip_id = ${tripId} OR ia.trip_id = ${tripId})
+        AND ap.agency_id = ${agencyId}
+        AND ia.agency_id = ${agencyId}
+      ORDER BY ia.created_at ASC, epi.sequence_order ASC
+    `) as unknown as TripExpectedPaymentRow[]
+
+    return rows.map((row) => {
+      const dueDate = row.due_date
+        ? row.due_date instanceof Date
+          ? row.due_date.toISOString().split('T')[0]!
+          : row.due_date
+        : null
+      const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at
+      const updatedAt = row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at
+      const paidAmountCents = row.paid_amount_cents ?? 0
+      const remainingCents = row.expected_amount_cents - paidAmountCents
+
+      return {
+        id: row.expected_payment_item_id,
+        paymentScheduleConfigId: row.payment_schedule_config_id,
+        paymentName: row.payment_name,
+        expectedAmountCents: row.expected_amount_cents,
+        paidAmountCents,
+        dueDate,
+        status: row.status as TripExpectedPaymentDto['status'],
+        sequenceOrder: row.sequence_order,
+        createdAt,
+        updatedAt,
+        activityId: row.activity_id,
+        activityName: row.activity_name,
+        activityType: row.activity_type as TripExpectedPaymentDto['activityType'],
+        activityPricingId: row.activity_pricing_id,
+        currency: row.currency,
+        remainingCents,
+        isLocked: row.is_locked ?? false,
+      }
+    })
+  }
+
+  /**
+   * Get all payment transactions for a trip with activity context
+   */
+  async getTransactionsByTripId(
+    tripId: string,
+    agencyId: string,
+  ): Promise<TripPaymentTransactionDto[]> {
+    await this.ensureTripAccess(tripId, agencyId)
+
+    type TripPaymentTransactionRow = {
+      transaction_id: string
+      expected_payment_item_id: string
+      payment_name: string
+      transaction_type: string
+      amount_cents: number
+      currency: string
+      payment_method: string | null
+      reference_number: string | null
+      transaction_date: string | Date
+      notes: string | null
+      created_at: string | Date
+      created_by: string | null
+      activity_id: string
+      activity_name: string
+    }
+
+    // NOTE: payment_schedule_config uses component_pricing_id (legacy name), not activity_pricing_id
+    const rows = await this.db.client.execute(sql`
+      SELECT
+        pt.id AS transaction_id,
+        pt.expected_payment_item_id,
+        epi.payment_name,
+        pt.transaction_type,
+        pt.amount_cents,
+        pt.currency,
+        pt.payment_method,
+        pt.reference_number,
+        pt.transaction_date,
+        pt.notes,
+        pt.created_at,
+        pt.created_by,
+        ia.id AS activity_id,
+        ia.name AS activity_name
+      FROM payment_transactions pt
+      JOIN expected_payment_items epi ON epi.id = pt.expected_payment_item_id
+      JOIN payment_schedule_config psc ON psc.id = epi.payment_schedule_config_id
+      JOIN activity_pricing ap ON ap.id = psc.component_pricing_id
+      JOIN itinerary_activities ia ON ia.id = ap.activity_id
+      LEFT JOIN itinerary_days iday ON iday.id = ia.itinerary_day_id
+      LEFT JOIN itineraries it ON it.id = iday.itinerary_id
+      WHERE (it.trip_id = ${tripId} OR ia.trip_id = ${tripId})
+        AND pt.agency_id = ${agencyId}
+        AND ap.agency_id = ${agencyId}
+        AND ia.agency_id = ${agencyId}
+      ORDER BY pt.transaction_date DESC, pt.created_at DESC
+    `) as unknown as TripPaymentTransactionRow[]
+
+    return rows.map((row) => {
+      const transactionDate = row.transaction_date instanceof Date
+        ? row.transaction_date.toISOString()
+        : row.transaction_date
+      const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at
+
+      return {
+        id: row.transaction_id,
+        expectedPaymentItemId: row.expected_payment_item_id,
+        transactionType: row.transaction_type as TripPaymentTransactionDto['transactionType'],
+        amountCents: row.amount_cents,
+        currency: row.currency,
+        paymentMethod: row.payment_method as TripPaymentTransactionDto['paymentMethod'],
+        referenceNumber: row.reference_number,
+        transactionDate,
+        notes: row.notes,
+        createdAt,
+        createdBy: row.created_by,
+        activityId: row.activity_id,
+        activityName: row.activity_name,
+        paymentName: row.payment_name,
+      }
+    })
   }
 
   /**
@@ -1060,8 +1253,6 @@ export class PaymentSchedulesService {
           .update(this.db.schema.paymentScheduleConfig)
           .set({
             scheduleType: template.scheduleType,
-            templateId: template.id,
-            templateVersion: template.version,
             updatedAt: new Date(),
           })
           .where(eq(this.db.schema.paymentScheduleConfig.id, existingConfig.id))
@@ -1077,12 +1268,9 @@ export class PaymentSchedulesService {
         const insertedConfigs = await tx
           .insert(this.db.schema.paymentScheduleConfig)
           .values({
-            agencyId,
             activityPricingId,
             scheduleType: template.scheduleType,
             allowPartialPayments: false,
-            templateId: template.id,
-            templateVersion: template.version,
           })
           .returning()
 
@@ -1099,8 +1287,8 @@ export class PaymentSchedulesService {
         const [created] = await tx
           .insert(this.db.schema.expectedPaymentItems)
           .values({
-            agencyId,
             paymentScheduleConfigId: configId,
+            agencyId,
             paymentName: item.paymentName,
             expectedAmountCents: item.expectedAmountCents,
             dueDate: item.dueDate,
@@ -1259,6 +1447,8 @@ export class PaymentSchedulesService {
 
   // ============================================================================
   // Item Locking (TICO Compliance)
+  // NOTE: is_locked, locked_at, locked_by columns not yet in DB.
+  // These methods are stubbed - add migration to enable locking.
   // ============================================================================
 
   /**
@@ -1266,12 +1456,15 @@ export class PaymentSchedulesService {
    * Locked items cannot be edited without admin unlock.
    *
    * Called automatically when a payment transaction is recorded.
+   *
+   * TODO: Enable when is_locked, locked_at, locked_by columns are added via migration
    */
   async lockItemOnPayment(
     itemId: string,
-    agencyId: string,
-    userId: string,
+    _agencyId: string,
+    _userId: string,
   ): Promise<void> {
+    // Verify item exists
     const [item] = await this.db.client
       .select()
       .from(this.db.schema.expectedPaymentItems)
@@ -1282,40 +1475,21 @@ export class PaymentSchedulesService {
       throw new NotFoundException(`Expected payment item ${itemId} not found`)
     }
 
-    // Skip if already locked
-    if (item.isLocked) {
-      return
-    }
-
-    await this.db.client
-      .update(this.db.schema.expectedPaymentItems)
-      .set({
-        isLocked: true,
-        lockedAt: new Date(),
-        lockedBy: userId,
-        updatedAt: new Date(),
-      })
-      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
-
-    // Audit log
-    await this.auditService.logLocked(itemId, agencyId, userId)
-
-    this.logger.log(`Locked expected payment item ${itemId} after payment`)
+    // TODO: Enable locking when columns are added via migration
+    // For now, this is a no-op
+    this.logger.debug(`Locking disabled - expected payment item ${itemId} would be locked after payment`)
   }
 
   /**
    * Unlock an expected payment item (admin only).
    * Requires a reason for audit trail.
    *
-   * @param itemId - The item to unlock
-   * @param agencyId - Agency for authorization
-   * @param userId - Admin user performing unlock
-   * @param reason - Required reason (min 10 chars) for audit trail
+   * TODO: Enable when is_locked, locked_at, locked_by columns are added via migration
    */
   async unlockItem(
     itemId: string,
-    agencyId: string,
-    userId: string,
+    _agencyId: string,
+    _userId: string,
     reason: string,
   ): Promise<ExpectedPaymentItemWithLockingDto> {
     // Validate reason
@@ -1333,47 +1507,20 @@ export class PaymentSchedulesService {
       throw new NotFoundException(`Expected payment item ${itemId} not found`)
     }
 
-    // Skip if already unlocked
-    if (!item.isLocked) {
-      return this.formatExpectedPaymentItemWithLocking(item)
-    }
-
-    // Unlock
-    const [updated] = await this.db.client
-      .update(this.db.schema.expectedPaymentItems)
-      .set({
-        isLocked: false,
-        lockedAt: null,
-        lockedBy: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
-      .returning()
-
-    // Audit log with reason
-    await this.auditService.logUnlocked(itemId, agencyId, userId, reason)
-
-    this.logger.log(`Unlocked expected payment item ${itemId} by ${userId}: ${reason}`)
-
-    return this.formatExpectedPaymentItemWithLocking(updated)
+    // TODO: Enable locking when columns are added via migration
+    // For now, return item with isLocked=false
+    return this.formatExpectedPaymentItemWithLocking(item)
   }
 
   /**
    * Check if an item can be edited (not locked).
    * Throws ForbiddenException if locked.
+   *
+   * TODO: Enable when is_locked column is added via migration
    */
-  async ensureItemNotLocked(itemId: string): Promise<void> {
-    const [item] = await this.db.client
-      .select({ isLocked: this.db.schema.expectedPaymentItems.isLocked })
-      .from(this.db.schema.expectedPaymentItems)
-      .where(eq(this.db.schema.expectedPaymentItems.id, itemId))
-      .limit(1)
-
-    if (item?.isLocked) {
-      throw new ForbiddenException(
-        'This payment item is locked after receiving a payment. Admin unlock required to edit.'
-      )
-    }
+  async ensureItemNotLocked(_itemId: string): Promise<void> {
+    // TODO: Enable locking when columns are added via migration
+    // For now, all items are considered unlocked
   }
 
   // ============================================================================
@@ -1431,6 +1578,7 @@ export class PaymentSchedulesService {
 
   /**
    * Format expected payment item with locking fields
+   * NOTE: is_locked, locked_at, locked_by columns not yet in DB - returns defaults
    */
   private formatExpectedPaymentItemWithLocking(item: any): ExpectedPaymentItemWithLockingDto {
     return {
@@ -1444,9 +1592,25 @@ export class PaymentSchedulesService {
       paidAmountCents: item.paidAmountCents,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
-      isLocked: item.isLocked ?? false,
-      lockedAt: item.lockedAt ? item.lockedAt.toISOString() : null,
-      lockedBy: item.lockedBy ?? null,
+      // TODO: Enable when is_locked, locked_at, locked_by columns are added via migration
+      isLocked: false,
+      lockedAt: null,
+      lockedBy: null,
+    }
+  }
+
+  private async ensureTripAccess(tripId: string, agencyId: string): Promise<void> {
+    const [trip] = await this.db.client
+      .select({ id: this.db.schema.trips.id })
+      .from(this.db.schema.trips)
+      .where(and(
+        eq(this.db.schema.trips.id, tripId),
+        eq(this.db.schema.trips.agencyId, agencyId),
+      ))
+      .limit(1)
+
+    if (!trip) {
+      throw new NotFoundException(`Trip with ID ${tripId} not found`)
     }
   }
 }

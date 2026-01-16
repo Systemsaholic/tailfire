@@ -9,6 +9,8 @@
  * uses activityPricingId exclusively.
  */
 
+import type { ActivityType } from './activities.types'
+
 // =============================================================================
 // Enum Types (matching database enums)
 // =============================================================================
@@ -248,6 +250,28 @@ export type PaymentTransactionListResponseDto = {
     paidAmountCents: number
     status: ExpectedPaymentStatus
   }
+}
+
+/**
+ * Trip-level expected payment item with activity context
+ */
+export type TripExpectedPaymentDto = ExpectedPaymentItemDto & {
+  activityId: string
+  activityName: string
+  activityType: ActivityType
+  activityPricingId: string
+  currency: string
+  remainingCents: number
+  isLocked: boolean
+}
+
+/**
+ * Trip-level payment transaction with activity context
+ */
+export type TripPaymentTransactionDto = PaymentTransactionDto & {
+  activityId: string
+  activityName: string
+  paymentName: string
 }
 
 /**

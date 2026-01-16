@@ -42,6 +42,7 @@ interface RecordPaymentModalProps {
   onOpenChange: (open: boolean) => void
   expectedPaymentItem: ExpectedPaymentItemDto
   activityPricingId: string
+  tripId?: string
   currency: string
 }
 
@@ -50,9 +51,10 @@ export function RecordPaymentModal({
   onOpenChange,
   expectedPaymentItem,
   activityPricingId,
+  tripId,
   currency,
 }: RecordPaymentModalProps) {
-  const createTransaction = useCreatePaymentTransaction(activityPricingId)
+  const createTransaction = useCreatePaymentTransaction(activityPricingId, tripId)
 
   // Form state
   const [transactionType, setTransactionType] = useState<PaymentTransactionType>('payment')

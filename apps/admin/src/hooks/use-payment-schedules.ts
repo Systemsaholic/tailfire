@@ -16,6 +16,8 @@ import type {
   PaymentTransactionDto,
   CreatePaymentTransactionDto,
   PaymentTransactionListResponseDto,
+  TripExpectedPaymentDto,
+  TripPaymentTransactionDto,
 } from '@tailfire/shared-types/api'
 import { useToast } from './use-toast'
 
@@ -29,6 +31,10 @@ export const paymentScheduleKeys = {
     [...paymentScheduleKeys.all, 'activity-pricing', activityPricingId] as const,
   transactions: (expectedPaymentItemId: string) =>
     [...paymentScheduleKeys.all, 'transactions', expectedPaymentItemId] as const,
+  tripExpectedPayments: (tripId: string) =>
+    [...paymentScheduleKeys.all, 'trip-expected-payments', tripId] as const,
+  tripTransactions: (tripId: string) =>
+    [...paymentScheduleKeys.all, 'trip-transactions', tripId] as const,
 }
 
 // ============================================================================
@@ -316,6 +322,34 @@ export function usePaymentTransactions(expectedPaymentItemId: string | null) {
   })
 }
 
+/**
+ * Fetch expected payment items for a trip
+ */
+export function useTripExpectedPayments(tripId: string | null) {
+  return useQuery({
+    queryKey: paymentScheduleKeys.tripExpectedPayments(tripId || ''),
+    queryFn: async () => {
+      if (!tripId) return []
+      return api.get<TripExpectedPaymentDto[]>(`/trips/${tripId}/expected-payments`)
+    },
+    enabled: !!tripId,
+  })
+}
+
+/**
+ * Fetch payment transactions for a trip
+ */
+export function useTripPaymentTransactions(tripId: string | null) {
+  return useQuery({
+    queryKey: paymentScheduleKeys.tripTransactions(tripId || ''),
+    queryFn: async () => {
+      if (!tripId) return []
+      return api.get<TripPaymentTransactionDto[]>(`/trips/${tripId}/payment-transactions`)
+    },
+    enabled: !!tripId,
+  })
+}
+
 // ============================================================================
 // Payment Transaction Mutations
 // ============================================================================
@@ -323,7 +357,7 @@ export function usePaymentTransactions(expectedPaymentItemId: string | null) {
 /**
  * Create a payment transaction
  */
-export function useCreatePaymentTransaction(activityPricingId: string) {
+export function useCreatePaymentTransaction(activityPricingId: string, tripId?: string) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -340,6 +374,14 @@ export function useCreatePaymentTransaction(activityPricingId: string) {
       queryClient.invalidateQueries({
         queryKey: paymentScheduleKeys.transactions(transaction.expectedPaymentItemId),
       })
+      if (tripId) {
+        queryClient.invalidateQueries({
+          queryKey: paymentScheduleKeys.tripExpectedPayments(tripId),
+        })
+        queryClient.invalidateQueries({
+          queryKey: paymentScheduleKeys.tripTransactions(tripId),
+        })
+      }
 
       toast({
         title: 'Payment recorded',

@@ -22,6 +22,7 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common'
@@ -36,6 +37,8 @@ import type {
   PaymentTransactionDto,
   CreatePaymentTransactionDto,
   PaymentTransactionListResponseDto,
+  TripExpectedPaymentDto,
+  TripPaymentTransactionDto,
 } from '@tailfire/shared-types'
 
 @ApiTags('Payment Schedules')
@@ -143,5 +146,37 @@ export class PaymentSchedulesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteTransaction(@Param('transactionId') transactionId: string): Promise<void> {
     await this.paymentSchedulesService.deleteTransaction(transactionId)
+  }
+
+  // ============================================================================
+  // Trip-Level Payment Endpoints
+  // ============================================================================
+
+  /**
+   * Get all expected payment items for a trip with activity context
+   * GET /payment-schedules/trips/:tripId/expected-payments?agencyId=<uuid>
+   *
+   * TODO: Extract agencyId from JWT context instead of query param
+   */
+  @Get('trips/:tripId/expected-payments')
+  async getExpectedPaymentsByTripId(
+    @Param('tripId') tripId: string,
+    @Query('agencyId') agencyId: string,
+  ): Promise<TripExpectedPaymentDto[]> {
+    return this.paymentSchedulesService.getExpectedPaymentsByTripId(tripId, agencyId)
+  }
+
+  /**
+   * Get all payment transactions for a trip with activity context
+   * GET /payment-schedules/trips/:tripId/transactions?agencyId=<uuid>
+   *
+   * TODO: Extract agencyId from JWT context instead of query param
+   */
+  @Get('trips/:tripId/transactions')
+  async getTransactionsByTripId(
+    @Param('tripId') tripId: string,
+    @Query('agencyId') agencyId: string,
+  ): Promise<TripPaymentTransactionDto[]> {
+    return this.paymentSchedulesService.getTransactionsByTripId(tripId, agencyId)
   }
 }
