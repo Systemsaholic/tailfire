@@ -442,6 +442,13 @@
       "when": 1768521573000,
       "tag": "20260115155933_add_lock_fields_to_expected_payment_items",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1768689521000,
+      "tag": "20260116171841_add_missing_rls_policies",
+      "breakpoints": true
     }
   ]
 }
