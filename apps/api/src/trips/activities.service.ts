@@ -7,7 +7,7 @@
 
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common'
 import { EventEmitter2 } from '@nestjs/event-emitter'
-import { eq, and, desc, asc, inArray, sql } from 'drizzle-orm'
+import { eq, and, or, desc, asc, inArray, sql } from 'drizzle-orm'
 import { DatabaseService } from '../db/database.service'
 import { StorageService } from './storage.service'
 import { TravellerSplitsService } from '../financials/traveller-splits.service'
@@ -195,18 +195,35 @@ export class ActivitiesService {
 
     // For other activity types, return ActivityResponseDto with pricing
     const baseResponse = this.formatActivityResponse(activity)
+    // Extract activityPricingId from pricing for payment schedule config
+    const activityPricingId = pricing?.id ?? null
+    const pricingDto: ActivityPricingDto | null = pricing
+      ? {
+          totalPriceCents: pricing.totalPriceCents,
+          taxesAndFeesCents: pricing.taxesAndFeesCents,
+          commissionTotalCents: pricing.commissionTotalCents,
+          commissionSplitPercentage: pricing.commissionSplitPercentage,
+          currency: pricing.currency,
+          pricingType: pricing.pricingType,
+        }
+      : null
     return {
       ...baseResponse,
-      pricing,
+      pricing: pricingDto,
+      activityPricingId,
     }
   }
 
   /**
    * Get activity pricing from activity_pricing table
+   * Returns pricing data including the activityPricingId for payment schedule config
    */
-  private async getActivityPricing(activityId: string): Promise<ActivityPricingDto | null> {
+  private async getActivityPricing(
+    activityId: string
+  ): Promise<(ActivityPricingDto & { id: string }) | null> {
     const [pricing] = await this.db.client
       .select({
+        id: this.db.schema.activityPricing.id,
         totalPriceCents: this.db.schema.activityPricing.totalPriceCents,
         taxesAndFeesCents: this.db.schema.activityPricing.taxesAndFeesCents,
         commissionTotalCents: this.db.schema.activityPricing.commissionTotalCents,
@@ -221,6 +238,7 @@ export class ActivitiesService {
     if (!pricing) return null
 
     return {
+      id: pricing.id,
       totalPriceCents: pricing.totalPriceCents ?? 0,
       taxesAndFeesCents: pricing.taxesAndFeesCents ?? null,
       commissionTotalCents: pricing.commissionTotalCents ?? null,
@@ -237,7 +255,7 @@ export class ActivitiesService {
    */
   private async buildPackageResponse(
     activity: any,
-    pricing: ActivityPricingDto | null
+    pricing: (ActivityPricingDto & { id: string }) | null
   ): Promise<PackageResponseDto> {
     const activityId = activity.id
 
@@ -263,9 +281,23 @@ export class ActivitiesService {
       }
     }
 
+    // Extract activityPricingId from pricing for payment schedule config
+    const activityPricingId = pricing?.id ?? null
+    const pricingDto: ActivityPricingDto | null = pricing
+      ? {
+          totalPriceCents: pricing.totalPriceCents,
+          taxesAndFeesCents: pricing.taxesAndFeesCents,
+          commissionTotalCents: pricing.commissionTotalCents,
+          commissionSplitPercentage: pricing.commissionSplitPercentage,
+          currency: pricing.currency,
+          pricingType: pricing.pricingType,
+        }
+      : null
+
     return {
       ...baseResponse,
-      pricing,
+      pricing: pricingDto,
+      activityPricingId,
       packageDetails: packageDetails
         ? {
             supplierId: packageDetails.supplierId,
@@ -1646,6 +1678,10 @@ export class ActivitiesService {
    * Get all unlinked activities for a trip (activities not in any package)
    * Used for the activity linker UI.
    *
+   * Activities can belong to a trip via:
+   * 1. itinerary_day_id → itinerary_days → itineraries → trips
+   * 2. Direct trip_id (for floating packages - though packages are excluded here)
+   *
    * @param tripId - Trip ID
    */
   async findUnlinkedByTrip(tripId: string): Promise<ActivityResponseDto[]> {
@@ -1654,17 +1690,21 @@ export class ActivitiesService {
         activity: this.db.schema.itineraryActivities,
       })
       .from(this.db.schema.itineraryActivities)
-      .innerJoin(
+      .leftJoin(
         this.db.schema.itineraryDays,
         eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
       )
-      .innerJoin(
+      .leftJoin(
         this.db.schema.itineraries,
         eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
       )
       .where(
         and(
-          eq(this.db.schema.itineraries.tripId, tripId),
+          // Activity belongs to this trip via itinerary OR direct trip_id
+          or(
+            eq(this.db.schema.itineraries.tripId, tripId),
+            eq(this.db.schema.itineraryActivities.tripId, tripId)
+          ),
           sql`${this.db.schema.itineraryActivities.parentActivityId} IS NULL`,
           sql`${this.db.schema.itineraryActivities.activityType} != 'package'`
         )
@@ -1676,6 +1716,10 @@ export class ActivitiesService {
 
   /**
    * Get all packages for a trip
+   *
+   * Packages can belong to a trip via:
+   * 1. itinerary_day_id → itinerary_days → itineraries → trips
+   * 2. Direct trip_id (floating packages)
    *
    * @param tripId - Trip ID
    */
@@ -1695,7 +1739,11 @@ export class ActivitiesService {
       )
       .where(
         and(
-          eq(this.db.schema.itineraries.tripId, tripId),
+          // Package belongs to this trip via itinerary OR direct trip_id
+          or(
+            eq(this.db.schema.itineraries.tripId, tripId),
+            eq(this.db.schema.itineraryActivities.tripId, tripId)
+          ),
           eq(this.db.schema.itineraryActivities.activityType, 'package')
         )
       )
@@ -1840,11 +1888,10 @@ export class ActivitiesService {
    * @param activityPricingId - The activity_pricing ID for the package
    * @param agencyId - Agency ID (required for RLS)
    */
-  async createPaymentScheduleConfig(activityPricingId: string, agencyId: string): Promise<void> {
+  async createPaymentScheduleConfig(activityPricingId: string, _agencyId: string): Promise<void> {
     await this.db.client
       .insert(this.db.schema.paymentScheduleConfig)
       .values({
-        agencyId, // Required for RLS
         activityPricingId,
         scheduleType: 'full', // Use 'full' as default (pay entire balance upfront)
       })
@@ -1900,7 +1947,7 @@ export class ActivitiesService {
           COALESCE(SUM(ptx.amount_cents), 0) as paid_cents
         FROM trip_packages tp
         LEFT JOIN activity_pricing ap ON ap.activity_id = tp.id
-        LEFT JOIN payment_schedule_config psc ON psc.activity_pricing_id = ap.id
+        LEFT JOIN payment_schedule_config psc ON psc.component_pricing_id = ap.id
         LEFT JOIN expected_payment_items epi ON epi.payment_schedule_config_id = psc.id
         LEFT JOIN payment_transactions ptx ON ptx.expected_payment_item_id = epi.id
         GROUP BY tp.id
