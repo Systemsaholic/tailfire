@@ -40,14 +40,32 @@ async function bootstrap() {
   app.use(helmet())
 
   // CORS
+  const corsOrigins = process.env.CORS_ORIGINS?.split(',') || [
+    'http://localhost:3100',
+    'http://localhost:3101',
+    'http://localhost:3102',
+    'http://localhost:3103',
+  ]
   app.enableCors({
-    origin:
-      process.env.CORS_ORIGINS?.split(',') || [
-        'http://localhost:3100',
-        'http://localhost:3101',
-        'http://localhost:3102',
-        'http://localhost:3103',
-      ],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, curl, etc.)
+      if (!origin) {
+        return callback(null, true)
+      }
+      // Check static origins
+      if (corsOrigins.includes(origin)) {
+        return callback(null, true)
+      }
+      // Allow Vercel preview deployments (tailfire-admin-*.vercel.app, tailfire-client-*.vercel.app, etc.)
+      if (/^https:\/\/tailfire-[\w-]+-systemsaholic-[\w]+\.vercel\.app$/.test(origin)) {
+        return callback(null, true)
+      }
+      // Allow tf-demo subdomain
+      if (origin === 'https://tf-demo.phoenixvoyages.ca') {
+        return callback(null, true)
+      }
+      callback(new Error('Not allowed by CORS'))
+    },
     credentials: true,
   })
 
