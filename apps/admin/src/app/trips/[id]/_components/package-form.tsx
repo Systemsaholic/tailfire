@@ -100,6 +100,7 @@ export function PackageForm({
 
   const [activeTab, setActiveTab] = useState<PackageTab>(defaultTab)
   const [currentPackageId, setCurrentPackageId] = useState<string | null>(packageId || null)
+  const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
 
   // Safety net ref to prevent duplicate creation race condition
   const createInProgressRef = useRef(false)
@@ -163,6 +164,7 @@ export function PackageForm({
     if (packageData && packageData.id !== packageIdRef.current) {
       packageIdRef.current = packageData.id
       setCurrentPackageId(packageData.id)
+      setActivityPricingId(packageData.activityPricingId || null)
 
       const defaults = toPackageDefaults(packageData)
 
@@ -227,6 +229,11 @@ export function PackageForm({
           setCurrentPackageId(response.id)
         }
 
+        // Update activityPricingId from response (created/returned by API)
+        if (response.activityPricingId && response.activityPricingId !== activityPricingId) {
+          setActivityPricingId(response.activityPricingId)
+        }
+
         setAutoSaveStatus('saved')
         setLastSavedAt(new Date())
       } catch (err: any) {
@@ -251,6 +258,7 @@ export function PackageForm({
     isValidating,
     isSubmitting,
     currentPackageId,
+    activityPricingId,
     tripId,
     getValues,
     createBooking,
@@ -289,6 +297,11 @@ export function PackageForm({
         setCurrentPackageId(response.id)
       }
 
+      // Update activityPricingId from response (created/returned by API)
+      if (response.activityPricingId && response.activityPricingId !== activityPricingId) {
+        setActivityPricingId(response.activityPricingId)
+      }
+
       setAutoSaveStatus('saved')
       setLastSavedAt(new Date())
 
@@ -310,6 +323,7 @@ export function PackageForm({
     isValid,
     errors,
     currentPackageId,
+    activityPricingId,
     tripId,
     getValues,
     createBooking,
@@ -694,7 +708,7 @@ export function PackageForm({
           <div className="space-y-4">
             <h3 className="text-lg font-semibold">Credit Card Authorization & Payment</h3>
             <PaymentScheduleSection
-              activityPricingId={currentPackageId}
+              activityPricingId={activityPricingId}
               totalPriceCents={pricingData.totalPriceCents}
               currency={pricingData.currency}
             />
