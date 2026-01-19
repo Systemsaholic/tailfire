@@ -119,6 +119,7 @@ export type ActivityResponseDto = {
 
   // Pricing (from activity_pricing table)
   pricing: ActivityPricingDto | null
+  activityPricingId?: string | null // ID of activity_pricing record (for payment schedule config)
   pricingType: PricingType | null // Display hint (kept for backward compatibility)
   currency: string // 3-letter currency code (default: 'USD')
 

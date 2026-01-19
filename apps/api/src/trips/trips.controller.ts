@@ -23,6 +23,7 @@ import { GetAuthContext } from '../auth/decorators/auth-context.decorator'
 import type { AuthContext } from '../auth/auth.types'
 import { ActivitiesService } from './activities.service'
 import { ActivityLogsService } from '../activity-logs/activity-logs.service'
+import { PaymentSchedulesService } from './payment-schedules.service'
 import {
   CreateTripDto,
   UpdateTripDto,
@@ -37,9 +38,11 @@ import type {
   TripResponseDto,
   PaginatedTripsResponseDto,
   TripBookingStatusResponseDto,
-  ActivityResponseDto,
+  PackageResponseDto,
   TripPackageTotalsDto,
   UnlinkedActivitiesResponseDto,
+  TripExpectedPaymentDto,
+  TripPaymentTransactionDto,
 } from '../../../../packages/shared-types/src/api'
 
 @ApiTags('Trips')
@@ -49,6 +52,7 @@ export class TripsController {
     private readonly tripsService: TripsService,
     private readonly activitiesService: ActivitiesService,
     private readonly activityLogsService: ActivityLogsService,
+    private readonly paymentSchedulesService: PaymentSchedulesService,
   ) {}
 
   /**
@@ -153,6 +157,30 @@ export class TripsController {
   }
 
   /**
+   * Get expected payment items for a trip (with activity context)
+   * GET /trips/:id/expected-payments
+   */
+  @Get(':id/expected-payments')
+  async getExpectedPayments(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<TripExpectedPaymentDto[]> {
+    return this.paymentSchedulesService.getExpectedPaymentsByTripId(id, auth.agencyId)
+  }
+
+  /**
+   * Get payment transactions for a trip (with activity context)
+   * GET /trips/:id/payment-transactions
+   */
+  @Get(':id/payment-transactions')
+  async getPaymentTransactions(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<TripPaymentTransactionDto[]> {
+    return this.paymentSchedulesService.getTransactionsByTripId(id, auth.agencyId)
+  }
+
+  /**
    * Get activity log for a trip
    * GET /trips/:id/activity?limit=50&offset=0
    * IMPORTANT: Must come before @Get(':id') to avoid route conflicts
@@ -228,9 +256,10 @@ export class TripsController {
   /**
    * Get all packages for a trip
    * GET /trips/:id/packages
+   * Returns enriched package data including activityCount for expandable rows
    */
   @Get(':id/packages')
-  async getPackages(@Param('id') tripId: string): Promise<ActivityResponseDto[]> {
+  async getPackages(@Param('id') tripId: string): Promise<PackageResponseDto[]> {
     return this.activitiesService.findPackagesByTrip(tripId)
   }
 

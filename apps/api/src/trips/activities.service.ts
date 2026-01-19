@@ -1715,41 +1715,149 @@ export class ActivitiesService {
   }
 
   /**
-   * Get all packages for a trip
+   * Get all packages for a trip with enriched summary data
    *
    * Packages can belong to a trip via:
-   * 1. itinerary_day_id → itinerary_days → itineraries → trips
-   * 2. Direct trip_id (floating packages)
+   * 1. Direct trip_id (floating packages - preferred)
+   * 2. itinerary_day_id → itinerary_days → itineraries → trips (legacy)
+   *
+   * Returns enriched package data including activityCount, supplierName,
+   * paymentStatus, and totalPriceCents for efficient list display.
    *
    * @param tripId - Trip ID
    */
-  async findPackagesByTrip(tripId: string): Promise<ActivityResponseDto[]> {
-    const activities = await this.db.client
+  async findPackagesByTrip(tripId: string): Promise<PackageResponseDto[]> {
+    // Query 1: Floating packages with direct trip_id
+    const floatingPackages = await this.db.client
       .select({
         activity: this.db.schema.itineraryActivities,
       })
       .from(this.db.schema.itineraryActivities)
-      .leftJoin(
+      .where(
+        and(
+          eq(this.db.schema.itineraryActivities.tripId, tripId),
+          eq(this.db.schema.itineraryActivities.activityType, 'package')
+        )
+      )
+
+    // Query 2: Packages linked via itinerary chain (for legacy packages without trip_id)
+    const linkedPackages = await this.db.client
+      .select({
+        activity: this.db.schema.itineraryActivities,
+      })
+      .from(this.db.schema.itineraryActivities)
+      .innerJoin(
         this.db.schema.itineraryDays,
         eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
       )
-      .leftJoin(
+      .innerJoin(
         this.db.schema.itineraries,
         eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
       )
       .where(
         and(
-          // Package belongs to this trip via itinerary OR direct trip_id
-          or(
-            eq(this.db.schema.itineraries.tripId, tripId),
-            eq(this.db.schema.itineraryActivities.tripId, tripId)
-          ),
-          eq(this.db.schema.itineraryActivities.activityType, 'package')
+          eq(this.db.schema.itineraries.tripId, tripId),
+          eq(this.db.schema.itineraryActivities.activityType, 'package'),
+          // Exclude packages that have trip_id set (already in floatingPackages)
+          sql`${this.db.schema.itineraryActivities.tripId} IS NULL`
         )
       )
-      .orderBy(asc(this.db.schema.itineraryActivities.sequenceOrder))
 
-    return activities.map(r => this.formatActivityResponse(r.activity))
+    // Merge results (floating packages first, then legacy)
+    const allPackages = [...floatingPackages, ...linkedPackages]
+
+    // Sort by sequence order
+    allPackages.sort((a, b) => (a.activity.sequenceOrder ?? 0) - (b.activity.sequenceOrder ?? 0))
+
+    if (allPackages.length === 0) {
+      return []
+    }
+
+    // Get package IDs for batch queries
+    const packageIds = allPackages.map(p => p.activity.id)
+
+    // Fetch child counts for all packages in a single query
+    const childCounts = await this.db.client
+      .select({
+        parentActivityId: this.db.schema.itineraryActivities.parentActivityId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(this.db.schema.itineraryActivities)
+      .where(inArray(this.db.schema.itineraryActivities.parentActivityId, packageIds))
+      .groupBy(this.db.schema.itineraryActivities.parentActivityId)
+
+    const childCountMap = new Map(
+      childCounts.map(c => [c.parentActivityId, c.count])
+    )
+
+    // Fetch package details for all packages in a single query
+    const packageDetails = await this.db.client
+      .select({
+        activityId: this.db.schema.packageDetails.activityId,
+        supplierName: this.db.schema.packageDetails.supplierName,
+        paymentStatus: this.db.schema.packageDetails.paymentStatus,
+      })
+      .from(this.db.schema.packageDetails)
+      .where(inArray(this.db.schema.packageDetails.activityId, packageIds))
+
+    const packageDetailsMap = new Map(
+      packageDetails.map(d => [d.activityId, d])
+    )
+
+    // Fetch pricing for all packages in a single query
+    const pricingData = await this.db.client
+      .select({
+        activityId: this.db.schema.activityPricing.activityId,
+        totalPriceCents: this.db.schema.activityPricing.totalPriceCents,
+        currency: this.db.schema.activityPricing.currency,
+      })
+      .from(this.db.schema.activityPricing)
+      .where(inArray(this.db.schema.activityPricing.activityId, packageIds))
+
+    const pricingMap = new Map(
+      pricingData.map(p => [p.activityId, p])
+    )
+
+    // Debug: Log child counts
+    this.logger.debug(`[findPackagesByTrip] tripId=${tripId}, packages=${packageIds.length}, childCounts=${JSON.stringify(childCounts)}`)
+
+    // Build enriched package responses
+    return allPackages.map(r => {
+      const activity = r.activity
+      const baseResponse = this.formatActivityResponse(activity)
+      const details = packageDetailsMap.get(activity.id)
+      const pricing = pricingMap.get(activity.id)
+      const activityCount = childCountMap.get(activity.id) ?? 0
+      this.logger.debug(`[findPackagesByTrip] Package ${activity.name}: activityCount=${activityCount}`)
+
+      return {
+        ...baseResponse,
+        tripId,
+        activityCount,
+        supplierName: details?.supplierName ?? null,
+        paymentStatus: details?.paymentStatus ?? 'unpaid',
+        totalPriceCents: pricing?.totalPriceCents ?? 0,
+        totalPaidCents: 0, // Not fetched for list view
+        totalUnpaidCents: 0, // Not fetched for list view
+        packageDetails: details ? {
+          supplierId: null,
+          supplierName: details.supplierName,
+          paymentStatus: details.paymentStatus ?? 'unpaid',
+          pricingType: null,
+          cancellationPolicy: null,
+          cancellationDeadline: null,
+          termsAndConditions: null,
+          groupBookingNumber: null,
+        } : null,
+        activities: [], // Not fetched for list view - use children endpoint
+        travelers: [], // Not fetched for list view
+        pricing: pricing ? {
+          totalPriceCents: pricing.totalPriceCents ?? 0,
+          currency: pricing.currency ?? 'CAD',
+          pricingType: null,
+        } : null,
+      } as PackageResponseDto
+    })
   }
 
   /**
