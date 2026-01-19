@@ -122,15 +122,16 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Set root directory
+      - name: Clear root directory override
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_ADMIN_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":"apps/admin"}'
+            -d '{"rootDirectory":null}'
 
       - name: Deploy Admin (Preview)
-        run: VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN
+        working-directory: apps/admin
+        run: VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
 
   deploy-ota:
     name: Deploy OTA to Vercel
@@ -148,15 +149,16 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Set root directory
+      - name: Clear root directory override
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_OTA_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":"apps/ota"}'
+            -d '{"rootDirectory":null}'
 
       - name: Deploy OTA (Preview)
-        run: VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN
+        working-directory: apps/ota
+        run: VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
 
   deploy-client:
     name: Deploy Client to Vercel
@@ -174,15 +176,16 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Set root directory
+      - name: Clear root directory override
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_CLIENT_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":"apps/client"}'
+            -d '{"rootDirectory":null}'
 
       - name: Deploy Client (Preview)
-        run: VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN
+        working-directory: apps/client
+        run: VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
 
   smoke-test:
     name: Smoke Test All Services
