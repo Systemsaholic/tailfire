@@ -171,6 +171,7 @@ const ExpandedPackageActivities = memo(function ExpandedPackageActivities({
   onActivityClick: (activityId: string) => void
 }) {
   const { data: activities, isLoading, error } = useBookingLinkedActivities(packageId)
+
   // Track expanded cruises within this package
   const [expandedCruises, setExpandedCruises] = useState<Set<string>>(new Set())
 
@@ -313,19 +314,28 @@ const ExpandedPackageActivities = memo(function ExpandedPackageActivities({
 })
 
 function groupActivitiesByParent(activities: PackageLinkedActivityDto[]) {
+  // Build a set of activity IDs that are in this list (direct children of the package)
+  const activityIds = new Set(activities.map(a => a.id))
+
+  // Build children map: group activities by their parent
+  // Only consider it a "child" if the parent is ALSO in the activity list (i.e., a nested child like port under cruise)
   const childrenMap = new Map<string, PackageLinkedActivityDto[]>()
 
   for (const activity of activities) {
-    if (activity.parentActivityId) {
+    // If this activity's parent is another activity in the list (not the package itself),
+    // then it's a nested child (e.g., port_info under cruise)
+    if (activity.parentActivityId && activityIds.has(activity.parentActivityId)) {
       const existing = childrenMap.get(activity.parentActivityId) || []
       existing.push(activity)
       childrenMap.set(activity.parentActivityId, existing)
     }
   }
 
+  // Build result: top-level items are activities whose parent is the package (not another activity in the list)
   const result: { activity: PackageLinkedActivityDto; children: PackageLinkedActivityDto[] }[] = []
   for (const activity of activities) {
-    if (activity.parentActivityId) continue
+    // Skip if this activity's parent is another activity in the list (it's a nested child)
+    if (activity.parentActivityId && activityIds.has(activity.parentActivityId)) continue
     result.push({
       activity,
       children: childrenMap.get(activity.id) || [],
