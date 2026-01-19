@@ -13,6 +13,7 @@ import {
   type TripStatus,
   type KanbanColumnId,
 } from '@/lib/trip-status-constants'
+import { canTransitionTripStatus, getValidTransitions } from '@tailfire/shared-types/api'
 import {
   DndContext,
   DragOverlay,
@@ -205,6 +206,22 @@ export function TripsKanban({ trips }: TripsKanbanProps) {
 
     // Guard: Don't update if trip not found or status unchanged
     if (!trip || trip.status === newStatus) return
+
+    // Validate status transition before attempting update
+    const currentStatus = trip.status as TripStatus
+    if (!canTransitionTripStatus(currentStatus, newStatus)) {
+      const validTransitions = getValidTransitions(currentStatus)
+      const validLabels = validTransitions.map(getTripStatusLabel).join(', ')
+
+      toast({
+        title: 'Invalid status change',
+        description: validTransitions.length > 0
+          ? `A ${getTripStatusLabel(currentStatus)} trip can only move to: ${validLabels}`
+          : `A ${getTripStatusLabel(currentStatus)} trip cannot change status`,
+        variant: 'destructive',
+      })
+      return
+    }
 
     // Mark trip as pending update
     setPendingUpdates((prev) => new Set(prev).add(tripId))

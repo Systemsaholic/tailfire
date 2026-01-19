@@ -28,6 +28,7 @@ import { TemplatesModule } from './templates/templates.module'
 import { UserProfilesModule } from './user-profiles/user-profiles.module'
 import { UsersModule } from './users/users.module'
 import { HealthModule } from './health/health.module'
+import { DashboardModule } from './dashboard/dashboard.module'
 
 @Module({
   imports: [
@@ -96,6 +97,9 @@ import { HealthModule } from './health/health.module'
 
     // Health check for Railway/monitoring
     HealthModule,
+
+    // Dashboard statistics
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [
