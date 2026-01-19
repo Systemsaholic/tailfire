@@ -115,12 +115,12 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Clear root directory override
+      - name: Fix project settings
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_ADMIN_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":""}'
+            -d '{"rootDirectory":null,"installCommand":null,"buildCommand":null}'
 
       - name: Deploy Admin (Production)
         working-directory: apps/admin
@@ -142,12 +142,12 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Clear root directory override
+      - name: Fix project settings
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_OTA_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":""}'
+            -d '{"rootDirectory":null,"installCommand":null,"buildCommand":null}'
 
       - name: Deploy OTA (Production)
         working-directory: apps/ota
@@ -169,12 +169,12 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Clear root directory override
+      - name: Fix project settings
         run: |
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_CLIENT_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":""}'
+            -d '{"rootDirectory":null,"installCommand":null,"buildCommand":null}'
 
       - name: Deploy Client (Production)
         working-directory: apps/client
