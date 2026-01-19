@@ -123,7 +123,7 @@ jobs:
             -d '{"rootDirectory":"apps/admin","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build"}'
 
       - name: Deploy Admin (Production)
-        run: VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
+        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
 
   deploy-ota:
     name: Deploy OTA to Vercel
@@ -149,7 +149,7 @@ jobs:
             -d '{"rootDirectory":"apps/ota","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/ota build"}'
 
       - name: Deploy OTA (Production)
-        run: VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
+        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
 
   deploy-client:
     name: Deploy Client to Vercel
@@ -175,7 +175,7 @@ jobs:
             -d '{"rootDirectory":"apps/client","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/client build"}'
 
       - name: Deploy Client (Production)
-        run: VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
+        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
 
   smoke-test:
     name: Smoke Test All Services
