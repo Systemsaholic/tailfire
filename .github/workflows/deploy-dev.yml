@@ -127,10 +127,9 @@ jobs:
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_ADMIN_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"installCommand":"cd ../.. && pnpm install","buildCommand":"cd ../.. && pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build"}'
+            -d '{"rootDirectory":"apps/admin","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build"}'
 
       - name: Deploy Admin (Preview)
-        working-directory: apps/admin
         run: VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
 
   deploy-ota:
@@ -154,10 +153,9 @@ jobs:
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_OTA_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"installCommand":"cd ../.. && pnpm install","buildCommand":"cd ../.. && pnpm --filter @tailfire/ota build"}'
+            -d '{"rootDirectory":"apps/ota","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/ota build"}'
 
       - name: Deploy OTA (Preview)
-        working-directory: apps/ota
         run: VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
 
   deploy-client:
@@ -181,10 +179,9 @@ jobs:
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_CLIENT_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"installCommand":"cd ../.. && pnpm install","buildCommand":"cd ../.. && pnpm --filter @tailfire/client build"}'
+            -d '{"rootDirectory":"apps/client","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/client build"}'
 
       - name: Deploy Client (Preview)
-        working-directory: apps/client
         run: VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
 
   smoke-test:
