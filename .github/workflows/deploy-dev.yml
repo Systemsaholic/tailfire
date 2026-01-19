@@ -127,7 +127,7 @@ jobs:
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_ADMIN_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":null,"installCommand":null,"buildCommand":null}'
+            -d '{"installCommand":"cd ../.. && pnpm install","buildCommand":"cd ../.. && pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build"}'
 
       - name: Deploy Admin (Preview)
         working-directory: apps/admin
@@ -154,7 +154,7 @@ jobs:
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_OTA_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":null,"installCommand":null,"buildCommand":null}'
+            -d '{"installCommand":"cd ../.. && pnpm install","buildCommand":"cd ../.. && pnpm --filter @tailfire/ota build"}'
 
       - name: Deploy OTA (Preview)
         working-directory: apps/ota
@@ -181,7 +181,7 @@ jobs:
           curl -s -X PATCH "https://api.vercel.com/v9/projects/$VERCEL_CLIENT_PROJECT_ID" \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"rootDirectory":null,"installCommand":null,"buildCommand":null}'
+            -d '{"installCommand":"cd ../.. && pnpm install","buildCommand":"cd ../.. && pnpm --filter @tailfire/client build"}'
 
       - name: Deploy Client (Preview)
         working-directory: apps/client
