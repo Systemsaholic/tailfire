@@ -58,5 +58,8 @@ export * from './user-profiles.types.js'
 // User Management (Admin)
 export * from './users.types.js'
 
+// Email System (Send, Log, Templates)
+export * from './email.types.js'
+
 // Future exports:
 // export * from './auth.types'

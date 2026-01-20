@@ -104,6 +104,8 @@ export class ApiCredentialsService {
       })
       .returning()
 
+    this.logger.log(`Credential created successfully: ${created!.id}`)
+
     // Clear cache since we have a new credential
     this.clearCache(dto.provider)
 

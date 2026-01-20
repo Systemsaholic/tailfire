@@ -86,9 +86,10 @@ export const paymentSchedule = pgTable('payment_schedule', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// NOTE: Uses component_pricing_id in DB (legacy name), mapped to activityPricingId in code
 export const commissionTracking = pgTable('commission_tracking', {
   id: uuid('id').primaryKey().defaultRandom(),
-  activityPricingId: uuid('activity_pricing_id')
+  activityPricingId: uuid('component_pricing_id')
     .notNull()
     .references(() => activityPricing.id, { onDelete: 'cascade' }),
 
@@ -103,15 +104,13 @@ export const commissionTracking = pgTable('commission_tracking', {
 })
 
 // Payment Schedule Config (1:1 with activity_pricing)
+// NOTE: Uses component_pricing_id in DB (legacy name), mapped to activityPricingId in code
 export const paymentScheduleConfig = pgTable('payment_schedule_config', {
   id: uuid('id').primaryKey().defaultRandom(),
-  activityPricingId: uuid('activity_pricing_id')
+  activityPricingId: uuid('component_pricing_id')
     .notNull()
     .unique()
     .references(() => activityPricing.id, { onDelete: 'cascade' }),
-
-  // Agency Association (denormalized for RLS, required)
-  agencyId: uuid('agency_id').notNull(),
 
   // Schedule configuration
   scheduleType: scheduleTypeEnum('schedule_type').notNull().default('full'),
@@ -121,10 +120,6 @@ export const paymentScheduleConfig = pgTable('payment_schedule_config', {
   depositType: depositTypeEnum('deposit_type'),
   depositPercentage: decimal('deposit_percentage', { precision: 5, scale: 2 }),
   depositAmountCents: integer('deposit_amount_cents'),
-
-  // Template tracking (links to template used when schedule was created)
-  templateId: uuid('template_id'), // FK to payment_schedule_templates (nullable)
-  templateVersion: integer('template_version'), // Version at time of application
 
   // Audit fields
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -151,8 +146,8 @@ export const expectedPaymentItems = pgTable('expected_payment_items', {
   // Tracking (for future payment logging)
   paidAmountCents: integer('paid_amount_cents').default(0).notNull(),
 
-  // Locking (item becomes locked after payment received - TICO compliance)
-  isLocked: boolean('is_locked').default(false),
+  // TICO compliance - lock items once paid to prevent modification
+  isLocked: boolean('is_locked').notNull().default(false),
   lockedAt: timestamp('locked_at', { withTimezone: true }),
   lockedBy: uuid('locked_by'),
 

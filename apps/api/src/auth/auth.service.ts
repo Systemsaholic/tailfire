@@ -51,8 +51,12 @@ export class AuthService {
         return
       }
 
+      // For password reset emails, use 'system' as agencyId since we don't have user context
+      // The user may not be logged in during password reset
+      const agencyId = 'system'
+
       // Send email with reset link
-      await this.emailService.sendPasswordResetEmail(email, data.properties.action_link)
+      await this.emailService.sendPasswordResetEmail(email, data.properties.action_link, agencyId)
       this.logger.log(`Password reset email sent to ${email}`)
     } catch (error) {
       // Log error but don't expose to client

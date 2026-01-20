@@ -456,6 +456,34 @@
       "when": 1768953449000,
       "tag": "20260120003729_add_system_deployments_table",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1768957860000,
+      "tag": "20260120015100_add_email_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1768957920000,
+      "tag": "20260120015200_add_email_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1768957980000,
+      "tag": "20260120015300_seed_email_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1768971600000,
+      "tag": "20260120050000_add_trip_order_pdf_email_template",
+      "breakpoints": true
     }
   ]
 }

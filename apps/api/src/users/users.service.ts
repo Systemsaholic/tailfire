@@ -290,7 +290,7 @@ export class UsersService {
       where: eq(userProfiles.id, invitedBy),
       columns: { firstName: true, lastName: true },
     })
-    const inviterName = inviter ? `${inviter.firstName} ${inviter.lastName}`.trim() : undefined
+    const inviterName = inviter ? `${inviter.firstName} ${inviter.lastName}`.trim() : 'Your Agency'
 
     if (existingAuthUser) {
       const authUser = existingAuthUser
@@ -598,13 +598,13 @@ export class UsersService {
     }
 
     // Get inviter name if available
-    let inviterName: string | undefined
+    let inviterName = 'Your Agency'
     if (user.invitedBy) {
       const inviter = await this.db.client.query.userProfiles.findFirst({
         where: eq(userProfiles.id, user.invitedBy),
         columns: { firstName: true, lastName: true },
       })
-      inviterName = inviter ? `${inviter.firstName} ${inviter.lastName}`.trim() : undefined
+      inviterName = inviter ? `${inviter.firstName} ${inviter.lastName}`.trim() : 'Your Agency'
     }
 
     // Send branded email

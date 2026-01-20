@@ -10,8 +10,9 @@
  * - Stripe Connect integration (Phases 9-11)
  */
 
-import { Module } from '@nestjs/common'
+import { Module, forwardRef } from '@nestjs/common'
 import { DatabaseModule } from '../db/database.module'
+import { EmailModule } from '../email/email.module'
 
 // Services
 import { ExchangeRatesService } from './exchange-rates.service'
@@ -34,7 +35,7 @@ import { StripeConnectController } from './stripe-connect.controller'
 import { StripeInvoiceController } from './stripe-invoice.controller'
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, forwardRef(() => EmailModule)],
   controllers: [
     ExchangeRatesController,
     TravellerSplitsController,

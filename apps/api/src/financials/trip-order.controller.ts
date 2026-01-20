@@ -9,13 +9,23 @@
  * Endpoints:
  * - POST /trips/:tripId/trip-order - Generate and get Trip-Order PDF URL
  * - POST /trips/:tripId/trip-order/download - Download Trip-Order PDF directly
+ * - POST /trips/:tripId/trip-order/send-email - Generate and send Trip-Order PDF via email
  */
 
-import { Controller, Post, Param, Body, Res, Query } from '@nestjs/common'
+import { Controller, Post, Param, Body, Res, Query, HttpCode, HttpStatus } from '@nestjs/common'
 import { ApiTags } from '@nestjs/swagger'
 import { Response } from 'express'
 import { TripOrderService } from './trip-order.service'
+import { SendTripOrderEmailDto } from './dto'
 import type { GenerateTripOrderDto, TripOrderResponseDto } from '@tailfire/shared-types'
+
+interface SendTripOrderEmailResponse {
+  success: boolean
+  emailLogId?: string
+  providerMessageId?: string
+  recipients: string[]
+  error?: string
+}
 
 @ApiTags('Trip Orders')
 @Controller()
@@ -60,5 +70,22 @@ export class TripOrderController {
     })
 
     res.send(pdfBuffer)
+  }
+
+  /**
+   * Generate and send Trip-Order PDF via email
+   * POST /trips/:tripId/trip-order/send-email
+   *
+   * Generates a professional Trip Order PDF and sends it to specified recipients.
+   * By default, sends to the primary contact. Can include passengers and CC the agent.
+   */
+  @Post('trips/:tripId/trip-order/send-email')
+  @HttpCode(HttpStatus.OK)
+  async sendTripOrderEmail(
+    @Param('tripId') tripId: string,
+    @Query('agencyId') agencyId: string,
+    @Body() dto: SendTripOrderEmailDto
+  ): Promise<SendTripOrderEmailResponse> {
+    return this.tripOrderService.sendTripOrderEmail(tripId, agencyId ?? '', dto)
   }
 }

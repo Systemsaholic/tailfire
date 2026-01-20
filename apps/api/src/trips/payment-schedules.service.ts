@@ -184,11 +184,11 @@ export class PaymentSchedulesService {
     }
 
     // Create payment schedule config
+    // Note: agencyId is on activityPricing, not paymentScheduleConfig
     const [config] = await this.db.client
       .insert(this.db.schema.paymentScheduleConfig)
       .values({
         activityPricingId: pricingId,
-        agencyId: activityPricing.agencyId,
         scheduleType: data.scheduleType,
         allowPartialPayments: data.allowPartialPayments ?? false,
         depositType: data.depositType || null,
@@ -1266,11 +1266,11 @@ export class PaymentSchedulesService {
           .where(eq(this.db.schema.expectedPaymentItems.paymentScheduleConfigId, configId))
       } else {
         // Create new config
+        // Note: agencyId is on activityPricing, not paymentScheduleConfig
         const insertedConfigs = await tx
           .insert(this.db.schema.paymentScheduleConfig)
           .values({
             activityPricingId,
-            agencyId,
             scheduleType: template.scheduleType,
             allowPartialPayments: false,
           })

@@ -1996,12 +1996,12 @@ export class ActivitiesService {
    * @param activityPricingId - The activity_pricing ID for the package
    * @param agencyId - Agency ID (required for RLS)
    */
-  async createPaymentScheduleConfig(activityPricingId: string, agencyId: string): Promise<void> {
+  async createPaymentScheduleConfig(activityPricingId: string, _agencyId: string): Promise<void> {
     await this.db.client
       .insert(this.db.schema.paymentScheduleConfig)
       .values({
         activityPricingId,
-        agencyId,
+        // Note: agencyId not stored in paymentScheduleConfig - it's on activityPricing
         scheduleType: 'full', // Use 'full' as default (pay entire balance upfront)
       })
       .onConflictDoNothing({ target: this.db.schema.paymentScheduleConfig.activityPricingId })

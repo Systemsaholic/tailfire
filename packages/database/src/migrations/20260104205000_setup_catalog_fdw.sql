@@ -31,6 +31,19 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Skip if Dev already has foreign tables
+  IF EXISTS (
+    SELECT 1
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'catalog'
+      AND c.relname = 'cruise_lines'
+      AND c.relkind = 'f'
+  ) THEN
+    RAISE NOTICE 'Foreign catalog detected (Dev already configured). Skipping FDW setup.';
+    RETURN;
+  END IF;
+
   CREATE EXTENSION IF NOT EXISTS postgres_fdw;
 
   DROP SCHEMA IF EXISTS catalog CASCADE;

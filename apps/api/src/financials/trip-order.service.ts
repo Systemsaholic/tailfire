@@ -1,87 +1,73 @@
 /**
  * Trip-Order PDF Generation Service
  *
- * Generates professional Trip-Order documents including:
+ * Generates professional Trip-Order documents using @react-pdf/renderer:
+ * - Phoenix Voyages branding (Cinzel/Lato fonts, gold colors)
  * - Trip header with agency branding
  * - Trip summary and dates
  * - Activities with costs
  * - Per-traveller cost breakdown
  * - Payment terms and compliance text
+ *
+ * Also supports sending Trip Order PDFs via email with attachments.
  */
 
-import { Injectable, NotFoundException } from '@nestjs/common'
+import { Injectable, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common'
 import { eq } from 'drizzle-orm'
-import PDFDocument from 'pdfkit'
+import { renderToBuffer } from '@react-pdf/renderer'
+import React from 'react'
 import { DatabaseService } from '../db/database.service'
 import { FinancialSummaryService } from './financial-summary.service'
+import { EmailService } from '../email/email.service'
+import { EmailTemplatesService } from '../email/email-templates.service'
+import { TripOrderPDF } from './pdf/trip-order-pdf'
+import type {
+  TripOrderPDFProps,
+  TICOTripOrder,
+  BusinessConfiguration,
+  TripOrderPaymentSummary,
+  TripOrderBookingDetail,
+} from './pdf/types'
 import type {
   GenerateTripOrderDto,
   TripOrderResponseDto,
-  TripOrderSection,
   TripFinancialSummaryResponseDto,
-  TravellerFinancialBreakdownDto,
 } from '@tailfire/shared-types'
 
-const DEFAULT_SECTIONS: TripOrderSection[] = [
-  'header',
-  'summary',
-  'activities',
-  'traveller_breakdown',
-  'payment_terms',
-]
-
-// Type definitions
-interface TripDetails {
-  id: string
-  name: string
-  status: string
-  startDate: string | null
-  endDate: string | null
-  currency: string | null
-  description: string | null
+interface SendTripOrderEmailOptions {
+  to?: string[]
+  includePrimaryContact?: boolean
+  includePassengers?: boolean
+  includeAgent?: boolean
+  cc?: string[]
+  message?: string
 }
 
-interface AgencySettingsData {
-  primaryColor: string | null
-  complianceDisclaimerText: string | null
-  insuranceWaiverText: string | null
-}
-
-interface ActivityData {
-  id: string
-  name: string
-  activityType: string
-  totalPriceCents: number  // From activity_pricing (authoritative source)
-  currency: string
-  dayDate: string | null
-}
-
-interface CreatePDFData {
-  trip: TripDetails
-  agencySettings: AgencySettingsData | null
-  financialSummary: TripFinancialSummaryResponseDto
-  activities: ActivityData[]
-  sections: TripOrderSection[]
-  headerText?: string
+interface EmailSendResult {
+  success: boolean
+  emailLogId?: string
+  providerMessageId?: string
+  recipients: string[]
+  error?: string
 }
 
 @Injectable()
 export class TripOrderService {
+  private readonly logger = new Logger(TripOrderService.name)
+
   constructor(
     private readonly db: DatabaseService,
-    private readonly financialSummaryService: FinancialSummaryService
+    private readonly financialSummaryService: FinancialSummaryService,
+    @Inject(forwardRef(() => EmailService))
+    private readonly emailService: EmailService,
+    @Inject(forwardRef(() => EmailTemplatesService))
+    private readonly emailTemplatesService: EmailTemplatesService
   ) {}
 
   /**
-   * Generate a Trip-Order PDF document
+   * Generate a Trip-Order PDF document using React-PDF
    */
-  async generateTripOrder(
-    tripId: string,
-    agencyId: string,
-    dto: GenerateTripOrderDto = {}
-  ): Promise<Buffer> {
-    const sections = dto.sections ?? DEFAULT_SECTIONS
-
+  async generateTripOrder(tripId: string, agencyId: string, _dto: GenerateTripOrderDto = {}): Promise<Buffer> {
     // Get trip details
     const trip = await this.getTripDetails(tripId)
     if (!trip) {
@@ -89,27 +75,62 @@ export class TripOrderService {
     }
 
     // Get agency settings for branding
-    const agencySettings = await this.getAgencySettings(agencyId)
+    const businessConfig = await this.getBusinessConfiguration(agencyId)
 
     // Get financial summary
     const financialSummary = await this.financialSummaryService.getTripFinancialSummary(tripId)
 
-    // Get activities for the trip (pass tripCurrency for null guard defaults)
-    const activities = await this.getActivities(tripId, financialSummary.tripCurrency)
+    // Get passengers
+    const passengers = await this.getTripPassengers(tripId)
 
-    // Generate PDF
-    return this.createPDF({
+    // Get primary contact
+    const primaryContact = await this.getPrimaryContact(tripId)
+
+    // Get trip agent
+    const agent = await this.getTripAgent(tripId)
+
+    // Get bookings
+    const bookings = await this.getTripBookings(tripId)
+
+    // Get payments
+    const payments = await this.getTripPayments(tripId)
+
+    // Build Trip Order data structure
+    const tripOrderData = this.buildTripOrderData({
       trip,
-      agencySettings,
+      businessConfig,
       financialSummary,
-      activities,
-      sections,
-      headerText: dto.headerText,
+      passengers,
+      primaryContact,
+      agent,
+      bookings,
     })
+
+    // Build payment summary
+    const paymentSummary = this.buildPaymentSummary(payments, financialSummary.grandTotal.totalCostCents / 100)
+
+    // Build booking details for PDF
+    const bookingDetails = this.buildBookingDetails(bookings)
+
+    // Build PDF props
+    const pdfProps: TripOrderPDFProps = {
+      tripOrder: tripOrderData,
+      businessConfig,
+      paymentSummary,
+      bookingDetails,
+      version: 1,
+    }
+
+    // Render React PDF to buffer
+    // Type assertion needed because TripOrderPDF returns Document but TS doesn't infer it
+    const pdfBuffer = await renderToBuffer(
+      React.createElement(TripOrderPDF, pdfProps) as React.ReactElement
+    )
+    return Buffer.from(pdfBuffer)
   }
 
   /**
-   * Generate Trip-Order and return URL (placeholder for future Supabase storage)
+   * Generate Trip-Order and return URL (data URL for now)
    */
   async generateTripOrderWithUrl(
     tripId: string,
@@ -118,8 +139,7 @@ export class TripOrderService {
   ): Promise<TripOrderResponseDto> {
     const pdfBuffer = await this.generateTripOrder(tripId, agencyId, dto)
 
-    // For now, we'll return a data URL. In production, this would upload to Supabase Storage
-    // and return a signed URL
+    // Return a data URL (in production, this would upload to Supabase Storage)
     const base64 = pdfBuffer.toString('base64')
     const dataUrl = `data:application/pdf;base64,${base64}`
 
@@ -133,11 +153,135 @@ export class TripOrderService {
     }
   }
 
+  /**
+   * Send Trip Order PDF via email
+   */
+  async sendTripOrderEmail(
+    tripId: string,
+    agencyId: string,
+    options: SendTripOrderEmailOptions
+  ): Promise<EmailSendResult> {
+    this.logger.log(`Sending trip order email for trip ${tripId}`)
+
+    // 1. Generate PDF with professional design
+    const pdfBuffer = await this.generateTripOrder(tripId, agencyId)
+
+    // 2. Build recipient list
+    const recipients = await this.buildRecipientList(tripId, options)
+
+    if (recipients.to.length === 0) {
+      return {
+        success: false,
+        recipients: [],
+        error: 'No valid recipients found',
+      }
+    }
+
+    // 3. Get trip data for template variables
+    const trip = await this.getTripDetails(tripId)
+    const primaryContact = await this.getPrimaryContact(tripId)
+
+    if (!trip) {
+      throw new NotFoundException(`Trip ${tripId} not found`)
+    }
+
+    // 4. Render email template (with fallback for missing template)
+    let rendered: { subject: string; html: string; text?: string }
+    try {
+      rendered = await this.emailTemplatesService.renderTemplate('trip-order-pdf', {
+        agencyId,
+        tripId,
+        contactId: primaryContact?.id,
+      })
+    } catch (error) {
+      // Fallback template when database template doesn't exist
+      this.logger.warn('Email template "trip-order-pdf" not found, using fallback template')
+      const contactName = primaryContact ? `${primaryContact.firstName} ${primaryContact.lastName}`.trim() : 'Valued Customer'
+      const businessConfig = await this.getBusinessConfiguration(agencyId)
+      rendered = {
+        subject: `Your Trip Order - ${trip.name}`,
+        html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #c59746 0%, #e89e4a 100%); padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+    <h1 style="color: white; margin: 0; font-size: 24px;">Your Trip Order</h1>
+    <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">${trip.name}</p>
+  </div>
+
+  <div style="padding: 30px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
+    <p>Dear ${contactName},</p>
+
+    <p>Please find attached your Trip Order document with complete details of your upcoming travel.</p>
+
+    <div style="background-color: white; padding: 20px; border-radius: 6px; margin: 20px 0; border: 1px solid #e2e8f0;">
+      <h2 style="color: #c59746; margin-top: 0; font-size: 18px;">Trip Details</h2>
+      <p><strong>Trip:</strong> ${trip.name}</p>
+      ${trip.startDate ? `<p><strong>Dates:</strong> ${trip.startDate}${trip.endDate ? ` - ${trip.endDate}` : ''}</p>` : ''}
+      ${trip.reference ? `<p><strong>Reference:</strong> ${trip.reference}</p>` : ''}
+    </div>
+
+    <p>The attached PDF contains your complete Trip Order including:</p>
+    <ul style="color: #4b5563;">
+      <li>Service details and itinerary</li>
+      <li>Financial summary and payment information</li>
+      <li>Important disclosures and terms</li>
+    </ul>
+
+    <p>If you have any questions, please don't hesitate to contact us.</p>
+
+    <p>Best regards,<br>
+    <strong style="color: #c59746;">${businessConfig.company_name}</strong></p>
+  </div>
+
+  <div style="text-align: center; padding: 20px; color: #64748b; font-size: 12px;">
+    <p>${businessConfig.company_name}${businessConfig.phone ? ` | ${businessConfig.phone}` : ''}${businessConfig.email ? ` | ${businessConfig.email}` : ''}</p>
+    ${businessConfig.tico_registration ? `<p>TICO Registration: ${businessConfig.tico_registration}</p>` : ''}
+  </div>
+</body>
+</html>`,
+        text: `Your Trip Order - ${trip.name}\n\nDear ${contactName},\n\nPlease find attached your Trip Order document.\n\nTrip: ${trip.name}\n${trip.reference ? `Reference: ${trip.reference}\n` : ''}\n\nBest regards,\n${businessConfig.company_name}`,
+      }
+    }
+
+    // 5. Send email with PDF attachment
+    const result = await this.emailService.sendEmailWithAttachments({
+      to: recipients.to,
+      cc: recipients.cc,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      attachments: [
+        {
+          filename: `TripOrder-${trip.reference || trip.name?.replace(/[^a-zA-Z0-9]/g, '-') || tripId.slice(0, 8)}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        },
+      ],
+      agencyId,
+      tripId,
+      contactId: primaryContact?.id,
+      templateSlug: 'trip-order-pdf',
+    })
+
+    return {
+      success: result.success,
+      emailLogId: result.emailLogId,
+      providerMessageId: result.providerMessageId,
+      recipients: [...recipients.to, ...recipients.cc],
+      error: result.error,
+    }
+  }
+
   // ============================================================================
-  // PRIVATE METHODS
+  // PRIVATE METHODS - Data Fetching
   // ============================================================================
 
-  private async getTripDetails(tripId: string): Promise<TripDetails | null> {
+  private async getTripDetails(tripId: string) {
     const [trip] = await this.db.client
       .select({
         id: this.db.schema.trips.id,
@@ -147,6 +291,9 @@ export class TripOrderService {
         endDate: this.db.schema.trips.endDate,
         currency: this.db.schema.trips.currency,
         description: this.db.schema.trips.description,
+        reference: this.db.schema.trips.referenceNumber,
+        primaryContactId: this.db.schema.trips.primaryContactId,
+        ownerId: this.db.schema.trips.ownerId,
       })
       .from(this.db.schema.trips)
       .where(eq(this.db.schema.trips.id, tripId))
@@ -155,278 +302,429 @@ export class TripOrderService {
     return trip ?? null
   }
 
-  private async getAgencySettings(agencyId: string): Promise<AgencySettingsData | null> {
-    if (!agencyId) return null
+  private async getBusinessConfiguration(agencyId: string): Promise<BusinessConfiguration> {
+    if (!agencyId) {
+      return this.getDefaultBusinessConfig()
+    }
 
     const [settings] = await this.db.client
       .select({
+        logoUrl: this.db.schema.agencySettings.logoUrl,
         primaryColor: this.db.schema.agencySettings.primaryColor,
-        complianceDisclaimerText: this.db.schema.agencySettings.complianceDisclaimerText,
-        insuranceWaiverText: this.db.schema.agencySettings.insuranceWaiverText,
       })
       .from(this.db.schema.agencySettings)
       .where(eq(this.db.schema.agencySettings.agencyId, agencyId))
       .limit(1)
 
-    return settings ?? null
+    // Get agency name from agencies table
+    const [agency] = await this.db.client
+      .select({ name: this.db.schema.agencies.name })
+      .from(this.db.schema.agencies)
+      .where(eq(this.db.schema.agencies.id, agencyId))
+      .limit(1)
+
+    const defaultConfig = this.getDefaultBusinessConfig()
+
+    return {
+      ...defaultConfig,
+      company_name: agency?.name || defaultConfig.company_name,
+      logo_url: settings?.logoUrl || undefined,
+      primary_color: settings?.primaryColor || defaultConfig.primary_color,
+    }
   }
 
-  private async getActivities(tripId: string, tripCurrency: string): Promise<ActivityData[]> {
-    // LEFT JOIN with activity_pricing to get authoritative pricing data
-    const results = await this.db.client
+  private getDefaultBusinessConfig(): BusinessConfiguration {
+    return {
+      company_name: 'Phoenix Voyages',
+      company_tagline: 'Discover, Soar, Repeat',
+      full_address: '',
+      email: '',
+      tico_registration: '',
+      include_default_tico_disclosures: true,
+      primary_color: '#c59746',
+      secondary_color: '#e89e4a',
+    }
+  }
+
+  private async getTripPassengers(tripId: string) {
+    // Query trip travelers with their linked contacts
+    const travelers = await this.db.client
+      .select({
+        id: this.db.schema.tripTravelers.id,
+        travelerType: this.db.schema.tripTravelers.travelerType,
+        contactId: this.db.schema.tripTravelers.contactId,
+        contactSnapshot: this.db.schema.tripTravelers.contactSnapshot,
+        // Contact fields (if linked)
+        contactFirstName: this.db.schema.contacts.firstName,
+        contactLastName: this.db.schema.contacts.lastName,
+        contactEmail: this.db.schema.contacts.email,
+        contactDateOfBirth: this.db.schema.contacts.dateOfBirth,
+      })
+      .from(this.db.schema.tripTravelers)
+      .leftJoin(
+        this.db.schema.contacts,
+        eq(this.db.schema.contacts.id, this.db.schema.tripTravelers.contactId)
+      )
+      .where(eq(this.db.schema.tripTravelers.tripId, tripId))
+
+    // Transform to expected format, preferring contact data over snapshot
+    return travelers.map((t) => {
+      const snapshot = t.contactSnapshot as { firstName?: string; lastName?: string; email?: string; dateOfBirth?: string } | null
+      return {
+        id: t.id,
+        firstName: t.contactFirstName || snapshot?.firstName || '',
+        lastName: t.contactLastName || snapshot?.lastName || '',
+        dateOfBirth: t.contactDateOfBirth || snapshot?.dateOfBirth || null,
+        passengerType: t.travelerType,
+        email: t.contactEmail || snapshot?.email || null,
+      }
+    })
+  }
+
+  private async getPrimaryContact(tripId: string) {
+    const trip = await this.getTripDetails(tripId)
+    if (!trip?.primaryContactId) return null
+
+    const [contact] = await this.db.client
+      .select({
+        id: this.db.schema.contacts.id,
+        firstName: this.db.schema.contacts.firstName,
+        lastName: this.db.schema.contacts.lastName,
+        email: this.db.schema.contacts.email,
+        phone: this.db.schema.contacts.phone,
+        addressLine1: this.db.schema.contacts.addressLine1,
+        addressLine2: this.db.schema.contacts.addressLine2,
+        city: this.db.schema.contacts.city,
+        province: this.db.schema.contacts.province,
+        postalCode: this.db.schema.contacts.postalCode,
+        country: this.db.schema.contacts.country,
+      })
+      .from(this.db.schema.contacts)
+      .where(eq(this.db.schema.contacts.id, trip.primaryContactId))
+      .limit(1)
+
+    if (!contact) return null
+
+    // Transform to expected format
+    return {
+      ...contact,
+      address1: contact.addressLine1,
+      address2: contact.addressLine2,
+      stateProvince: contact.province,
+    }
+  }
+
+  private async getTripAgent(tripId: string) {
+    const trip = await this.getTripDetails(tripId)
+    if (!trip?.ownerId) return null
+
+    // userProfiles table has id = user id, plus firstName, lastName, email
+    const [profile] = await this.db.client
+      .select({
+        id: this.db.schema.userProfiles.id,
+        firstName: this.db.schema.userProfiles.firstName,
+        lastName: this.db.schema.userProfiles.lastName,
+        email: this.db.schema.userProfiles.email,
+      })
+      .from(this.db.schema.userProfiles)
+      .where(eq(this.db.schema.userProfiles.id, trip.ownerId))
+      .limit(1)
+
+    if (!profile) return null
+
+    return {
+      id: profile.id,
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      email: profile.email,
+      phone: null as string | null, // phone not in userProfiles schema
+      extension: null as string | null,
+    }
+  }
+
+  private async getTripBookings(tripId: string) {
+    // Query itinerary activities with their pricing
+    const activities = await this.db.client
       .select({
         id: this.db.schema.itineraryActivities.id,
         name: this.db.schema.itineraryActivities.name,
         activityType: this.db.schema.itineraryActivities.activityType,
-        // Read from activity_pricing (authoritative source)
+        confirmationNumber: this.db.schema.itineraryActivities.confirmationNumber,
+        startDatetime: this.db.schema.itineraryActivities.startDatetime,
+        endDatetime: this.db.schema.itineraryActivities.endDatetime,
         totalPriceCents: this.db.schema.activityPricing.totalPriceCents,
-        pricingCurrency: this.db.schema.activityPricing.currency,
-        dayDate: this.db.schema.itineraryDays.date,
+        currency: this.db.schema.activityPricing.currency,
       })
       .from(this.db.schema.itineraryActivities)
       .leftJoin(
         this.db.schema.activityPricing,
         eq(this.db.schema.activityPricing.activityId, this.db.schema.itineraryActivities.id)
       )
-      .innerJoin(
-        this.db.schema.itineraryDays,
-        eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
-      )
-      .innerJoin(
-        this.db.schema.itineraries,
-        eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
-      )
-      .where(eq(this.db.schema.itineraries.tripId, tripId))
+      .where(eq(this.db.schema.itineraryActivities.tripId, tripId))
 
-    // Map to ActivityData with null guards
-    return results.map((r) => ({
-      id: r.id,
-      name: r.name,
-      activityType: r.activityType,
-      totalPriceCents: r.totalPriceCents ?? 0,
-      currency: r.pricingCurrency ?? tripCurrency,
-      dayDate: r.dayDate,
+    // Transform to booking format expected by PDF
+    return activities.map((a) => ({
+      id: a.id,
+      title: a.name,
+      bookingType: a.activityType,
+      vendorConfirmation: a.confirmationNumber,
+      startDate: a.startDatetime ? new Date(a.startDatetime).toISOString().split('T')[0] : null,
+      endDate: a.endDatetime ? new Date(a.endDatetime).toISOString().split('T')[0] : null,
+      totalPrice: a.totalPriceCents ? a.totalPriceCents / 100 : 0,
+      currency: a.currency || 'CAD',
     }))
   }
 
-  private createPDF(data: CreatePDFData): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 50 })
-      const chunks: Buffer[] = []
-
-      doc.on('data', (chunk: Buffer) => chunks.push(chunk))
-      doc.on('end', () => resolve(Buffer.concat(chunks)))
-      doc.on('error', reject)
-
-      const { trip, agencySettings, financialSummary, activities, sections, headerText } = data
-      const primaryColor = agencySettings?.primaryColor ?? '#333333'
-
-      // Header Section
-      if (sections.includes('header')) {
-        this.renderHeader(doc, headerText ?? 'Trip Order', primaryColor)
-      }
-
-      // Summary Section
-      if (sections.includes('summary')) {
-        this.renderSummary(doc, trip, financialSummary.tripCurrency)
-      }
-
-      // Activities Section
-      if (sections.includes('activities')) {
-        this.renderActivities(doc, activities, financialSummary.tripCurrency)
-      }
-
-      // Traveller Breakdown Section
-      if (sections.includes('traveller_breakdown')) {
-        this.renderTravellerBreakdown(doc, financialSummary.travellerBreakdown, financialSummary.tripCurrency)
-      }
-
-      // Payment Terms Section
-      if (sections.includes('payment_terms')) {
-        this.renderPaymentTerms(doc, financialSummary.grandTotal, financialSummary.tripCurrency)
-      }
-
-      // Compliance Section
-      if (sections.includes('compliance') && agencySettings?.complianceDisclaimerText) {
-        this.renderCompliance(doc, agencySettings.complianceDisclaimerText)
-      }
-
-      // Insurance Waiver Section
-      if (sections.includes('insurance_waiver') && agencySettings?.insuranceWaiverText) {
-        this.renderInsuranceWaiver(doc, agencySettings.insuranceWaiverText)
-      }
-
-      doc.end()
-    })
+  private async getTripPayments(_tripId: string) {
+    // Payment transactions are linked via activity → pricing → paymentScheduleConfig → expectedPaymentItems
+    // For simplicity, return empty array for now - payment history will be populated from financial summary
+    return [] as Array<{
+      id: string
+      amount: number
+      paymentDate: string | null
+      paymentMethodType: string | null
+      status: string
+      notes: string | null
+    }>
   }
 
-  private renderHeader(doc: PDFKit.PDFDocument, title: string, primaryColor: string) {
-    doc
-      .fillColor(primaryColor)
-      .fontSize(24)
-      .text(title, { align: 'center' })
-      .moveDown(0.5)
+  // ============================================================================
+  // PRIVATE METHODS - Data Building
+  // ============================================================================
 
-    doc
-      .strokeColor('#cccccc')
-      .lineWidth(1)
-      .moveTo(50, doc.y)
-      .lineTo(doc.page.width - 50, doc.y)
-      .stroke()
-      .moveDown(1)
+  private buildTripOrderData(params: {
+    trip: any
+    businessConfig: BusinessConfiguration
+    financialSummary: TripFinancialSummaryResponseDto
+    passengers: any[]
+    primaryContact: any
+    agent: any
+    bookings: any[]
+  }): TICOTripOrder {
+    const { trip, businessConfig, financialSummary, passengers, primaryContact, agent, bookings } = params
+
+    // Calculate cost breakdown from bookings
+    const baseCost = bookings.reduce((sum, b) => sum + Number(b.totalPrice || 0), 0)
+    const finalTotal = financialSummary.grandTotal.totalCostCents / 100
+
+    const orderDate = new Date().toISOString().split('T')[0] ?? new Date().toISOString().substring(0, 10)
+
+    return {
+      order_header: {
+        title: 'Trip Order',
+        order_number: trip.referenceNumber || `TRIP-${trip.id.slice(0, 8).toUpperCase()}`,
+        order_date: orderDate,
+        agency_info: {
+          name: businessConfig.company_name,
+          tico_registration: businessConfig.tico_registration,
+          address: businessConfig.full_address,
+          phone: businessConfig.toll_free || businessConfig.phone,
+          email: businessConfig.email,
+        },
+        customer_info: primaryContact
+          ? {
+              name: `${primaryContact.firstName || ''} ${primaryContact.lastName || ''}`.trim() || 'Customer',
+              email: primaryContact.email || undefined,
+              phone: primaryContact.phone || undefined,
+              address: {
+                street1: primaryContact.address1 || undefined,
+                street2: primaryContact.address2 || undefined,
+                city: primaryContact.city || undefined,
+                state: primaryContact.stateProvince || undefined,
+                postal_code: primaryContact.postalCode || undefined,
+                country: primaryContact.country || undefined,
+              },
+            }
+          : { name: 'Customer' },
+        agent_info: agent
+          ? {
+              name: `${agent.firstName || ''} ${agent.lastName || ''}`.trim(),
+              email: agent.email || undefined,
+              phone: agent.phone || undefined,
+              extension: agent.extension || undefined,
+            }
+          : undefined,
+      },
+      service_details: {
+        description: trip.description || trip.name || 'Travel Services',
+        travel_dates: trip.startDate
+          ? {
+              departure: trip.startDate,
+              return: trip.endDate || undefined,
+            }
+          : undefined,
+        passengers: passengers.map((p) => ({
+          id: p.id,
+          firstName: p.firstName || '',
+          lastName: p.lastName || '',
+          type: p.passengerType as 'adult' | 'child' | 'infant' | undefined,
+          dateOfBirth: p.dateOfBirth || undefined,
+        })),
+      },
+      cost_breakdown: {
+        service_description: trip.description || trip.name || 'Travel Services',
+        base_cost: baseCost,
+        supplier_fees: [],
+        ncf_fees: [],
+        subtotal: baseCost,
+        final_total: finalTotal,
+        payment_instructions: {
+          pay_to_supplier: {
+            amount: finalTotal,
+            instructions: 'Pay as per booking confirmation details.',
+          },
+        },
+        compliance_notes: [
+          'This Trip Order shows all costs you will pay for travel services and any applicable agency fees.',
+          'The agency receives commission from suppliers included in the quoted prices.',
+        ],
+      },
+      compliance_statement: this.generateComplianceStatement(businessConfig),
+      generated_at: new Date().toISOString(),
+    }
   }
 
-  private renderSummary(doc: PDFKit.PDFDocument, trip: TripDetails, currency: string) {
-    doc
-      .fillColor('#333333')
-      .fontSize(16)
-      .text('Trip Summary', { underline: true })
-      .moveDown(0.5)
+  private buildPaymentSummary(payments: any[], totalCost: number): TripOrderPaymentSummary {
+    const processedPayments = payments.filter((p) => p.status === 'processed')
+    const pendingPayments = payments.filter((p) => p.status === 'pending')
+    const refundedPayments = payments.filter((p) => p.status === 'refunded')
 
-    doc.fontSize(11)
-    doc.text(`Trip Name: ${trip.name}`)
-    if (trip.startDate) {
-      doc.text(`Start Date: ${trip.startDate}`)
+    const totalProcessed = processedPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+    const totalPending = pendingPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+    const totalRefunded = refundedPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+
+    const netProcessed = totalProcessed - totalRefunded
+    const balanceDue = totalCost - netProcessed
+
+    return {
+      total_payments: totalProcessed + totalPending,
+      processed_payments: totalProcessed,
+      pending_payments: totalPending,
+      refunds: totalRefunded,
+      balance_due: Math.max(0, balanceDue),
+      payments_list: payments
+        .filter((p) => p.status !== 'refunded')
+        .sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime())
+        .map((payment) => ({
+          date: payment.paymentDate,
+          amount: Number(payment.amount),
+          payment_method_type: this.formatPaymentMethod(payment.paymentMethodType),
+          status: payment.status,
+          notes: payment.notes,
+        })),
     }
-    if (trip.endDate) {
-      doc.text(`End Date: ${trip.endDate}`)
-    }
-    doc.text(`Currency: ${currency}`)
-    if (trip.description) {
-      doc.moveDown(0.5)
-      doc.text(`Description: ${trip.description}`)
-    }
-    doc.moveDown(1)
   }
 
-  private renderActivities(doc: PDFKit.PDFDocument, activities: ActivityData[], _currency: string) {
-    doc
-      .fillColor('#333333')
-      .fontSize(16)
-      .text('Activities', { underline: true })
-      .moveDown(0.5)
-
-    if (activities.length === 0) {
-      doc.fontSize(11).text('No activities scheduled.')
-      doc.moveDown(1)
-      return
-    }
-
-    // Table header
-    doc.fontSize(10).fillColor('#666666')
-    const tableTop = doc.y
-    doc.text('Date', 50, tableTop, { width: 80 })
-    doc.text('Activity', 130, tableTop, { width: 200 })
-    doc.text('Type', 330, tableTop, { width: 80 })
-    doc.text('Cost', 420, tableTop, { width: 80, align: 'right' })
-    doc.moveDown(0.5)
-
-    // Separator line
-    doc
-      .strokeColor('#cccccc')
-      .lineWidth(0.5)
-      .moveTo(50, doc.y)
-      .lineTo(doc.page.width - 50, doc.y)
-      .stroke()
-    doc.moveDown(0.3)
-
-    // Table rows
-    doc.fillColor('#333333')
-    for (const activity of activities) {
-      const rowY = doc.y
-      // totalPriceCents is already in cents from activity_pricing
-      const costDollars = activity.totalPriceCents / 100
-      const costStr = costDollars > 0 ? `${activity.currency} ${costDollars.toFixed(2)}` : '-'
-
-      doc.text(activity.dayDate ?? '-', 50, rowY, { width: 80 })
-      doc.text(activity.name, 130, rowY, { width: 200 })
-      doc.text(activity.activityType, 330, rowY, { width: 80 })
-      doc.text(costStr, 420, rowY, { width: 80, align: 'right' })
-      doc.moveDown(0.5)
-    }
-
-    doc.moveDown(1)
+  private buildBookingDetails(bookings: any[]): TripOrderBookingDetail[] {
+    return bookings.map((booking) => ({
+      booking_id: booking.id,
+      title: booking.title || 'Booking',
+      booking_type: booking.bookingType || 'other',
+      vendor_confirmation: booking.vendorConfirmation || undefined,
+      start_date: booking.startDate || undefined,
+      end_date: booking.endDate || undefined,
+      base_price: Number(booking.totalPrice || 0),
+      taxes: 0,
+      amount: Number(booking.totalPrice || 0),
+    }))
   }
 
-  private renderTravellerBreakdown(
-    doc: PDFKit.PDFDocument,
-    breakdown: TravellerFinancialBreakdownDto[],
-    currency: string
-  ) {
-    doc
-      .fillColor('#333333')
-      .fontSize(16)
-      .text('Per-Traveller Cost Breakdown', { underline: true })
-      .moveDown(0.5)
+  private formatPaymentMethod(type: string): string {
+    switch (type) {
+      case 'credit_card':
+        return 'Credit Card'
+      case 'cash':
+        return 'Cash'
+      case 'wire_transfer':
+        return 'Wire Transfer'
+      case 'gift_certificate':
+        return 'Gift Certificate'
+      case 'check':
+        return 'Check'
+      case 'bank_transfer':
+        return 'Bank Transfer'
+      default:
+        return type || 'Other'
+    }
+  }
 
-    if (breakdown.length === 0) {
-      doc.fontSize(11).text('No travellers assigned.')
-      doc.moveDown(1)
-      return
+  private generateComplianceStatement(businessConfig: BusinessConfiguration): string {
+    let statement = '--- IMPORTANT DISCLOSURES ---\n\n'
+
+    statement +=
+      'This Trip Order details all costs for your travel services. You will pay the supplier directly for travel services as detailed in the payment instructions.\n\n'
+
+    statement +=
+      'The agency receives commission from suppliers included in the quoted prices. Commission amounts are not disclosed separately as they are included in supplier pricing.\n\n'
+
+    statement += 'REGULATORY INFORMATION:\n'
+
+    if (businessConfig.tico_registration) {
+      statement += `${businessConfig.company_name} is registered with TICO (Travel Industry Council of Ontario) Registration #${businessConfig.tico_registration}. `
     }
 
-    for (const traveller of breakdown) {
-      const totalAmount = (traveller.totalInTripCurrencyCents / 100).toFixed(2)
-      const activityAmount = (traveller.activityCostsInTripCurrencyCents / 100).toFixed(2)
-      const feeAmount = (traveller.serviceFeesInTripCurrencyCents / 100).toFixed(2)
+    statement +=
+      'As a TICO registrant, this agency contributes to the Travel Compensation Fund which may reimburse eligible customers in case of agency default. For disputes that cannot be resolved with the agency, you may contact TICO at 1-888-451-8426 or visit www.tico.ca.\n\n'
 
-      doc.fontSize(12).text(`${traveller.travellerName}${traveller.isPrimary ? ' (Primary)' : ''}`)
-      doc.fontSize(10).fillColor('#666666')
-      doc.text(`  Activity Costs: ${currency} ${activityAmount}`)
-      doc.text(`  Service Fees: ${currency} ${feeAmount}`)
-      doc.fillColor('#333333')
-      doc.text(`  Total: ${currency} ${totalAmount}`)
-      doc.moveDown(0.5)
+    statement += '--- END DISCLOSURES ---'
+
+    if (businessConfig.trip_order_terms) {
+      statement += '\n\n' + businessConfig.trip_order_terms
     }
 
-    doc.moveDown(1)
+    return statement
   }
 
-  private renderPaymentTerms(
-    doc: PDFKit.PDFDocument,
-    grandTotal: TripFinancialSummaryResponseDto['grandTotal'],
-    currency: string
-  ) {
-    doc
-      .fillColor('#333333')
-      .fontSize(16)
-      .text('Payment Summary', { underline: true })
-      .moveDown(0.5)
+  // ============================================================================
+  // PRIVATE METHODS - Recipient Building
+  // ============================================================================
 
-    const totalCost = (grandTotal.totalCostCents / 100).toFixed(2)
-    const collected = (grandTotal.totalCollectedCents / 100).toFixed(2)
-    const outstanding = (grandTotal.outstandingCents / 100).toFixed(2)
+  private async buildRecipientList(
+    tripId: string,
+    options: SendTripOrderEmailOptions
+  ): Promise<{ to: string[]; cc: string[] }> {
+    const recipients: { to: string[]; cc: string[] } = { to: [], cc: [] }
 
-    doc.fontSize(11)
-    doc.text(`Total Trip Cost: ${currency} ${totalCost}`)
-    doc.text(`Amount Collected: ${currency} ${collected}`)
-    doc
-      .fontSize(12)
-      .fillColor(grandTotal.outstandingCents > 0 ? '#cc0000' : '#009900')
-      .text(`Outstanding Balance: ${currency} ${outstanding}`)
-    doc.fillColor('#333333')
-    doc.moveDown(1)
-  }
+    // Custom recipients
+    if (options.to?.length) {
+      recipients.to.push(...options.to)
+    }
 
-  private renderCompliance(doc: PDFKit.PDFDocument, text: string) {
-    doc
-      .fillColor('#333333')
-      .fontSize(14)
-      .text('Terms & Conditions', { underline: true })
-      .moveDown(0.3)
+    // Primary contact (default: true)
+    if (options.includePrimaryContact !== false) {
+      const contact = await this.getPrimaryContact(tripId)
+      if (contact?.email) {
+        recipients.to.push(contact.email)
+      }
+    }
 
-    doc.fontSize(9).fillColor('#666666').text(text, { align: 'justify' })
-    doc.fillColor('#333333').moveDown(1)
-  }
+    // Passengers
+    if (options.includePassengers) {
+      const passengers = await this.getTripPassengers(tripId)
+      passengers.forEach((p) => {
+        if (p.email) {
+          recipients.to.push(p.email)
+        }
+      })
+    }
 
-  private renderInsuranceWaiver(doc: PDFKit.PDFDocument, text: string) {
-    doc
-      .fillColor('#333333')
-      .fontSize(14)
-      .text('Insurance & Liability Waiver', { underline: true })
-      .moveDown(0.3)
+    // Agent CC
+    if (options.includeAgent) {
+      const agent = await this.getTripAgent(tripId)
+      if (agent?.email) {
+        recipients.cc.push(agent.email)
+      }
+    }
 
-    doc.fontSize(9).fillColor('#666666').text(text, { align: 'justify' })
-    doc.fillColor('#333333').moveDown(1)
+    // Custom CC
+    if (options.cc?.length) {
+      recipients.cc.push(...options.cc)
+    }
+
+    // Deduplicate
+    recipients.to = [...new Set(recipients.to)]
+    recipients.cc = [...new Set(recipients.cc.filter((email) => !recipients.to.includes(email)))]
+
+    return recipients
   }
 }

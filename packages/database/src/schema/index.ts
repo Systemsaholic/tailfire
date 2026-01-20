@@ -102,6 +102,9 @@ export * from './activity-travelers.schema'
 export * from './agencies.schema'
 export * from './user-profiles.schema'
 
+// Email system (logs and templates)
+export * from './email.schema'
+
 // Later phases:
 // export * from './financials.schema'
 // export * from './tasks.schema'
