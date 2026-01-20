@@ -188,6 +188,7 @@ export class PaymentSchedulesService {
       .insert(this.db.schema.paymentScheduleConfig)
       .values({
         activityPricingId: pricingId,
+        agencyId: activityPricing.agencyId,
         scheduleType: data.scheduleType,
         allowPartialPayments: data.allowPartialPayments ?? false,
         depositType: data.depositType || null,
@@ -1269,6 +1270,7 @@ export class PaymentSchedulesService {
           .insert(this.db.schema.paymentScheduleConfig)
           .values({
             activityPricingId,
+            agencyId,
             scheduleType: template.scheduleType,
             allowPartialPayments: false,
           })
