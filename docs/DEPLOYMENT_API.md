@@ -22,7 +22,7 @@ The Railway project has two environments, each tied to a specific Git branch and
 | Setting | Development | Production |
 |---------|-------------|------------|
 | **Domain** | `api-dev.tailfire.ca` | `api.tailfire.ca` |
-| **Git Branch** | `develop` | `main` |
+| **Git Branch** | `preview` | `main` |
 | **NODE_ENV** | `development` | `production` |
 | **Supabase Project** | `gaqacfstpnmwphekjzae` | `cmktvanwglszgadjrorm` |
 
@@ -283,7 +283,7 @@ If you need to run migrations from a running production instance:
 
 Railway automatically deploys when code is pushed to configured branches:
 
-1. Push to `main` or `develop` triggers Railway
+1. Push to `main` or `preview` triggers Railway
 2. Railway can wait for GitHub Actions to complete ("Wait for CI")
 3. Railway builds using Dockerfile
 4. New version deploys with health check validation

@@ -85,7 +85,7 @@ pnpm dev
 
 | Environment | Trigger | Platforms |
 |-------------|---------|-----------|
-| **Development** | Push to `develop` | Railway (API), Vercel Preview (frontends) |
+| **Development** | Push to `preview` | Railway (API), Vercel Preview (frontends) |
 | **Production** | Push to `main` | Railway (API), Vercel Production (frontends) |
 
 ### Production Domains

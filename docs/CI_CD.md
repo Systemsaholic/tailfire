@@ -8,7 +8,7 @@ Tailfire uses two primary deployment workflows:
 
 | Workflow | Trigger | Target | Purpose |
 |----------|---------|--------|---------|
-| `deploy-dev.yml` | Push to `develop` | Dev/Preview environments | Development testing |
+| `deploy-dev.yml` | Push to `preview` | Dev/Preview environments | Development testing |
 | `deploy-prod.yml` | Push to `main` | Production environments | Production release |
 
 ---
@@ -18,7 +18,7 @@ Tailfire uses two primary deployment workflows:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        deploy-dev.yml                           │
-│                     (push to develop)                           │
+│                     (push to preview)                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  1. Deploy API Migrations (Drizzle → Dev Supabase)              │
@@ -196,7 +196,7 @@ Use these exact check names when configuring branch protection rules in GitHub:
 To require these checks before merging:
 
 1. Go to GitHub repository **Settings** → **Branches**
-2. Add or edit branch protection rule for `main` (and/or `develop`)
+2. Add or edit branch protection rule for `main` (and/or `preview`)
 3. Enable **Require status checks to pass before merging**
 4. Search for and select the check names above
 5. Enable **Require branches to be up to date before merging** (recommended)

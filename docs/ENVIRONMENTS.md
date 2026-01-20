@@ -2,6 +2,37 @@
 
 This document describes the domain mapping, CORS allowlists, and environment-specific URLs for Tailfire.
 
+## Environment Inventory
+
+### Dev (Local)
+
+- **Supabase project:** Tailfire-Preview (`gaqacfstpnmwphekjzae`) (shared with Preview)
+- **Admin:** `http://localhost:3100`
+- **API:** `http://localhost:3101`
+- **OTA:** `http://localhost:3103`
+- **Client:** `http://localhost:3102`
+
+### Preview (Cloud)
+
+- **Supabase project:** Tailfire-Preview (`gaqacfstpnmwphekjzae`)
+- **Admin:** `https://tailfire-dev.phoenixvoyages.ca` (alias: `https://tf-demo.phoenixvoyages.ca`)
+- **OTA:** `https://ota-dev.phoenixvoyages.ca`
+- **Client:** `https://client-dev.phoenixvoyages.ca`
+- **API:** `https://api-dev.tailfire.ca`
+- **Railway service:** `api-dev`
+- **Branch:** `preview`
+
+### Production (Cloud)
+
+- **Supabase project:** Tailfire-Prod (`cmktvanwglszgadjrorm`)
+- **Admin:** `https://tailfire.phoenixvoyages.ca`
+- **OTA:** `https://ota.phoenixvoyages.ca`
+- **OTA root:** `https://phoenixvoyages.ca`, `https://www.phoenixvoyages.ca`
+- **Client:** `https://client.phoenixvoyages.ca`
+- **API:** `https://api.tailfire.ca`
+- **Railway service:** `api-prod`
+- **Branch:** `main`
+
 ## Domain Mapping
 
 ### Production Domains
@@ -14,7 +45,7 @@ This document describes the domain mapping, CORS allowlists, and environment-spe
 | **Client** | `client.phoenixvoyages.ca` | Vercel | Customer-facing app |
 | **Marketing** | `phoenixvoyages.ca`, `www.phoenixvoyages.ca` | External | Main agency website (OTA may run here) |
 
-### Development Domains
+### Preview Domains
 
 | App | Domain | Platform | Purpose |
 |-----|--------|----------|---------|
@@ -29,8 +60,8 @@ This document describes the domain mapping, CORS allowlists, and environment-spe
 |-----|-----|------|
 | **Admin** | `http://localhost:3100` | 3100 |
 | **API** | `http://localhost:3101/api/v1` | 3101 |
-| **OTA** | `http://localhost:3102` | 3102 |
-| **Client** | `http://localhost:3103` | 3103 |
+| **OTA** | `http://localhost:3103` | 3103 |
+| **Client** | `http://localhost:3102` | 3102 |
 
 ---
 
@@ -56,7 +87,7 @@ CORS_ORIGINS=https://tailfire.phoenixvoyages.ca,https://ota.phoenixvoyages.ca,ht
 
 > **Note:** The root domain (`phoenixvoyages.ca` and `www.phoenixvoyages.ca`) must be included because OTA may run at the root domain.
 
-### Development CORS Allowlist
+### Preview CORS Allowlist
 
 ```bash
 CORS_ORIGINS=https://tailfire-dev.phoenixvoyages.ca,https://ota-dev.phoenixvoyages.ca,https://client-dev.phoenixvoyages.ca
@@ -91,10 +122,10 @@ origin: (origin, callback) => {
 |----------|-------|-------------|--------------|
 | `NODE_ENV` | `development` | `development` | `production` |
 | `PORT` | `3101` | (Railway assigns) | (Railway assigns) |
-| `DATABASE_URL` | Dev Supabase | Dev Supabase | Prod Supabase |
-| `SUPABASE_URL` | Dev project URL | Dev project URL | Prod project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Dev key | Dev key | Prod key |
-| `CORS_ORIGINS` | (default localhost) | Dev allowlist | Prod allowlist |
+| `DATABASE_URL` | Preview Supabase | Preview Supabase | Prod Supabase |
+| `SUPABASE_URL` | Preview project URL | Preview project URL | Prod project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Preview key | Preview key | Prod key |
+| `CORS_ORIGINS` | (default localhost) | Preview allowlist | Prod allowlist |
 | `ADMIN_URL` | `http://localhost:3100` | `https://tailfire-dev.phoenixvoyages.ca` | `https://tailfire.phoenixvoyages.ca` |
 | `RUN_MIGRATIONS_ON_STARTUP` | `true` (implicit) | `false` | `false` |
 | `ENABLE_SWAGGER_DOCS` | `true` | `true` | `false` |
@@ -104,24 +135,24 @@ origin: (origin, callback) => {
 | Variable | Local | Vercel Dev | Vercel Prod |
 |----------|-------|------------|-------------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3101/api/v1` | `https://api-dev.tailfire.ca/api/v1` | `https://api.tailfire.ca/api/v1` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Dev project URL | Dev project URL | Prod project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dev anon key | Dev anon key | Prod anon key |
+| `NEXT_PUBLIC_SUPABASE_URL` | Preview project URL | Preview project URL | Prod project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Preview anon key | Preview anon key | Prod anon key |
 
 ### OTA (`apps/ota`) - Vercel
 
 | Variable | Local | Vercel Dev | Vercel Prod |
 |----------|-------|------------|-------------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3101/api/v1` | `https://api-dev.tailfire.ca/api/v1` | `https://api.tailfire.ca/api/v1` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Dev project URL | Dev project URL | Prod project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dev anon key | Dev anon key | Prod anon key |
+| `NEXT_PUBLIC_SUPABASE_URL` | Preview project URL | Preview project URL | Prod project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Preview anon key | Preview anon key | Prod anon key |
 
 ### Client (`apps/client`) - Vercel
 
 | Variable | Local | Vercel Dev | Vercel Prod |
 |----------|-------|------------|-------------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3101/api/v1` | `https://api-dev.tailfire.ca/api/v1` | `https://api.tailfire.ca/api/v1` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Dev project URL | Dev project URL | Prod project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dev anon key | Dev anon key | Prod anon key |
+| `NEXT_PUBLIC_SUPABASE_URL` | Preview project URL | Preview project URL | Prod project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Preview anon key | Preview anon key | Prod anon key |
 
 ---
 
@@ -129,7 +160,8 @@ origin: (origin, callback) => {
 
 | Environment | Project Ref | Purpose |
 |-------------|-------------|---------|
-| **Development** | `gaqacfstpnmwphekjzae` | Dev database, FDW target for catalog |
+| **Dev (Beta)** | `hplioumsywqgtnhwcivw` | Legacy beta project (separate purpose) |
+| **Preview** | `gaqacfstpnmwphekjzae` | Preview database, shared with Local Dev |
 | **Production** | `cmktvanwglszgadjrorm` | Production database, catalog source |
 
 ### Database Connection Types
@@ -148,7 +180,7 @@ Quick reference for Railway API deployment configuration:
 | Setting | Development | Production |
 |---------|-------------|------------|
 | **Domain** | `api-dev.tailfire.ca` | `api.tailfire.ca` |
-| **Git Branch** | `develop` | `main` |
+| **Git Branch** | `preview` | `main` |
 | **NODE_ENV** | `development` | `production` |
 | **Supabase Project** | `gaqacfstpnmwphekjzae` | `cmktvanwglszgadjrorm` |
 | **Health Check** | `/api/v1/health` | `/api/v1/health` |

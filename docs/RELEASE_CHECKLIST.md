@@ -20,14 +20,14 @@ This project uses a shared Dev/Preview database. Treat it as a shared environmen
 - Ensure `git status` is clean except intended changes.
 - Commit with a clear message.
 
-## 4) Promote to Preview (develop)
+## 4) Promote to Preview (preview)
 
-- Push to `develop`.
+- Push to `preview`.
 - Confirm CI passes.
 - Verify preview endpoints (health + key pages).
 
 ## 5) Promote to Prod (main)
 
-- Merge `develop` into `main`.
+- Merge `preview` into `main`.
 - Confirm CI passes.
 - Smoke test production (health + key endpoints).

@@ -3,7 +3,7 @@ name: Deploy to Dev
 on:
   push:
     branches:
-      - develop
+      - preview
 
 jobs:
   deploy-api-migrations:

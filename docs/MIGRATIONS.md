@@ -25,7 +25,7 @@ pnpm db:migrate
 
 ### CI/CD
 
-Migrations run automatically in the `deploy-api-migrations` job on push to `develop` or `main`.
+Migrations run automatically in the `deploy-api-migrations` job on push to `preview` or `main`.
 
 ## Environment-Specific Behavior
 
