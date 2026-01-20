@@ -83,10 +83,16 @@ pnpm dev
 
 ## Deployment
 
-| Environment | Trigger | Platforms |
-|-------------|---------|-----------|
-| **Development** | Push to `preview` | Railway (API), Vercel Preview (frontends) |
-| **Production** | Push to `main` | Railway (API), Vercel Production (frontends) |
+```
+Feature Branch → preview branch → main branch
+                      ↓                ↓
+              Dev Environment    Production
+```
+
+| Environment | Git Branch | CI Workflow | Platforms |
+|-------------|------------|-------------|-----------|
+| **Development** | `preview` | `deploy-dev.yml` | Railway (`api-dev`), Vercel Preview |
+| **Production** | `main` | `deploy-prod.yml` | Railway (`api-prod`), Vercel Production |
 
 ### Production Domains
 

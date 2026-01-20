@@ -4,7 +4,22 @@ This document describes the GitHub Actions workflows for deploying Tailfire appl
 
 ## Overview
 
-Tailfire uses two primary deployment workflows:
+Tailfire uses a two-branch deployment model:
+
+```
+┌──────────────┐     push      ┌──────────────┐     merge     ┌──────────────┐
+│  Feature     │ ───────────►  │   preview    │ ───────────►  │    main      │
+│  Branches    │               │   branch     │               │   branch     │
+└──────────────┘               └──────────────┘               └──────────────┘
+                                     │                              │
+                                     ▼                              ▼
+                               ┌──────────────┐               ┌──────────────┐
+                               │ Dev/Preview  │               │  Production  │
+                               │ Environment  │               │ Environment  │
+                               └──────────────┘               └──────────────┘
+```
+
+### Deployment Workflows
 
 | Workflow | Trigger | Target | Purpose |
 |----------|---------|--------|---------|

@@ -2,6 +2,24 @@
 
 This document describes the domain mapping, CORS allowlists, and environment-specific URLs for Tailfire.
 
+## Naming Conventions
+
+Tailfire uses different naming conventions for different purposes:
+
+| Concept | Preview/Dev | Production | Rationale |
+|---------|-------------|------------|-----------|
+| **Git Branch** | `preview` | `main` | Workflow stage (preview before prod) |
+| **Environment** | `development` | `production` | NODE_ENV value |
+| **Railway Service** | `api-dev` | `api-prod` | Environment-based (dev = development) |
+| **Domain** | `api-dev.tailfire.ca` | `api.tailfire.ca` | Environment-based |
+| **Doppler Config** | `dev` | `prd` | Environment-based |
+| **Supabase Project** | Tailfire-Preview | Tailfire-Prod | Environment-based |
+
+> **Why `preview` branch but `api-dev` service?**
+> - The **branch name** (`preview`) describes the *workflow stage* - code is previewed here before going to production
+> - The **service name** (`api-dev`) describes the *environment type* - it's a development environment with development data
+> - These are separate concepts: the branch could be called anything, but the environment is always "development" vs "production"
+
 ## Environment Inventory
 
 ### Dev (Local)

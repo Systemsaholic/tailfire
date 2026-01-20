@@ -1,6 +1,20 @@
 # Release Checklist (Local-First)
 
-This project uses a shared Dev/Preview database. Treat it as a shared environment: avoid destructive changes, announce migrations, and coordinate with the team before applying them.
+## Deployment Flow
+
+```
+Local Dev → preview branch → main branch
+    ↓             ↓              ↓
+ Validate    Dev/Preview     Production
+             Environment     Environment
+```
+
+| Step | Branch | Environment | CI Workflow |
+|------|--------|-------------|-------------|
+| Preview | `preview` | Dev (api-dev.tailfire.ca) | `deploy-dev.yml` |
+| Production | `main` | Prod (api.tailfire.ca) | `deploy-prod.yml` |
+
+> **Note:** This project uses a shared Dev/Preview database. Treat it as a shared environment: avoid destructive changes, announce migrations, and coordinate with the team before applying them.
 
 ## 1) Local Changes
 
