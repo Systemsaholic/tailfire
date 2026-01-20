@@ -449,6 +449,13 @@
       "when": 1768689521000,
       "tag": "20260116171841_add_missing_rls_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1768953449000,
+      "tag": "20260120003729_add_system_deployments_table",
+      "breakpoints": true
     }
   ]
 }

@@ -2,8 +2,15 @@
 
 import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Key, Ship, Users, Building2 } from 'lucide-react'
+import { Key, Ship, Users, Building2, Info } from 'lucide-react'
 import { SettingsTabsLayout } from './_components/settings-tabs-layout'
+
+// Build info - set at build time
+const BUILD_INFO = {
+  timestamp: process.env.NEXT_PUBLIC_BUILD_TIMESTAMP || new Date().toISOString(),
+  environment: process.env.NODE_ENV || 'development',
+  apiUrl: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1',
+}
 
 interface SettingsCategoryCard {
   title: string
@@ -88,6 +95,35 @@ export default function SettingsPage() {
           </Card>
         ))}
       </div>
+
+      {/* System Info - for verifying deployments */}
+      <Card className="mt-8">
+        <CardHeader className="flex flex-row items-center gap-4">
+          <div className="rounded-lg bg-tern-gray-100 p-2 text-tern-gray-600">
+            <Info className="h-6 w-6" />
+          </div>
+          <div className="flex-1">
+            <CardTitle className="text-lg">System Info</CardTitle>
+            <CardDescription>Build and environment details</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-3">
+            <div>
+              <dt className="font-medium text-muted-foreground">Environment</dt>
+              <dd className="font-mono">{BUILD_INFO.environment}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-muted-foreground">API URL</dt>
+              <dd className="font-mono text-xs break-all">{BUILD_INFO.apiUrl}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-muted-foreground">Build Time</dt>
+              <dd className="font-mono text-xs">{BUILD_INFO.timestamp}</dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
     </SettingsTabsLayout>
   )
 }
