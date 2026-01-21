@@ -110,9 +110,12 @@ export function CredentialFormDialog({
       onOpenChange(false)
       form.reset()
     } catch (error) {
+      const errorMessage = error instanceof Error
+        ? error.message
+        : 'Failed to create credential. Please try again.'
       toast({
         title: 'Error',
-        description: 'Failed to create credential. Please try again.',
+        description: errorMessage,
         variant: 'destructive',
       })
     }
