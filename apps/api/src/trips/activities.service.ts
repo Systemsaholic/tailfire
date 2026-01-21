@@ -1683,8 +1683,19 @@ export class ActivitiesService {
    * 2. Direct trip_id (for floating packages - though packages are excluded here)
    *
    * @param tripId - Trip ID
+   * @param itineraryId - Optional itinerary ID to filter activities by specific itinerary
    */
-  async findUnlinkedByTrip(tripId: string): Promise<ActivityResponseDto[]> {
+  async findUnlinkedByTrip(tripId: string, itineraryId?: string): Promise<ActivityResponseDto[]> {
+    // Build the trip/itinerary filter condition
+    const tripOrItineraryCondition = itineraryId
+      ? // When itineraryId provided, only get activities from that specific itinerary
+        eq(this.db.schema.itineraries.id, itineraryId)
+      : // Otherwise get all activities for the trip (via any itinerary or direct trip_id)
+        or(
+          eq(this.db.schema.itineraries.tripId, tripId),
+          eq(this.db.schema.itineraryActivities.tripId, tripId)
+        )
+
     const activities = await this.db.client
       .select({
         activity: this.db.schema.itineraryActivities,
@@ -1700,18 +1711,48 @@ export class ActivitiesService {
       )
       .where(
         and(
-          // Activity belongs to this trip via itinerary OR direct trip_id
-          or(
-            eq(this.db.schema.itineraries.tripId, tripId),
-            eq(this.db.schema.itineraryActivities.tripId, tripId)
-          ),
+          tripOrItineraryCondition,
           sql`${this.db.schema.itineraryActivities.parentActivityId} IS NULL`,
           sql`${this.db.schema.itineraryActivities.activityType} != 'package'`
         )
       )
       .orderBy(asc(this.db.schema.itineraryActivities.sequenceOrder))
 
-    return activities.map(r => this.formatActivityResponse(r.activity))
+    if (activities.length === 0) {
+      return []
+    }
+
+    // Get activity IDs for batch pricing query
+    const activityIds = activities.map(a => a.activity.id)
+
+    // Fetch pricing for all activities in a single query
+    const pricingData = await this.db.client
+      .select({
+        activityId: this.db.schema.activityPricing.activityId,
+        totalPriceCents: this.db.schema.activityPricing.totalPriceCents,
+        currency: this.db.schema.activityPricing.currency,
+      })
+      .from(this.db.schema.activityPricing)
+      .where(inArray(this.db.schema.activityPricing.activityId, activityIds))
+
+    const pricingMap = new Map(
+      pricingData.map(p => [p.activityId, p])
+    )
+
+    // Return activities with pricing enriched
+    return activities.map(r => {
+      const baseResponse = this.formatActivityResponse(r.activity)
+      const pricing = pricingMap.get(r.activity.id)
+
+      return {
+        ...baseResponse,
+        pricing: pricing ? {
+          totalPriceCents: pricing.totalPriceCents ?? 0,
+          currency: pricing.currency ?? 'CAD',
+          pricingType: null,
+        } : null,
+      }
+    })
   }
 
   /**
@@ -1818,6 +1859,34 @@ export class ActivitiesService {
       pricingData.map(p => [p.activityId, p])
     )
 
+    // Fetch itinerary IDs for each package based on linked activities' itineraries
+    // This allows filtering packages by selected itinerary in the UI
+    const itineraryIdsQuery = await this.db.client
+      .select({
+        parentActivityId: this.db.schema.itineraryActivities.parentActivityId,
+        itineraryId: this.db.schema.itineraries.id,
+      })
+      .from(this.db.schema.itineraryActivities)
+      .innerJoin(
+        this.db.schema.itineraryDays,
+        eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
+      )
+      .innerJoin(
+        this.db.schema.itineraries,
+        eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
+      )
+      .where(inArray(this.db.schema.itineraryActivities.parentActivityId, packageIds))
+
+    // Group itinerary IDs by parent activity (package)
+    const itineraryIdsMap = new Map<string, Set<string>>()
+    for (const row of itineraryIdsQuery) {
+      if (row.parentActivityId) {
+        const existing = itineraryIdsMap.get(row.parentActivityId) || new Set()
+        existing.add(row.itineraryId)
+        itineraryIdsMap.set(row.parentActivityId, existing)
+      }
+    }
+
     // Debug: Log child counts
     this.logger.debug(`[findPackagesByTrip] tripId=${tripId}, packages=${packageIds.length}, childCounts=${JSON.stringify(childCounts)}`)
 
@@ -1828,12 +1897,14 @@ export class ActivitiesService {
       const details = packageDetailsMap.get(activity.id)
       const pricing = pricingMap.get(activity.id)
       const activityCount = childCountMap.get(activity.id) ?? 0
-      this.logger.debug(`[findPackagesByTrip] Package ${activity.name}: activityCount=${activityCount}`)
+      const itineraryIds = Array.from(itineraryIdsMap.get(activity.id) ?? [])
+      this.logger.debug(`[findPackagesByTrip] Package ${activity.name}: activityCount=${activityCount}, itineraryIds=${JSON.stringify(itineraryIds)}`)
 
       return {
         ...baseResponse,
         tripId,
         activityCount,
+        itineraryIds, // For filtering packages by selected itinerary
         supplierName: details?.supplierName ?? null,
         paymentStatus: details?.paymentStatus ?? 'unpaid',
         totalPriceCents: pricing?.totalPriceCents ?? 0,

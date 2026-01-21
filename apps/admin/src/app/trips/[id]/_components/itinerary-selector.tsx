@@ -40,6 +40,8 @@ interface ItinerarySelectorProps {
   onSelectItinerary: (itinerary: ItineraryResponseDto) => void
   onCreateClick: () => void
   isLoading?: boolean
+  /** Hide the Create and Import buttons (e.g., on Bookings page where they're not needed) */
+  hideActionButtons?: boolean
 }
 
 /**
@@ -60,6 +62,7 @@ export function ItinerarySelector({
   onSelectItinerary,
   onCreateClick,
   isLoading = false,
+  hideActionButtons = false,
 }: ItinerarySelectorProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -362,38 +365,42 @@ export function ItinerarySelector({
           )
         })}
 
-        {/* Inline Create Button */}
-        <Button
-          onClick={onCreateClick}
-          variant="ghost"
-          size="sm"
-          aria-label="Create new itinerary"
-          className={cn('h-7 px-2 text-xs text-tern-gray-500 hover:text-tern-gray-900', FOCUS_VISIBLE_RING)}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          Create
-        </Button>
+        {/* Inline Create Button - hidden on Bookings page */}
+        {!hideActionButtons && (
+          <Button
+            onClick={onCreateClick}
+            variant="ghost"
+            size="sm"
+            aria-label="Create new itinerary"
+            className={cn('h-7 px-2 text-xs text-tern-gray-500 hover:text-tern-gray-900', FOCUS_VISIBLE_RING)}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            Create
+          </Button>
+        )}
 
-        {/* Import from Library Button */}
-        <Button
-          onClick={() => {
-            startLoading('itinerary-templates')
-            const params = new URLSearchParams({
-              tripId,
-              returnUrl: pathname,
-            })
-            if (tripStartDate) params.append('tripStartDate', tripStartDate)
-            if (tripEndDate) params.append('tripEndDate', tripEndDate)
-            router.push(`/library/itineraries?${params.toString()}`)
-          }}
-          variant="ghost"
-          size="sm"
-          aria-label="Import itinerary from library"
-          className={cn('h-7 px-2 text-xs text-tern-gray-500 hover:text-tern-gray-900', FOCUS_VISIBLE_RING)}
-        >
-          <Download className="h-3.5 w-3.5 mr-1" />
-          Import
-        </Button>
+        {/* Import from Library Button - hidden on Bookings page */}
+        {!hideActionButtons && (
+          <Button
+            onClick={() => {
+              startLoading('itinerary-templates')
+              const params = new URLSearchParams({
+                tripId,
+                returnUrl: pathname,
+              })
+              if (tripStartDate) params.append('tripStartDate', tripStartDate)
+              if (tripEndDate) params.append('tripEndDate', tripEndDate)
+              router.push(`/library/itineraries?${params.toString()}`)
+            }}
+            variant="ghost"
+            size="sm"
+            aria-label="Import itinerary from library"
+            className={cn('h-7 px-2 text-xs text-tern-gray-500 hover:text-tern-gray-900', FOCUS_VISIBLE_RING)}
+          >
+            <Download className="h-3.5 w-3.5 mr-1" />
+            Import
+          </Button>
+        )}
       </div>
 
       {/* Delete Confirmation Dialog */}

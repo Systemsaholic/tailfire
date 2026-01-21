@@ -277,10 +277,14 @@ export class TripsController {
   /**
    * Get all unlinked activities for a trip (activities not in any package)
    * GET /trips/:id/unlinked-activities
+   * @param itineraryId - Optional filter to get activities for a specific itinerary
    */
   @Get(':id/unlinked-activities')
-  async getUnlinkedActivities(@Param('id') tripId: string): Promise<UnlinkedActivitiesResponseDto> {
-    const activities = await this.activitiesService.findUnlinkedByTrip(tripId)
+  async getUnlinkedActivities(
+    @Param('id') tripId: string,
+    @Query('itineraryId') itineraryId?: string
+  ): Promise<UnlinkedActivitiesResponseDto> {
+    const activities = await this.activitiesService.findUnlinkedByTrip(tripId, itineraryId)
     return {
       activities: activities.map((a) => ({
         id: a.id,

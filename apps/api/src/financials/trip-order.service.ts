@@ -859,6 +859,8 @@ export class TripOrderService {
 
   private async getTripBookings(tripId: string) {
     // Query itinerary activities with their pricing
+    // Join through itinerary chain: itineraries -> itinerary_days -> itinerary_activities
+    // Note: itinerary_activities.trip_id may be NULL, so we must join through the chain
     const activities = await this.db.client
       .select({
         id: this.db.schema.itineraryActivities.id,
@@ -871,11 +873,19 @@ export class TripOrderService {
         currency: this.db.schema.activityPricing.currency,
       })
       .from(this.db.schema.itineraryActivities)
+      .innerJoin(
+        this.db.schema.itineraryDays,
+        eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
+      )
+      .innerJoin(
+        this.db.schema.itineraries,
+        eq(this.db.schema.itineraryDays.itineraryId, this.db.schema.itineraries.id)
+      )
       .leftJoin(
         this.db.schema.activityPricing,
         eq(this.db.schema.activityPricing.activityId, this.db.schema.itineraryActivities.id)
       )
-      .where(eq(this.db.schema.itineraryActivities.tripId, tripId))
+      .where(eq(this.db.schema.itineraries.tripId, tripId))
 
     // Transform to booking format expected by PDF
     return activities.map((a) => ({

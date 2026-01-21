@@ -224,13 +224,26 @@ export function TripOrderGeneratorModal({
   }
 
   // Extract summary from order data
+  // Note: Backend stores dollars, formatCurrency expects cents - must convert
   const getSummary = (order: TripOrderSnapshot | undefined) => {
-    if (!order?.paymentSummary) return null
-    const summary = order.paymentSummary as Record<string, unknown>
+    if (!order) return null
+
+    // Payment summary uses snake_case from backend (values are in dollars)
+    const paymentSummary = order.paymentSummary as Record<string, unknown> | null
+
+    // Grand total comes from orderData.cost_breakdown.final_total (dollars)
+    const orderData = order.orderData as { cost_breakdown?: { final_total?: number } } | null
+    const grandTotalDollars = orderData?.cost_breakdown?.final_total ?? 0
+
+    // Payments from paymentSummary (snake_case, in dollars)
+    const totalPaidDollars = (paymentSummary?.processed_payments as number) ?? 0
+    const balanceDueDollars = (paymentSummary?.balance_due as number) ?? grandTotalDollars
+
+    // Convert to cents for formatCurrency compatibility
     return {
-      grandTotal: (summary.grandTotal as number) ?? 0,
-      totalPaid: (summary.totalPaid as number) ?? 0,
-      balanceDue: (summary.balanceDue as number) ?? 0,
+      grandTotal: Math.round(grandTotalDollars * 100),
+      totalPaid: Math.round(totalPaidDollars * 100),
+      balanceDue: Math.round(balanceDueDollars * 100),
     }
   }
 

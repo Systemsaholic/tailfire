@@ -686,7 +686,7 @@ export function PackagesTable({
   tripId,
   currency,
   itineraryId,
-  filterItineraryId: _filterItineraryId, // Unused - bookings show for all itineraries
+  filterItineraryId,
 }: PackagesTableProps) {
   const router = useRouter()
   const { toast } = useToast()
@@ -699,7 +699,8 @@ export function PackagesTable({
   // Data fetching
   const { data: bookingsData, isLoading: bookingsLoading, error: bookingsError } = useBookings({ tripId })
   const { data: totals, isLoading: totalsLoading } = useTripBookingTotals(tripId)
-  const { data: unlinkedData, isLoading: unlinkedLoading } = useUnlinkedActivities(tripId)
+  // Filter unlinked activities by the selected itinerary
+  const { data: unlinkedData, isLoading: unlinkedLoading } = useUnlinkedActivities(tripId, itineraryId)
 
   // Derived data
   // Type assertion for runtime fields that may exist but aren't in the type definition
@@ -716,10 +717,20 @@ export function PackagesTable({
       >,
     [bookingsData]
   )
-  // NOTE: We don't filter packages or activities by itinerary for the Bookings tab.
-  // Bookings are trip-level financial items that should always be visible.
-  // The itinerary selector is just for context, not for filtering bookings.
-  const packages = allPackages
+  // Filter packages by the selected itinerary if provided
+  // Only show packages that have linked activities in the selected itinerary
+  const packages = useMemo(() => {
+    if (!filterItineraryId) return allPackages
+    return allPackages.filter((pkg) => {
+      // If package has itineraryIds, check if selected itinerary is included
+      if (pkg.itineraryIds && pkg.itineraryIds.length > 0) {
+        return pkg.itineraryIds.includes(filterItineraryId)
+      }
+      // If no itineraryIds, the package has no linked activities - show it anyway
+      // (allows creating packages before linking activities)
+      return true
+    })
+  }, [allPackages, filterItineraryId])
 
   const unlinkedActivities = useMemo(() => {
     return unlinkedData?.activities || []

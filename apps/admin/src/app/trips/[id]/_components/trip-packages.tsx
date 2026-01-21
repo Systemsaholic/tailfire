@@ -78,7 +78,7 @@ export function TripPackages({ trip }: { trip: TripWithDetailsResponseDto }) {
 
   return (
     <div className="space-y-3">
-      {/* Itinerary Selector (same as Itinerary tab) */}
+      {/* Itinerary Selector (read-only on Bookings page - no Create/Import buttons) */}
       <ItinerarySelector
         tripId={trip.id}
         tripStartDate={trip.startDate}
@@ -88,6 +88,7 @@ export function TripPackages({ trip }: { trip: TripWithDetailsResponseDto }) {
         onSelectItinerary={handleSelectItinerary}
         onCreateClick={() => setShowCreateDialog(true)}
         isLoading={itinerariesLoading}
+        hideActionButtons
       />
 
       {/* Bookings Table with Overview */}
