@@ -108,19 +108,28 @@ Every row in core tables includes `agency_id`:
 
 ---
 
-## The Catalog Split: Dev FDW vs Prod Local
+## Cruise Catalog Data
 
-This is the most distinctive part of the architecture.
+### Current State (Development Only)
 
-### The Problem
+Cruise catalog data (ships, sailings, prices) consists of 16 tables that currently exist **only in Local Dev** for development purposes:
 
-Cruise catalog data (ships, sailings, prices) is:
-- Large and complex (16 tables, millions of rows)
-- Updated from external providers (Traveltek)
-- Read-only for the application
-- Needed in both Dev and Prod environments
+| Environment | Table Count | Cruise Tables |
+|-------------|-------------|---------------|
+| Local Dev (tailfire-Dev) | 76 tables | 16 cruise_* tables present |
+| Cloud Preview (Tailfire-Preview) | 60 tables | Not yet available |
+| Production (Tailfire-Prod) | 60 tables | Not yet available |
 
-### The Solution: Schema Split + FDW
+The cruise tables in Local Dev include:
+- `cruise_lines`, `cruise_ships`, `cruise_regions`, `cruise_ports`
+- `cruise_sailings`, `cruise_sailing_cabin_prices`, `cruise_sailing_stops`
+- `cruise_ship_cabin_types`, `cruise_ship_decks`, `cruise_ship_images`
+- `cruise_cabin_images`, `cruise_alternate_sailings`, `cruise_sailing_regions`
+- `cruise_sync_raw`, `cruise_sync_history`, `cruise_ftp_file_sync`
+
+### Future Architecture: FDW (Planned)
+
+When Traveltek cruise integration is complete, the architecture will use Foreign Data Wrapper (FDW):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -129,52 +138,27 @@ Cruise catalog data (ships, sailings, prices) is:
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐       ┌─────────────────────────────┐  │
 │  │ public schema   │       │ catalog schema              │  │
-│  │                 │       │                             │  │
-│  │ - agencies      │       │ - cruise_lines      (LOCAL) │  │
-│  │ - user_profiles │       │ - cruise_ships      (LOCAL) │  │
-│  │ - trips         │       │ - cruise_sailings   (LOCAL) │  │
-│  │ - contacts      │       │ - cruise_ports      (LOCAL) │  │
-│  │ - activities    │       │ - ... 12 more tables        │  │
-│  │ - ...           │       │                             │  │
+│  │ (60 tables)     │       │ (16 cruise tables - LOCAL)  │  │
 │  └─────────────────┘       └─────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
-
+                                      ↑
+                                      │ FDW (read-only)
+                                      │
 ┌─────────────────────────────────────────────────────────────┐
-│                   DEVELOPMENT DATABASE                       │
-│                  (gaqacfstpnmwphekjzae)                      │
+│              PREVIEW/DEV DATABASES                           │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐       ┌─────────────────────────────┐  │
-│  │ public schema   │       │ catalog schema              │  │
-│  │                 │       │                             │  │
-│  │ - agencies      │       │ - cruise_lines    (FOREIGN) │  │
-│  │ - user_profiles │       │ - cruise_ships    (FOREIGN) │  │
-│  │ - trips         │  FDW  │ - cruise_sailings (FOREIGN) │  │
-│  │ - contacts      │ ───── │ - cruise_ports    (FOREIGN) │  │
-│  │ - activities    │       │ - ... 12 more tables        │  │
-│  │ - ...           │       │                    ↓        │  │
-│  └─────────────────┘       │            Points to Prod   │  │
-│                            └─────────────────────────────┘  │
+│  │ public schema   │       │ catalog schema (FOREIGN)    │  │
+│  │ (60 tables)     │       │ Points to Production        │  │
+│  └─────────────────┘       └─────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### How It Works
-
-| Environment | catalog Schema | Data Source |
-|-------------|---------------|-------------|
-| **Production** | Local PostgreSQL tables | Traveltek sync writes here |
-| **Development** | Foreign tables via FDW | Reads from Prod (read-only) |
-
-**Benefits**:
-- Single source of truth for catalog data
-- No need to sync catalog between environments
-- Dev always has real, current catalog data
-- Catalog updates only happen in Prod
-
-**Implementation**:
-- `postgres_fdw` extension creates foreign server
-- Read-only user (`fdw_catalog_ro`) for Dev access
-- Guard clause in migration detects environment
-- See [Database Architecture](./DATABASE_ARCHITECTURE.md) for details
+**Planned Benefits**:
+- Single source of truth for catalog data in Production
+- Preview/Dev read catalog via FDW (no sync needed)
+- Traveltek writes only to Production
+- See [Database Architecture](./DATABASE_ARCHITECTURE.md) for implementation details
 
 ---
 

@@ -2,13 +2,17 @@
  * JWT Strategy
  *
  * Validates Supabase JWT tokens and extracts auth context.
- * Uses the Supabase JWT secret for verification.
+ * Supports both HS256 (older projects) and ES256 (newer projects) algorithms.
+ *
+ * - HS256: Uses SUPABASE_JWT_SECRET for verification
+ * - ES256: Uses JWKS endpoint for public key verification
  */
 
 import { Injectable, UnauthorizedException } from '@nestjs/common'
 import { PassportStrategy } from '@nestjs/passport'
 import { ExtractJwt, Strategy } from 'passport-jwt'
 import { ConfigService } from '@nestjs/config'
+import JwksRsa from 'jwks-rsa'
 import type { AuthContext, JwtPayload } from '../auth.types'
 
 @Injectable()
@@ -24,13 +28,62 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new Error('SUPABASE_JWT_SECRET environment variable is required')
     }
 
+    // Create JWKS client for ES256 tokens (newer Supabase projects)
+    const jwksClient = new JwksRsa.JwksClient({
+      cache: true,
+      rateLimit: true,
+      jwksRequestsPerMinute: 5,
+      jwksUri: `${supabaseUrl}/auth/v1/.well-known/jwks.json`,
+    })
+
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      // Use HS256 with Supabase JWT secret for token verification
-      secretOrKey: jwtSecret,
-      algorithms: ['HS256'],
+      // Support both HS256 (older projects) and ES256 (newer projects)
+      algorithms: ['HS256', 'ES256'],
       issuer: `${supabaseUrl}/auth/v1`,
+      // Dynamic secret resolution based on token algorithm
+      secretOrKeyProvider: (
+        _request: unknown,
+        rawJwtToken: string,
+        done: (err: Error | null, secret?: string | Buffer) => void,
+      ) => {
+        // Decode the token header to check the algorithm
+        const tokenParts = rawJwtToken.split('.')
+        if (tokenParts.length !== 3) {
+          return done(new Error('Invalid token format'))
+        }
+
+        try {
+          const headerPart = tokenParts[0]
+          if (!headerPart) {
+            return done(new Error('Invalid token format'))
+          }
+          const header = JSON.parse(
+            Buffer.from(headerPart, 'base64').toString('utf8'),
+          ) as { alg?: string; kid?: string }
+
+          if (header.alg === 'HS256') {
+            // Use the static secret for HS256 tokens
+            return done(null, jwtSecret)
+          } else if (header.alg === 'ES256') {
+            // Use JWKS for ES256 tokens - fetch signing key by kid
+            jwksClient
+              .getSigningKey(header.kid)
+              .then((key) => {
+                const publicKey = key.getPublicKey()
+                done(null, publicKey)
+              })
+              .catch((err) => {
+                done(err)
+              })
+          } else {
+            return done(new Error(`Unsupported algorithm: ${header.alg}`))
+          }
+        } catch {
+          return done(new Error('Failed to parse token header'))
+        }
+      },
     })
   }
 

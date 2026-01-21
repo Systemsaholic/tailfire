@@ -229,11 +229,35 @@ Quick reference for Railway API deployment configuration:
 | `NODE_ENV` | Yes | `development` vs `production` |
 | `DATABASE_URL` | Yes | Different Supabase projects |
 | `SUPABASE_*` keys | Yes | Different Supabase projects |
+| `SUPABASE_JWT_SECRET` | Yes | **Must use HS256 algorithm** (see below) |
 | `JWT_SECRET` | Yes | Security: unique per environment |
 | `CORS_ORIGINS` | Yes | Different frontend domains |
 | `ADMIN_URL` | Yes | Different admin domains |
 | `ENABLE_SWAGGER_DOCS` | Yes | `true` in dev, `false` in prod |
 | `RUN_MIGRATIONS_ON_STARTUP` | No | `false` in both (CI/CD handles) |
+
+### JWT Algorithm Requirements
+
+**CRITICAL:** All Supabase projects must use the **HS256** JWT signing algorithm.
+
+The NestJS API validates JWT tokens using HS256. If a Supabase project uses ES256 (or another algorithm), all authenticated API requests will fail with "invalid algorithm" error.
+
+**How to verify your JWT algorithm:**
+1. Get a valid access token from Supabase Auth
+2. Decode the token header at [jwt.io](https://jwt.io)
+3. Check the `alg` field - it must be `"HS256"`
+
+**If your Supabase project uses ES256:**
+1. Go to Supabase Dashboard → Project Settings → API
+2. Regenerate the JWT secret (this will invalidate all existing tokens)
+3. Update `SUPABASE_JWT_SECRET` in Doppler with the new secret
+4. Redeploy the API service
+
+| Environment | Supabase Project | Expected Algorithm |
+|-------------|------------------|-------------------|
+| Local Dev | tailfire-Dev | HS256 |
+| Cloud Preview | Tailfire-Preview | HS256 |
+| Production | Tailfire-Prod | HS256 |
 
 See [API Deployment](./DEPLOYMENT_API.md) for full Railway configuration details.
 

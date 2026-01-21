@@ -4,20 +4,25 @@ This document provides a deep dive into the database schema organization, Drizzl
 
 ## Schema Organization
 
-Tailfire uses two PostgreSQL schemas:
+Tailfire uses the PostgreSQL `public` schema for all application data:
 
-| Schema | Purpose | Table Count |
-|--------|---------|-------------|
-| `public` | Application data (multi-tenant) | ~47 tables |
-| `catalog` | Cruise reference data (read-only) | 16 tables |
+| Environment | Table Count | Notes |
+|-------------|-------------|-------|
+| Local Dev (tailfire-Dev) | 76 tables | Includes 16 cruise_* development tables |
+| Cloud Preview (Tailfire-Preview) | 60 tables | Core application tables only |
+| Production (Tailfire-Prod) | 60 tables | Core application tables only |
+
+> **Note:** The cruise catalog tables (16 tables) currently exist only in Local Dev for development purposes. When Traveltek integration is complete, these will be added to Production with FDW access from Preview.
 
 ---
 
-## Catalog Schema
+## Catalog Schema (Local Dev Only)
 
 **Location**: `packages/database/src/schema/cruise-*.schema.ts`
 
-The catalog schema contains read-only cruise reference data from Traveltek:
+> **Current Status:** These tables exist only in Local Dev (tailfire-Dev) for development purposes. They are not yet deployed to Cloud Preview or Production.
+
+The catalog schema will contain read-only cruise reference data from Traveltek:
 
 ### Reference Tables
 
@@ -190,16 +195,18 @@ All schemas are exported from a single entry point:
 
 ---
 
-## FDW Architecture
+## FDW Architecture (Planned)
+
+> **Status:** The FDW architecture is designed but not yet active. Cruise tables currently exist only in Local Dev. This section describes the planned architecture for when Traveltek integration is complete.
 
 ### Overview
 
-The Foreign Data Wrapper allows Development to read catalog data from Production:
+The Foreign Data Wrapper will allow Preview/Development to read catalog data from Production:
 
-| Environment | Project Ref | catalog Schema |
-|-------------|-------------|----------------|
-| **Production** | `cmktvanwglszgadjrorm` | Local tables (ordinary PostgreSQL) |
-| **Development** | `gaqacfstpnmwphekjzae` | Foreign tables (via FDW to Prod) |
+| Environment | Project Ref | catalog Schema (Planned) |
+|-------------|-------------|--------------------------|
+| **Production** | `cmktvanwglszgadjrorm` | Local tables (cruise data from Traveltek) |
+| **Preview** | `gaqacfstpnmwphekjzae` | Foreign tables (via FDW to Prod) |
 
 ### FDW Migration
 
