@@ -54,7 +54,7 @@ export function CredentialFormDialog({
       provider: z.nativeEnum(ApiProvider),
       name: z.string().min(1, 'Name is required').max(255),
       expiresAt: z.string().optional().or(z.literal('')),
-    })),
+    }).passthrough()), // Allow dynamic credential fields to pass through validation
     defaultValues: {
       provider: '' as ApiProvider,
       name: '',
