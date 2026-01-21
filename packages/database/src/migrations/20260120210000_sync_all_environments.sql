@@ -132,10 +132,11 @@ CREATE TABLE IF NOT EXISTS "email_templates" (
   "created_by" uuid
 );
 
--- email_templates unique constraint
+-- email_templates unique constraint (use duplicate_table for constraint/index errors)
 DO $$ BEGIN
   ALTER TABLE "email_templates" ADD CONSTRAINT "email_templates_slug_key" UNIQUE ("slug");
 EXCEPTION
+  WHEN duplicate_table THEN null;
   WHEN duplicate_object THEN null;
 END $$;
 
@@ -217,10 +218,11 @@ CREATE TABLE IF NOT EXISTS "trip_orders" (
   "email_log_id" uuid
 );
 
--- trip_orders unique constraint
+-- trip_orders unique constraint (use duplicate_table for constraint/index errors)
 DO $$ BEGIN
   ALTER TABLE "trip_orders" ADD CONSTRAINT "unique_trip_version" UNIQUE ("trip_id", "version_number");
 EXCEPTION
+  WHEN duplicate_table THEN null;
   WHEN duplicate_object THEN null;
 END $$;
 
