@@ -22,6 +22,7 @@ import { EmptyState } from '@/components/tern/shared/empty-state'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -299,6 +300,11 @@ export function TripMediaTab({ trip }: TripMediaTabProps) {
             <DialogTitle>
               {uploadAsCover ? 'Set Cover Photo' : 'Add Photo'}
             </DialogTitle>
+            <DialogDescription>
+              {uploadAsCover
+                ? 'Upload an image or search Unsplash to set as the cover photo'
+                : 'Upload an image or search Unsplash to add to the gallery'}
+            </DialogDescription>
           </DialogHeader>
 
           <MediaUploader

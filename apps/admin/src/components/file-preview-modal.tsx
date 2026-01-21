@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -123,6 +124,9 @@ export function FilePreviewModal({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0">
         <DialogHeader className="px-6 py-4 border-b border-tern-gray-200 flex-shrink-0">
+          <DialogDescription className="sr-only">
+            Preview of {file.fileName}
+          </DialogDescription>
           <div className="flex items-center justify-between">
             <div className="flex-1 min-w-0 pr-4">
               <DialogTitle className="text-base font-medium truncate">

@@ -20,6 +20,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -94,6 +95,7 @@ export function CruiseDetailModal({
           <>
             <DialogHeader className="p-6 pb-0">
               <DialogTitle className="sr-only">Loading cruise details</DialogTitle>
+              <DialogDescription className="sr-only">Please wait while cruise details are loading</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 p-6">
               <Skeleton className="h-8 w-3/4" />
@@ -108,6 +110,7 @@ export function CruiseDetailModal({
           <>
             <DialogHeader className="p-6 pb-0">
               <DialogTitle className="sr-only">Error loading cruise</DialogTitle>
+              <DialogDescription className="sr-only">An error occurred while loading cruise details</DialogDescription>
             </DialogHeader>
             <div className="flex flex-col items-center justify-center py-12 px-6">
               <AlertCircle className="h-12 w-12 text-red-400" />
@@ -123,6 +126,9 @@ export function CruiseDetailModal({
         ) : sailing ? (
           <>
             <DialogHeader className="flex-shrink-0 p-6 pb-4">
+              <DialogDescription className="sr-only">
+                View details for {sailing.name} by {sailing.cruiseLine.name}
+              </DialogDescription>
               <div className="flex items-start gap-4">
                 {/* Cruise Line Logo */}
                 {sailing.cruiseLine.logoUrl && (

@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/tern/shared/empty-state'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -149,6 +150,9 @@ export function ComponentMediaTab({
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Add Photo</DialogTitle>
+            <DialogDescription>
+              Upload an image or search Unsplash to add a photo
+            </DialogDescription>
           </DialogHeader>
 
           <MediaUploader
