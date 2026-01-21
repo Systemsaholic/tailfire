@@ -5,7 +5,7 @@
  * Stores provider-specific settings, credentials, and booking type mappings.
  */
 
-import { pgTable, uuid, text, jsonb, boolean, integer, timestamp, index, unique } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, jsonb, boolean, integer, timestamp, index } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 // ============================================================================
@@ -48,10 +48,7 @@ export const apiProviderConfigs = pgTable('api_provider_configs', {
   // Indexes
   providerIdx: index('idx_api_provider_configs_provider').on(table.providerName),
   bookingTypeIdx: index('idx_api_provider_configs_booking_type').on(table.bookingType),
-  activeIdx: index('idx_api_provider_configs_active').on(table.isActive).where(sql`${table.isActive} = true`),
-  // Unique constraint on provider + booking_type combination
-  uniqueProviderBookingType: unique('idx_api_provider_configs_unique').on(
-    table.providerName,
-    sql`COALESCE(${table.bookingType}, '')`
-  ),
+  activeIdx: index('idx_api_provider_configs_active').on(table.isActive),
+  // Note: Unique constraint idx_api_provider_configs_unique created via SQL migration
+  // uses COALESCE(booking_type, '') which Drizzle schema can't express
 }))
