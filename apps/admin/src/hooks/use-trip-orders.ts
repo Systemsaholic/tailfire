@@ -13,7 +13,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
-import { api, fetchApi } from '@/lib/api'
+import { api } from '@/lib/api'
 import { useToast } from './use-toast'
 
 // ============================================================================

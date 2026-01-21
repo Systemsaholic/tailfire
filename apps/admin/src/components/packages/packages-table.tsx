@@ -689,7 +689,6 @@ export function PackagesTable({
   filterItineraryId,
 }: PackagesTableProps) {
   const router = useRouter()
-  const { toast } = useToast()
 
   // State
   const [expandedPackages, setExpandedPackages] = useState<Set<string>>(new Set())

@@ -50,7 +50,6 @@ import { format } from 'date-fns'
 import { useUser } from '@/hooks/use-user'
 import {
   useTripOrders,
-  useLatestTripOrder,
   useGenerateTripOrderSnapshot,
   useFinalizeTripOrder,
   useDownloadStoredTripOrder,
