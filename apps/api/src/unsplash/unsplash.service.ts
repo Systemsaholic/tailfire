@@ -80,7 +80,9 @@ export class UnsplashService implements OnModuleInit {
     this.accessKey = this.configService.get<string>('UNSPLASH_ACCESS_KEY') || null
 
     if (this.accessKey) {
-      this.logger.log('Unsplash API configured successfully')
+      // Log first 8 chars for debugging (safe to expose prefix)
+      const keyPreview = this.accessKey.substring(0, 8) + '...'
+      this.logger.log(`Unsplash API configured successfully (key: ${keyPreview})`)
     } else {
       this.logger.warn(
         'UNSPLASH_ACCESS_KEY not configured. Stock image features will be unavailable. ' +
@@ -264,20 +266,46 @@ export class UnsplashService implements OnModuleInit {
   private async makeRequest<T>(endpoint: string): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Client-ID ${this.accessKey}`,
-        'Accept-Version': 'v1',
-      },
-    })
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Client-ID ${this.accessKey}`,
+          'Accept-Version': 'v1',
+        },
+      })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      this.logger.error(`Unsplash API error: ${response.status} - ${errorText}`)
-      throw new Error(`Unsplash API error: ${response.status}`)
+      if (!response.ok) {
+        const errorText = await response.text()
+        this.logger.error(`Unsplash API error: ${response.status} - ${errorText}`)
+
+        // Provide more specific error messages
+        if (response.status === 401) {
+          throw new ServiceUnavailableException(
+            'Unsplash API authentication failed. The API key may be invalid or expired.'
+          )
+        }
+        if (response.status === 403) {
+          throw new ServiceUnavailableException(
+            'Unsplash API access forbidden. The app may be rate-limited or disabled.'
+          )
+        }
+        throw new ServiceUnavailableException(
+          `Unsplash API error: ${response.status}`
+        )
+      }
+
+      return response.json() as Promise<T>
+    } catch (error) {
+      // If it's already a NestJS exception, rethrow
+      if (error instanceof ServiceUnavailableException) {
+        throw error
+      }
+      // Network errors or other issues
+      this.logger.error(`Unsplash API request failed: ${error}`)
+      throw new ServiceUnavailableException(
+        'Failed to connect to Unsplash API. Please try again later.'
+      )
     }
-
-    return response.json() as Promise<T>
   }
 
   private getFromCache<T>(key: string): T | null {

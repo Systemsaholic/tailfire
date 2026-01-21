@@ -24,12 +24,29 @@ export class UnsplashController {
    * GET /unsplash/status
    */
   @Get('status')
-  getStatus() {
-    return {
-      available: this.unsplashService.isAvailable(),
-      message: this.unsplashService.isAvailable()
-        ? 'Unsplash API is configured and ready'
-        : 'Unsplash API not configured. Set UNSPLASH_ACCESS_KEY in environment.',
+  async getStatus() {
+    const isConfigured = this.unsplashService.isAvailable()
+
+    if (!isConfigured) {
+      return {
+        available: false,
+        message: 'Unsplash API not configured. Set UNSPLASH_ACCESS_KEY in environment.',
+      }
+    }
+
+    // Try a test query to verify the API key actually works
+    try {
+      await this.unsplashService.searchPhotos('test', 1, 1)
+      return {
+        available: true,
+        message: 'Unsplash API is configured and working',
+      }
+    } catch (error) {
+      return {
+        available: false,
+        configured: true,
+        message: error instanceof Error ? error.message : 'Unknown error',
+      }
     }
   }
 
