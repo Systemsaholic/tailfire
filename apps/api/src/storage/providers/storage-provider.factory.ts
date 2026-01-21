@@ -11,7 +11,7 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { ApiProvider, StorageCredentials } from '@tailfire/shared-types'
-import { ApiCredentialsService } from '../../api-credentials/api-credentials.service'
+import { CredentialResolverService } from '../../api-credentials/credential-resolver.service'
 import { StorageProvider } from './storage-provider.interface'
 import { SupabaseStorageProvider } from './supabase-storage.provider'
 import { CloudflareR2Provider } from './cloudflare-r2.provider'
@@ -44,7 +44,7 @@ export class ProviderInitializationError extends Error {
  * - Caching initialized providers
  * - Multi-bucket support (documents vs media)
  * - Graceful error handling (no crash on misconfiguration)
- * - Retrieving active credentials from ApiCredentialsService
+ * - Retrieving credentials from Doppler via CredentialResolverService
  */
 @Injectable()
 export class StorageProviderFactory {
@@ -60,7 +60,7 @@ export class StorageProviderFactory {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly apiCredentialsService: ApiCredentialsService
+    private readonly credentialResolver: CredentialResolverService
   ) {
     // Configure bucket names from environment
     this.documentsBucket = this.configService.get<string>('R2_DOCUMENTS_BUCKET') || 'tailfire-documents'
@@ -186,12 +186,13 @@ export class StorageProviderFactory {
     provider: ApiProvider,
     bucketType: StorageBucketType
   ): Promise<StorageProvider> {
-    // Fetch active credentials from API Credentials Manager
-    const credentials = await this.apiCredentialsService.getActiveCredentials(provider) as StorageCredentials
-
-    if (!credentials) {
-      throw new Error(`No active credentials found for provider: ${provider}`)
+    // Check if credentials are available via CredentialResolverService (Doppler env vars)
+    if (!this.credentialResolver.isAvailable(provider)) {
+      throw new Error(`No credentials configured for provider: ${provider}`)
     }
+
+    // Fetch credentials from environment variables (Doppler-managed)
+    const credentials = await this.credentialResolver.resolve(provider) as unknown as StorageCredentials
 
     // Get the appropriate bucket name based on bucket type
     const bucketName = this.getBucketName(bucketType)
@@ -275,7 +276,7 @@ export class StorageProviderFactory {
 
     throw new ProviderInitializationError(
       ApiProvider.SUPABASE_STORAGE, // Default to Supabase for error message
-      `No active storage provider configured for ${bucketType}. Please configure storage credentials via the admin panel.`
+      `No active storage provider configured for ${bucketType}. Please configure storage credentials in Doppler.`
     )
   }
 

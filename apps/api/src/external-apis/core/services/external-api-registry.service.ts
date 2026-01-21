@@ -4,6 +4,11 @@
  * Manages registered API providers with priority-based fallback chains.
  * Handles credential loading and provider selection.
  *
+ * Credentials are loaded via CredentialResolverService which supports:
+ * - env-only: Doppler-managed environment variables (recommended)
+ * - db-only: Admin UI database storage (deprecated)
+ * - hybrid: Try env first, fall back to DB
+ *
  * Ordering Rules:
  * - Lower priority number = higher priority (1 beats 2)
  * - Alphabetical tie-breaker for same priority
@@ -12,8 +17,9 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common'
+import { ApiProvider } from '@tailfire/shared-types'
 import { ApiCategory, IExternalApiProvider } from '../interfaces'
-import { ApiCredentialsService } from '../../../api-credentials/api-credentials.service'
+import { CredentialResolverService } from '../../../api-credentials/credential-resolver.service'
 import { MetricsService } from './metrics.service'
 
 /**
@@ -51,7 +57,7 @@ export class ExternalApiRegistryService {
   private activeProviders = new Map<ApiCategory, ProviderRegistration[]>()
 
   constructor(
-    private readonly credentialsService: ApiCredentialsService,
+    private readonly credentialResolver: CredentialResolverService,
     private readonly metrics: MetricsService
   ) {}
 
@@ -95,6 +101,9 @@ export class ExternalApiRegistryService {
   /**
    * Load credentials for a single provider
    *
+   * Uses CredentialResolverService which checks env vars first (Doppler-managed),
+   * then falls back to database based on the provider's source policy.
+   *
    * @param key - Provider key (category_provider)
    * @param provider - Provider instance
    */
@@ -105,23 +114,31 @@ export class ExternalApiRegistryService {
     const registration = this.registrations.get(key)
     if (!registration) return
 
-    try {
-      const credentials = await this.credentialsService.getDecryptedCredentials(
-        provider.config.provider
-      )
+    const providerName = provider.config.provider as ApiProvider
 
-      if (credentials) {
-        await provider.setCredentials(credentials)
-        registration.hasCredentials = true
-        this.logger.log(`Loaded credentials for ${provider.config.provider}`)
-      } else {
+    try {
+      // Check if credentials are available (validates upfront without throwing)
+      if (!this.credentialResolver.isAvailable(providerName)) {
         registration.hasCredentials = false
-        this.logger.warn(`No credentials found for ${provider.config.provider}`)
+        const policy = this.credentialResolver.getPolicy(providerName)
+        this.logger.warn(
+          `No credentials found for ${providerName} (policy: ${policy}). ` +
+            `Configure via Doppler or Admin UI.`
+        )
+        return
       }
+
+      // Resolve credentials using the policy-based resolver
+      const credentials = await this.credentialResolver.resolve(providerName)
+      await provider.setCredentials(credentials as Record<string, any>)
+      registration.hasCredentials = true
+
+      const policy = this.credentialResolver.getPolicy(providerName)
+      this.logger.log(`Loaded credentials for ${providerName} (policy: ${policy})`)
     } catch (error: any) {
       registration.hasCredentials = false
       this.logger.error(
-        `Failed to load credentials for ${provider.config.provider}: ${error.message}`
+        `Failed to load credentials for ${providerName}: ${error.message}`
       )
     }
   }
@@ -261,11 +278,17 @@ export class ExternalApiRegistryService {
   /**
    * Refresh credentials for a specific provider
    *
-   * Call this when credentials are updated via Admin UI.
+   * Call this when credentials are updated via Doppler or Admin UI.
+   * For env-only providers, this re-reads from environment variables.
    *
    * @param providerName - Provider identifier
    */
   async refreshCredentials(providerName: string): Promise<void> {
+    const apiProvider = providerName as ApiProvider
+
+    // Refresh credentials from environment (for env-only providers)
+    this.credentialResolver.refreshFromEnvironment(apiProvider)
+
     for (const [key, provider] of this.providers) {
       if (provider.config.provider !== providerName) continue
 
@@ -273,15 +296,16 @@ export class ExternalApiRegistryService {
       if (!registration) continue
 
       try {
-        const credentials = await this.credentialsService.getDecryptedCredentials(providerName)
-
-        if (credentials) {
-          await provider.setCredentials(credentials)
-          registration.hasCredentials = true
-          this.logger.log(`Refreshed credentials for ${providerName}`)
-        } else {
+        if (!this.credentialResolver.isAvailable(apiProvider)) {
           registration.hasCredentials = false
+          this.logger.warn(`No credentials available for ${providerName} after refresh`)
+          continue
         }
+
+        const credentials = await this.credentialResolver.resolve(apiProvider)
+        await provider.setCredentials(credentials as Record<string, any>)
+        registration.hasCredentials = true
+        this.logger.log(`Refreshed credentials for ${providerName}`)
       } catch (error: any) {
         registration.hasCredentials = false
         this.logger.error(`Failed to refresh credentials for ${providerName}: ${error.message}`)

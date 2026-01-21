@@ -2,14 +2,15 @@
  * Unsplash Service
  *
  * Provides Unsplash API integration with:
- * - ConfigService for API key management
+ * - CredentialResolverService for Doppler-managed API keys
  * - Rate limiting (50 requests/hour for free tier)
  * - Simple in-memory cache for search queries
  * - Download tracking (Unsplash API requirement)
  */
 
 import { Injectable, OnModuleInit, Logger, ServiceUnavailableException } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
+import { ApiProvider } from '@tailfire/shared-types'
+import { CredentialResolverService } from '../api-credentials/credential-resolver.service'
 
 // Unsplash API types
 export interface UnsplashPhoto {
@@ -74,19 +75,27 @@ export class UnsplashService implements OnModuleInit {
   private readonly RATE_LIMIT = 50
   private readonly RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000 // 1 hour
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly credentialResolver: CredentialResolverService) {}
 
   onModuleInit() {
-    this.accessKey = this.configService.get<string>('UNSPLASH_ACCESS_KEY') || null
-
-    if (this.accessKey) {
-      // Log first 8 chars for debugging (safe to expose prefix)
-      const keyPreview = this.accessKey.substring(0, 8) + '...'
-      this.logger.log(`Unsplash API configured successfully (key: ${keyPreview})`)
+    // Use CredentialResolverService for unified credential loading
+    // This follows the same pattern as all other API providers
+    if (this.credentialResolver.isAvailable(ApiProvider.UNSPLASH)) {
+      // Get credentials synchronously from cache (populated at startup)
+      this.credentialResolver
+        .resolve(ApiProvider.UNSPLASH)
+        .then((creds) => {
+          this.accessKey = creds.accessKey as string
+          const keyPreview = this.accessKey.substring(0, 8) + '...'
+          this.logger.log(`Unsplash API configured successfully (key: ${keyPreview})`)
+        })
+        .catch((err) => {
+          this.logger.error(`Failed to load Unsplash credentials: ${err.message}`)
+        })
     } else {
       this.logger.warn(
         'UNSPLASH_ACCESS_KEY not configured. Stock image features will be unavailable. ' +
-          'Set UNSPLASH_ACCESS_KEY in your .env file to enable Unsplash integration.'
+          'Configure via Doppler to enable Unsplash integration.'
       )
     }
   }

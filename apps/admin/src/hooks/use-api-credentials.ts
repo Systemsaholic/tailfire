@@ -8,6 +8,14 @@ import type {
   RotateCredentialDto,
 } from '@tailfire/shared-types/api'
 
+/**
+ * Credential source policy
+ * - env-only: Managed via Doppler (environment variables) - CRUD disabled in UI
+ * - db-only: Managed via Admin UI (database) - full CRUD enabled
+ * - hybrid: Try env first, fall back to DB - limited CRUD
+ */
+export type SourcePolicy = 'env-only' | 'db-only' | 'hybrid'
+
 // Provider metadata type (matches backend ProviderMetadataDto)
 export interface CredentialFieldDefinition {
   name: string
@@ -29,6 +37,12 @@ export interface ProviderMetadata {
   isAvailable: boolean
   costTier: 'free' | 'low' | 'medium' | 'high'
   features: string[]
+  /** Credential source policy - determines how credentials are managed */
+  sourcePolicy: SourcePolicy
+  /** Environment variable names for this provider (for env-only/hybrid) */
+  envVars?: Record<string, string>
+  /** Whether credentials are shared across all environments */
+  isShared?: boolean
 }
 
 // Query Keys

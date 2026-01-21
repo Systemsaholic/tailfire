@@ -2,18 +2,30 @@
 
 This document describes the domain mapping, CORS allowlists, and environment-specific URLs for Tailfire.
 
+## Architecture Overview
+
+Tailfire uses a **3-environment architecture** with separate Supabase databases for each:
+
+| Environment | Purpose | Supabase Project | Doppler Config |
+|-------------|---------|------------------|----------------|
+| **Local Dev** | Local development | tailfire-Dev (`hplioumsywqgtnhwcivw`) | `dev` |
+| **Cloud Preview** | Staging/QA testing | Tailfire-Preview (`gaqacfstpnmwphekjzae`) | `stg` |
+| **Production** | Live environment | Tailfire-Prod (`cmktvanwglszgadjrorm`) | `prd` |
+
+> **Important:** Each environment has its own isolated Supabase database. Local Dev does NOT share a database with Cloud Preview.
+
 ## Naming Conventions
 
 Tailfire uses different naming conventions for different purposes:
 
-| Concept | Preview/Dev | Production | Rationale |
-|---------|-------------|------------|-----------|
-| **Git Branch** | `preview` | `main` | Workflow stage (preview before prod) |
-| **Environment** | `development` | `production` | NODE_ENV value |
-| **Railway Service** | `api-dev` | `api-prod` | Environment-based (dev = development) |
-| **Domain** | `api-dev.tailfire.ca` | `api.tailfire.ca` | Environment-based |
-| **Doppler Config** | `dev` | `prd` | Environment-based |
-| **Supabase Project** | Tailfire-Preview | Tailfire-Prod | Environment-based |
+| Concept | Local Dev | Cloud Preview | Production | Rationale |
+|---------|-----------|---------------|------------|-----------|
+| **Git Branch** | local | `preview` | `main` | Workflow stage |
+| **NODE_ENV** | `development` | `development` | `production` | Runtime mode |
+| **Railway Service** | - | `api-dev` | `api-prod` | Cloud API instances |
+| **Domain** | `localhost` | `api-dev.tailfire.ca` | `api.tailfire.ca` | API endpoints |
+| **Doppler Config** | `dev` | `stg` | `prd` | Secrets management |
+| **Supabase Project** | tailfire-Dev | Tailfire-Preview | Tailfire-Prod | Database |
 
 > **Why `preview` branch but `api-dev` service?**
 > - The **branch name** (`preview`) describes the *workflow stage* - code is previewed here before going to production
@@ -22,17 +34,19 @@ Tailfire uses different naming conventions for different purposes:
 
 ## Environment Inventory
 
-### Dev (Local)
+### Local Dev
 
-- **Supabase project:** Tailfire-Preview (`gaqacfstpnmwphekjzae`) (shared with Preview)
+- **Supabase project:** tailfire-Dev (`hplioumsywqgtnhwcivw`)
+- **Doppler config:** `dev`
 - **Admin:** `http://localhost:3100`
 - **API:** `http://localhost:3101`
 - **OTA:** `http://localhost:3103`
 - **Client:** `http://localhost:3102`
 
-### Preview (Cloud)
+### Cloud Preview (Staging)
 
 - **Supabase project:** Tailfire-Preview (`gaqacfstpnmwphekjzae`)
+- **Doppler config:** `stg`
 - **Admin:** `https://tailfire-dev.phoenixvoyages.ca` (alias: `https://tf-demo.phoenixvoyages.ca`)
 - **OTA:** `https://ota-dev.phoenixvoyages.ca`
 - **Client:** `https://client-dev.phoenixvoyages.ca`
@@ -40,9 +54,10 @@ Tailfire uses different naming conventions for different purposes:
 - **Railway service:** `api-dev`
 - **Branch:** `preview`
 
-### Production (Cloud)
+### Production
 
 - **Supabase project:** Tailfire-Prod (`cmktvanwglszgadjrorm`)
+- **Doppler config:** `prd`
 - **Admin:** `https://tailfire.phoenixvoyages.ca`
 - **OTA:** `https://ota.phoenixvoyages.ca`
 - **OTA root:** `https://phoenixvoyages.ca`, `https://www.phoenixvoyages.ca`
@@ -136,13 +151,13 @@ origin: (origin, callback) => {
 
 ### API (`apps/api`) - Railway
 
-| Variable | Local | Railway Dev | Railway Prod |
-|----------|-------|-------------|--------------|
+| Variable | Local Dev | Cloud Preview | Production |
+|----------|-----------|---------------|------------|
 | `NODE_ENV` | `development` | `development` | `production` |
 | `PORT` | `3101` | (Railway assigns) | (Railway assigns) |
-| `DATABASE_URL` | Preview Supabase | Preview Supabase | Prod Supabase |
-| `SUPABASE_URL` | Preview project URL | Preview project URL | Prod project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Preview key | Preview key | Prod key |
+| `DATABASE_URL` | tailfire-Dev Supabase | Tailfire-Preview Supabase | Tailfire-Prod Supabase |
+| `SUPABASE_URL` | tailfire-Dev URL | Tailfire-Preview URL | Tailfire-Prod URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | tailfire-Dev key | Tailfire-Preview key | Tailfire-Prod key |
 | `CORS_ORIGINS` | (default localhost) | Preview allowlist | Prod allowlist |
 | `ADMIN_URL` | `http://localhost:3100` | `https://tailfire-dev.phoenixvoyages.ca` | `https://tailfire.phoenixvoyages.ca` |
 | `RUN_MIGRATIONS_ON_STARTUP` | `true` (implicit) | `false` | `false` |
@@ -150,37 +165,39 @@ origin: (origin, callback) => {
 
 ### Admin (`apps/admin`) - Vercel
 
-| Variable | Local | Vercel Dev | Vercel Prod |
-|----------|-------|------------|-------------|
+| Variable | Local Dev | Cloud Preview | Production |
+|----------|-----------|---------------|------------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3101/api/v1` | `https://api-dev.tailfire.ca/api/v1` | `https://api.tailfire.ca/api/v1` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Preview project URL | Preview project URL | Prod project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Preview anon key | Preview anon key | Prod anon key |
+| `NEXT_PUBLIC_SUPABASE_URL` | tailfire-Dev URL | Tailfire-Preview URL | Tailfire-Prod URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | tailfire-Dev anon key | Tailfire-Preview anon key | Tailfire-Prod anon key |
 
 ### OTA (`apps/ota`) - Vercel
 
-| Variable | Local | Vercel Dev | Vercel Prod |
-|----------|-------|------------|-------------|
+| Variable | Local Dev | Cloud Preview | Production |
+|----------|-----------|---------------|------------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3101/api/v1` | `https://api-dev.tailfire.ca/api/v1` | `https://api.tailfire.ca/api/v1` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Preview project URL | Preview project URL | Prod project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Preview anon key | Preview anon key | Prod anon key |
+| `NEXT_PUBLIC_SUPABASE_URL` | tailfire-Dev URL | Tailfire-Preview URL | Tailfire-Prod URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | tailfire-Dev anon key | Tailfire-Preview anon key | Tailfire-Prod anon key |
 
 ### Client (`apps/client`) - Vercel
 
-| Variable | Local | Vercel Dev | Vercel Prod |
-|----------|-------|------------|-------------|
+| Variable | Local Dev | Cloud Preview | Production |
+|----------|-----------|---------------|------------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3101/api/v1` | `https://api-dev.tailfire.ca/api/v1` | `https://api.tailfire.ca/api/v1` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Preview project URL | Preview project URL | Prod project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Preview anon key | Preview anon key | Prod anon key |
+| `NEXT_PUBLIC_SUPABASE_URL` | tailfire-Dev URL | Tailfire-Preview URL | Tailfire-Prod URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | tailfire-Dev anon key | Tailfire-Preview anon key | Tailfire-Prod anon key |
 
 ---
 
 ## Supabase Projects
 
-| Environment | Project Ref | Purpose |
-|-------------|-------------|---------|
-| **Dev (Beta)** | `hplioumsywqgtnhwcivw` | Legacy beta project (separate purpose) |
-| **Preview** | `gaqacfstpnmwphekjzae` | Preview database, shared with Local Dev |
-| **Production** | `cmktvanwglszgadjrorm` | Production database, catalog source |
+| Environment | Project Name | Project Ref | Region | Purpose |
+|-------------|--------------|-------------|--------|---------|
+| **Local Dev** | tailfire-Dev | `hplioumsywqgtnhwcivw` | us-east-1 | Local development database |
+| **Cloud Preview** | Tailfire-Preview | `gaqacfstpnmwphekjzae` | ca-central-1 | Staging/QA database |
+| **Production** | Tailfire-Prod | `cmktvanwglszgadjrorm` | ca-central-1 | Production database |
+
+> **Note:** There is also a `tailfire-ai` project (`ccyvpovnnxxogafqsawy`) which is used for AI/experimental features.
 
 ### Database Connection Types
 
@@ -195,12 +212,13 @@ origin: (origin, callback) => {
 
 Quick reference for Railway API deployment configuration:
 
-| Setting | Development | Production |
-|---------|-------------|------------|
+| Setting | Cloud Preview (api-dev) | Production (api-prod) |
+|---------|-------------------------|----------------------|
 | **Domain** | `api-dev.tailfire.ca` | `api.tailfire.ca` |
 | **Git Branch** | `preview` | `main` |
 | **NODE_ENV** | `development` | `production` |
-| **Supabase Project** | `gaqacfstpnmwphekjzae` | `cmktvanwglszgadjrorm` |
+| **Doppler Config** | `stg` | `prd` |
+| **Supabase Project** | Tailfire-Preview (`gaqacfstpnmwphekjzae`) | Tailfire-Prod (`cmktvanwglszgadjrorm`) |
 | **Health Check** | `/api/v1/health` | `/api/v1/health` |
 | **Migrations** | CI/CD (not runtime) | CI/CD (not runtime) |
 
@@ -225,19 +243,66 @@ See [API Deployment](./DEPLOYMENT_API.md) for full Railway configuration details
 
 For each environment, configure in Supabase Dashboard > Authentication > URL Configuration:
 
-### Production
+### Production (Tailfire-Prod)
 - **Site URL:** `https://tailfire.phoenixvoyages.ca`
 - **Redirect URLs:**
   - `https://tailfire.phoenixvoyages.ca/auth/callback`
   - `https://tailfire.phoenixvoyages.ca/auth/reset-password`
 
-### Development
+### Cloud Preview (Tailfire-Preview)
 - **Site URL:** `https://tailfire-dev.phoenixvoyages.ca`
 - **Redirect URLs:**
   - `https://tailfire-dev.phoenixvoyages.ca/auth/callback`
   - `https://tailfire-dev.phoenixvoyages.ca/auth/reset-password`
+  - `https://tf-demo.phoenixvoyages.ca/auth/callback`
+  - `https://tf-demo.phoenixvoyages.ca/auth/reset-password`
+
+### Local Dev (tailfire-Dev)
+- **Site URL:** `http://localhost:3100`
+- **Redirect URLs:**
   - `http://localhost:3100/auth/callback`
   - `http://localhost:3100/auth/reset-password`
+
+---
+
+## Test User Accounts
+
+Test accounts are pre-configured for Local Dev and Cloud Preview environments. These are shared across both non-production environments.
+
+| Email | Password | Role | Purpose |
+|-------|----------|------|---------|
+| `admin@phoenixvoyages.ca` | `Phoenix2026!` | Admin | Full admin access |
+| `agent@phoenixvoyages.ca` | `Phoenix2026!` | Agent | Travel agent workflows |
+| `test@phoenixvoyages.ca` | `Phoenix2026!` | Test | General testing |
+
+> **Important:** Production uses live user accounts created by the business. Do not use test accounts in production.
+
+---
+
+## Doppler Configuration
+
+Doppler is used for centralized secrets management across all environments.
+
+| Doppler Config | Environment | Purpose |
+|----------------|-------------|---------|
+| `dev` | Local Dev | Local development secrets |
+| `stg` | Cloud Preview | Staging/QA secrets |
+| `prd` | Production | Production secrets |
+
+### Doppler Setup
+
+1. Install the Doppler CLI: `brew install dopplerhq/cli/doppler`
+2. Login: `doppler login`
+3. Setup for local dev: `doppler setup --project tailfire --config dev`
+4. Run with Doppler: `doppler run -- pnpm dev`
+
+### Key Doppler Variables
+
+Variables managed via Doppler (not committed to git):
+- Database credentials (`DATABASE_URL`, `SUPABASE_*`)
+- API keys for third-party services (OpenAI, Resend, etc.)
+- Storage credentials (Cloudflare R2, Backblaze B2)
+- JWT secrets and encryption keys
 
 ---
 

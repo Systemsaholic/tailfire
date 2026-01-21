@@ -45,9 +45,15 @@ export function CredentialFormDialog({
   open,
   onOpenChange,
 }: CredentialFormDialogProps) {
-  const { data: providers, isLoading: loadingProviders } = useProviderMetadata()
+  const { data: allProviders, isLoading: loadingProviders } = useProviderMetadata()
   const createCredential = useCreateCredential()
   const { toast } = useToast()
+
+  // Only show providers that support database-managed credentials (not env-only)
+  const providers = useMemo(
+    () => allProviders?.filter(p => p.sourcePolicy !== 'env-only'),
+    [allProviders]
+  )
 
   const form = useForm({
     resolver: zodResolver(z.object({
@@ -138,6 +144,24 @@ export function CredentialFormDialog({
             <p>Credentials will be encrypted with AES-256-GCM before storage. Never share credentials via insecure channels.</p>
           </div>
         </div>
+
+        {!loadingProviders && providers?.length === 0 && (
+          <div className="text-center py-6 text-muted-foreground">
+            <p className="text-sm">All API providers are currently managed via Doppler.</p>
+            <p className="text-xs mt-1">
+              To add or update credentials, please use the{' '}
+              <a
+                href="https://dashboard.doppler.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                Doppler Dashboard
+              </a>
+              .
+            </p>
+          </div>
+        )}
 
         {loadingProviders ? (
           <div className="flex items-center justify-center py-8">

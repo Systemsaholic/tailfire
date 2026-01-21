@@ -2,14 +2,16 @@
  * Unsplash Module
  *
  * Provides Unsplash stock image integration.
- * Requires UNSPLASH_ACCESS_KEY environment variable.
+ * Credentials are loaded via CredentialResolverService (Doppler-managed).
  */
 
 import { Module } from '@nestjs/common'
 import { UnsplashService } from './unsplash.service'
 import { UnsplashController } from './unsplash.controller'
+import { ApiCredentialsModule } from '../api-credentials/api-credentials.module'
 
 @Module({
+  imports: [ApiCredentialsModule],
   controllers: [UnsplashController],
   providers: [UnsplashService],
   exports: [UnsplashService],

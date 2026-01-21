@@ -1,11 +1,21 @@
 /**
  * Provider Metadata DTO
  *
- * Describes available storage providers and their credential requirements.
+ * Describes available API providers and their credential requirements.
  * Used by the Admin UI to render dynamic credential forms.
+ *
+ * Source Policies:
+ * - env-only: Managed via Doppler, read from environment variables only
+ * - db-only: Managed via Admin UI, stored in database (deprecated)
+ * - hybrid: Try env first, fall back to DB (migration period only)
  */
 
 import { ApiProvider } from '@tailfire/shared-types'
+
+/**
+ * Credential source policy
+ */
+export type SourcePolicy = 'env-only' | 'db-only' | 'hybrid'
 
 /**
  * Credential field definition
@@ -82,9 +92,29 @@ export class ProviderMetadataDto {
   requiredFields!: CredentialFieldDefinition[]
 
   /**
-   * Whether provider is currently available (has active credentials configured)
+   * Whether provider is currently available (has credentials configured)
    */
   isAvailable!: boolean
+
+  /**
+   * Credential source policy
+   * - env-only: Managed via Doppler (environment variables)
+   * - db-only: Managed via Admin UI (database)
+   * - hybrid: Try env first, fall back to DB
+   */
+  sourcePolicy!: SourcePolicy
+
+  /**
+   * Environment variable names for this provider (for env-only/hybrid policies)
+   * Maps credential field name to environment variable name
+   */
+  envVars?: Record<string, string>
+
+  /**
+   * Whether this provider's credentials are shared across all environments
+   * (vs. being environment-specific like storage providers)
+   */
+  isShared?: boolean
 
   /**
    * Estimated monthly cost tier
@@ -106,6 +136,12 @@ export const PROVIDER_METADATA: Record<ApiProvider, Omit<ProviderMetadataDto, 'i
     displayName: 'Supabase Storage',
     description: 'Supabase object storage built on S3',
     documentation: 'Get credentials from: Supabase Dashboard → Project Settings → API',
+    sourcePolicy: 'env-only',
+    envVars: {
+      url: 'SUPABASE_URL',
+      serviceRoleKey: 'SUPABASE_SERVICE_ROLE_KEY',
+    },
+    isShared: false,
     costTier: 'medium',
     features: [
       'Integrated with Supabase Auth',
@@ -140,6 +176,15 @@ export const PROVIDER_METADATA: Record<ApiProvider, Omit<ProviderMetadataDto, 'i
     displayName: 'Cloudflare R2',
     description: 'S3-compatible object storage with zero egress fees',
     documentation: 'Get credentials from: Cloudflare Dashboard → R2 → Manage R2 API Tokens',
+    sourcePolicy: 'env-only',
+    envVars: {
+      accountId: 'CLOUDFLARE_R2_ACCOUNT_ID',
+      accessKeyId: 'CLOUDFLARE_R2_ACCESS_KEY_ID',
+      secretAccessKey: 'CLOUDFLARE_R2_SECRET_ACCESS_KEY',
+      bucketName: 'CLOUDFLARE_R2_BUCKET_NAME',
+      endpoint: 'CLOUDFLARE_R2_ENDPOINT',
+    },
+    isShared: false,
     costTier: 'low',
     features: [
       'Zero egress fees',
@@ -201,6 +246,15 @@ export const PROVIDER_METADATA: Record<ApiProvider, Omit<ProviderMetadataDto, 'i
     displayName: 'Backblaze B2',
     description: 'Low-cost S3-compatible cloud storage',
     documentation: 'Get credentials from: Backblaze Dashboard → App Keys → Add a New Application Key',
+    sourcePolicy: 'env-only',
+    envVars: {
+      keyId: 'BACKBLAZE_B2_KEY_ID',
+      applicationKey: 'BACKBLAZE_B2_APPLICATION_KEY',
+      bucketName: 'BACKBLAZE_B2_BUCKET_NAME',
+      endpoint: 'BACKBLAZE_B2_ENDPOINT',
+      region: 'BACKBLAZE_B2_REGION',
+    },
+    isShared: false,
     costTier: 'low',
     features: [
       'Lowest storage costs ($6/TB/month)',
@@ -260,6 +314,11 @@ export const PROVIDER_METADATA: Record<ApiProvider, Omit<ProviderMetadataDto, 'i
     displayName: 'Unsplash',
     description: 'Free stock photography API for high-quality images',
     documentation: 'Get credentials from: Unsplash Developers → Your Apps → Keys',
+    sourcePolicy: 'env-only',
+    envVars: {
+      accessKey: 'UNSPLASH_ACCESS_KEY',
+    },
+    isShared: true,
     costTier: 'free',
     features: [
       'Free tier: 50 requests/hour',
@@ -292,6 +351,11 @@ export const PROVIDER_METADATA: Record<ApiProvider, Omit<ProviderMetadataDto, 'i
     displayName: 'Aerodatabox (Flights)',
     description: 'Real-time flight data, airport search, and flight status via RapidAPI',
     documentation: 'Get credentials from: https://rapidapi.com/aerodatabox/api/aerodatabox → Subscribe → Copy API Key',
+    sourcePolicy: 'env-only',
+    envVars: {
+      rapidApiKey: 'AERODATABOX_RAPIDAPI_KEY',
+    },
+    isShared: true,
     costTier: 'low',
     features: [
       'Flight search by number and date',
@@ -316,6 +380,12 @@ export const PROVIDER_METADATA: Record<ApiProvider, Omit<ProviderMetadataDto, 'i
     displayName: 'Amadeus',
     description: 'Industry-standard GDS travel APIs - flights, hotels, points of interest, and more',
     documentation: 'Get credentials from: https://developers.amadeus.com → My Self-Service Workspace → Create App',
+    sourcePolicy: 'env-only',
+    envVars: {
+      clientId: 'AMADEUS_CLIENT_ID',
+      clientSecret: 'AMADEUS_CLIENT_SECRET',
+    },
+    isShared: true,
     costTier: 'medium',
     features: [
       'Flight schedules & status',
@@ -349,6 +419,11 @@ export const PROVIDER_METADATA: Record<ApiProvider, Omit<ProviderMetadataDto, 'i
     displayName: 'Google Places',
     description: 'Hotel search with photos, reviews, ratings, and contact info via Google Places API (New)',
     documentation: 'Get credentials from: https://console.cloud.google.com → APIs & Services → Credentials → Create API Key → Enable "Places API (New)"',
+    sourcePolicy: 'env-only',
+    envVars: {
+      apiKey: 'GOOGLE_PLACES_API_KEY',
+    },
+    isShared: true,
     costTier: 'medium',
     features: [
       'Hotel search by location/name',
@@ -375,6 +450,11 @@ export const PROVIDER_METADATA: Record<ApiProvider, Omit<ProviderMetadataDto, 'i
     displayName: 'Booking.com',
     description: 'Rich hotel amenities, facilities, and policies via RapidAPI DataCrawler',
     documentation: 'Get credentials from: https://rapidapi.com/DataCrawler/api/booking-com15 → Subscribe → Copy API Key',
+    sourcePolicy: 'env-only',
+    envVars: {
+      rapidApiKey: 'BOOKING_RAPIDAPI_KEY',
+    },
+    isShared: true,
     costTier: 'medium',
     features: [
       'Detailed amenities (WiFi, Pool, Spa, Gym)',

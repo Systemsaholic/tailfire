@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, AlertCircle } from 'lucide-react'
+import { Plus, AlertCircle, Cloud, CheckCircle2, XCircle, ExternalLink } from 'lucide-react'
 import { TernButton } from '@/components/tern/core'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { SettingsTabsLayout } from '../_components/settings-tabs-layout'
 import { TableSkeleton } from '@/components/tern/shared/loading-skeleton'
 import { useToast } from '@/hooks/use-toast'
@@ -12,6 +13,8 @@ import {
   useDeleteCredential,
   useRollbackCredential,
   useTestConnection,
+  useProviderMetadata,
+  type ProviderMetadata,
 } from '@/hooks/use-api-credentials'
 import { CredentialsTable, TestResult } from './_components/credentials-table'
 import { CredentialFormDialog } from './_components/credential-form-dialog'
@@ -29,6 +32,37 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 
+// Component to show status of Doppler-managed providers
+function ProviderStatusRow({ provider }: { provider: ProviderMetadata }) {
+  return (
+    <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-lg">
+      <div className="flex items-center gap-3">
+        <div className="flex-shrink-0">
+          {provider.isAvailable ? (
+            <CheckCircle2 className="h-5 w-5 text-green-500" />
+          ) : (
+            <XCircle className="h-5 w-5 text-red-500" />
+          )}
+        </div>
+        <div>
+          <div className="font-medium text-sm">{provider.displayName}</div>
+          <div className="text-xs text-muted-foreground">{provider.description}</div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        {provider.isShared && (
+          <Badge variant="outline" className="text-xs">
+            Shared
+          </Badge>
+        )}
+        <Badge variant={provider.isAvailable ? 'default' : 'secondary'} className="text-xs">
+          {provider.isAvailable ? 'Configured' : 'Not Configured'}
+        </Badge>
+      </div>
+    </div>
+  )
+}
+
 export default function ApiCredentialsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [revealCredentialId, setRevealCredentialId] = useState<string | null>(null)
@@ -45,10 +79,14 @@ export default function ApiCredentialsPage() {
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set())
 
   const { data: credentials, isLoading, error } = useApiCredentials()
+  const { data: providerMetadata, isLoading: isLoadingProviders } = useProviderMetadata()
   const deleteCredential = useDeleteCredential()
   const rollbackCredential = useRollbackCredential()
   const testConnection = useTestConnection()
   const { toast } = useToast()
+
+  // Get Doppler-managed providers (env-only) for the status display
+  const dopplerManagedProviders = providerMetadata?.filter(p => p.sourcePolicy === 'env-only') ?? []
 
   const handleReveal = (id: string) => {
     const credential = credentials?.find(c => c.id === id)
@@ -191,18 +229,64 @@ export default function ApiCredentialsPage() {
       </div>
 
       <div className="space-y-6">
+        {/* Doppler-Managed Providers Overview */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Cloud className="h-5 w-5" />
+              Doppler-Managed Credentials
+            </CardTitle>
+            <CardDescription>
+              These API credentials are managed via Doppler and loaded from environment variables.
+              They are shared across all environments (dev, preview, prod).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoadingProviders ? (
+              <div className="animate-pulse space-y-2">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-12 bg-gray-100 rounded" />
+                ))}
+              </div>
+            ) : dopplerManagedProviders.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No Doppler-managed providers configured.</p>
+            ) : (
+              <div className="space-y-3">
+                {dopplerManagedProviders.map((provider) => (
+                  <ProviderStatusRow key={provider.provider} provider={provider} />
+                ))}
+              </div>
+            )}
+            <div className="mt-4 pt-4 border-t">
+              <p className="text-xs text-muted-foreground">
+                To update these credentials, modify them in{' '}
+                <a
+                  href="https://dashboard.doppler.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline inline-flex items-center gap-1"
+                >
+                  Doppler Dashboard
+                  <ExternalLink className="h-3 w-3" />
+                </a>{' '}
+                and redeploy the API.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>Security Notice</CardTitle>
             <CardDescription>
-              All credentials are encrypted using AES-256-GCM before storage. Decryption requires
-              the ENCRYPTION_KEY environment variable.
+              Database-stored credentials are encrypted using AES-256-GCM. Doppler-managed credentials
+              use Doppler's encryption and are injected as environment variables at runtime.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>
-              <strong>Important:</strong> After rotating credentials, restart any services using
-              those credentials to ensure they use the new version.
+              <strong>Recommended:</strong> All third-party API credentials should be managed via Doppler
+              for centralized secret management and easier rotation.
             </p>
           </CardContent>
         </Card>

@@ -8,3 +8,6 @@ export * from './provider-metadata.dto'
 
 // Re-export ApiProvider from shared-types for convenience
 export { ApiProvider } from '@tailfire/shared-types'
+
+// Re-export SourcePolicy type
+export type { SourcePolicy } from './provider-metadata.dto'
