@@ -484,6 +484,27 @@
       "when": 1768971600000,
       "tag": "20260120050000_add_trip_order_pdf_email_template",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1768986000000,
+      "tag": "20260120200000_create_trip_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1768989012000,
+      "tag": "20260120215012_add_trip_orders_rls_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1768990800000,
+      "tag": "20260120210000_sync_all_environments",
+      "breakpoints": true
     }
   ]
 }

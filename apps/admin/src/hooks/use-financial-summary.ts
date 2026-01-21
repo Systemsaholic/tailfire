@@ -50,11 +50,15 @@ export function useTripFinancialSummary(
 }
 
 // ============================================================================
-// Mutations
+// Mutations (DEPRECATED - use hooks from use-trip-orders.ts instead)
 // ============================================================================
 
 /**
  * Generate Trip-Order PDF
+ *
+ * @deprecated Use `useGenerateTripOrderSnapshot` from `use-trip-orders.ts` instead.
+ * The new snapshot-based flow stores versioned invoices and supports preview before sending.
+ * This legacy endpoint generates live PDFs without persistence.
  */
 export function useGenerateTripOrder(tripId: string) {
   const { toast } = useToast()
@@ -90,6 +94,10 @@ export function useGenerateTripOrder(tripId: string) {
 
 /**
  * Download Trip-Order PDF directly (returns binary data)
+ *
+ * @deprecated Use `useDownloadStoredTripOrder` from `use-trip-orders.ts` instead.
+ * The new snapshot-based flow downloads from stored snapshots with version tracking.
+ * This legacy endpoint generates live PDFs without persistence.
  */
 export function useDownloadTripOrder(tripId: string) {
   const { toast } = useToast()

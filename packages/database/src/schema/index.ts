@@ -69,6 +69,9 @@ export * from './amenities.schema'
 // API credentials management
 export * from './api-credentials.schema'
 
+// API provider runtime configurations
+export * from './api-provider-configs.schema'
+
 // Catalog schema definition (for FDW architecture)
 export * from './catalog.schema'
 
@@ -104,6 +107,9 @@ export * from './user-profiles.schema'
 
 // Email system (logs and templates)
 export * from './email.schema'
+
+// Trip Orders (invoice snapshots with versioning)
+export * from './trip-orders.schema'
 
 // Later phases:
 // export * from './financials.schema'

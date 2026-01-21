@@ -7,11 +7,9 @@
  * - Grand totals
  * - Per-traveller breakdown
  * - Payment status
- * - Trip-Order PDF generation
+ * - Trip-Order PDF generation (via snapshot flow)
  */
 
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -24,11 +22,11 @@ import {
 import {
   DollarSign,
   Users,
-  FileText,
   TrendingUp,
   AlertCircle,
 } from 'lucide-react'
-import { useTripFinancialSummary, useGenerateTripOrder } from '@/hooks/use-financial-summary'
+import { useTripFinancialSummary } from '@/hooks/use-financial-summary'
+import { TripOrderGeneratorButton } from '@/components/trips/trip-order-generator'
 import type { TravellerFinancialBreakdownDto, TripFinancialSummaryResponseDto } from '@tailfire/shared-types/api'
 
 // Format cents to display currency
@@ -48,22 +46,6 @@ export function FinancialSummaryCard({ tripId, agencyId, summaryData }: Financia
     enabled: !summaryData,
   })
   const summary = summaryData || fetchedSummary
-  const generateTripOrder = useGenerateTripOrder(tripId)
-  const [isGenerating, setIsGenerating] = useState(false)
-
-  const handleGenerateTripOrder = async () => {
-    if (!agencyId) return
-    setIsGenerating(true)
-    try {
-      const result = await generateTripOrder.mutateAsync({ agencyId })
-      // Open PDF in new tab or download
-      if (result.pdfUrl) {
-        window.open(result.pdfUrl, '_blank')
-      }
-    } finally {
-      setIsGenerating(false)
-    }
-  }
 
   // Only show loading if fetching and no summaryData provided
   if (isLoading && !summaryData) {
@@ -110,15 +92,10 @@ export function FinancialSummaryCard({ tripId, agencyId, summaryData }: Financia
             </CardDescription>
           </div>
           {agencyId && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleGenerateTripOrder}
-              disabled={isGenerating}
-            >
-              <FileText className="mr-2 h-4 w-4" />
-              {isGenerating ? 'Generating...' : 'Generate Trip-Order'}
-            </Button>
+            <TripOrderGeneratorButton
+              tripId={tripId}
+              currency={tripCurrency}
+            />
           )}
         </div>
       </CardHeader>

@@ -65,7 +65,6 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
-  FileText,
   Loader2,
   Package,
   Plus,
@@ -79,6 +78,7 @@ import {
   Ship,
 } from 'lucide-react'
 import { ActivityIconBadge } from '@/components/ui/activity-icon-badge'
+import { TripOrderGeneratorButton } from '@/components/trips/trip-order-generator'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { formatCurrency } from '@/lib/pricing/currency-helpers'
@@ -848,13 +848,6 @@ export function PackagesTable({
     [router, tripId, itineraryId]
   )
 
-  // Generate Invoice (placeholder)
-  const handleGenerateInvoice = useCallback(() => {
-    toast({
-      title: 'Coming Soon',
-      description: 'Invoice generation will be available soon.',
-    })
-  }, [toast])
 
   // Loading state
   if (bookingsLoading || totalsLoading || unlinkedLoading) {
@@ -893,10 +886,7 @@ export function PackagesTable({
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">Bookings</h2>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={handleGenerateInvoice}>
-              <FileText className="h-4 w-4 mr-2" />
-              Generate Invoice
-            </Button>
+            <TripOrderGeneratorButton tripId={tripId} currency={currency} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button>

@@ -68,7 +68,6 @@ import {
   Link2,
   Package,
   AlertCircle,
-  FileText,
   ChevronDown,
   ChevronRight,
   Check,
@@ -83,6 +82,7 @@ import {
   Ship,
 } from 'lucide-react'
 import { ActivityIconBadge } from '@/components/ui/activity-icon-badge'
+import { TripOrderGeneratorButton } from '@/components/trips/trip-order-generator'
 import { useToast } from '@/hooks/use-toast'
 import { formatCurrency } from '@/lib/pricing/currency-helpers'
 
@@ -282,16 +282,6 @@ export function PackagesList({ tripId, currency, itineraryId, filterItineraryId 
     router.push(`/trips/${tripId}/activities/new?${params.toString()}`)
   }
 
-  // Generate invoice/trip order (placeholder - needs API integration)
-  const handleGenerateInvoice = () => {
-    toast({
-      title: 'Coming Soon',
-      description: 'Invoice generation will be available soon.',
-    })
-    // TODO: Implement invoice generation API call
-    // This will generate a PDF trip-order/invoice for the client
-  }
-
   const handleLinkActivities = (bookingId: string) => {
     setLinkingBookingId(bookingId)
     setIsLinkerOpen(true)
@@ -436,10 +426,7 @@ export function PackagesList({ tripId, currency, itineraryId, filterItineraryId 
           <h2 className="text-xl font-semibold text-gray-900">Bookings</h2>
           <div className="flex items-center gap-2">
             {/* Generate Invoice Button */}
-            <Button variant="outline" onClick={handleGenerateInvoice}>
-              <FileText className="h-4 w-4 mr-2" />
-              Generate Invoice
-            </Button>
+            <TripOrderGeneratorButton tripId={tripId} currency={currency} />
 
             {/* New Item Dropdown */}
             <DropdownMenu>

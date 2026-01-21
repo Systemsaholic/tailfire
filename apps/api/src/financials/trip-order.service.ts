@@ -12,8 +12,8 @@
  * Also supports sending Trip Order PDFs via email with attachments.
  */
 
-import { Injectable, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common'
-import { eq } from 'drizzle-orm'
+import { Injectable, NotFoundException, BadRequestException, Logger, Inject, forwardRef } from '@nestjs/common'
+import { eq, and, desc, sql } from 'drizzle-orm'
 import { renderToBuffer } from '@react-pdf/renderer'
 import React from 'react'
 import { DatabaseService } from '../db/database.service'
@@ -49,6 +49,26 @@ interface EmailSendResult {
   providerMessageId?: string
   recipients: string[]
   error?: string
+}
+
+// Trip Order Snapshot DTO
+export interface TripOrderSnapshotDto {
+  id: string
+  tripId: string
+  agencyId: string
+  versionNumber: number
+  orderData: unknown
+  paymentSummary: unknown
+  bookingDetails: unknown
+  businessConfig: unknown
+  status: 'draft' | 'finalized' | 'sent'
+  createdAt: string
+  finalizedAt?: string
+  sentAt?: string
+  createdBy?: string
+  finalizedBy?: string
+  sentBy?: string
+  emailLogId?: string
 }
 
 @Injectable()
@@ -274,6 +294,401 @@ export class TripOrderService {
       providerMessageId: result.providerMessageId,
       recipients: [...recipients.to, ...recipients.cc],
       error: result.error,
+    }
+  }
+
+  // ============================================================================
+  // TRIP ORDER SNAPSHOT METHODS (JSON Storage with Versioning)
+  // ============================================================================
+
+  /**
+   * Generate a new Trip Order snapshot and store it in the database
+   * Automatically increments the version number for the trip
+   */
+  async generateTripOrderSnapshot(
+    tripId: string,
+    agencyId: string,
+    userId?: string
+  ): Promise<TripOrderSnapshotDto> {
+    this.logger.log(`Generating trip order snapshot for trip ${tripId}`)
+
+    // Get trip details
+    const trip = await this.getTripDetails(tripId)
+    if (!trip) {
+      throw new NotFoundException(`Trip ${tripId} not found`)
+    }
+
+    // Build all the data using existing methods
+    const businessConfig = await this.getBusinessConfiguration(agencyId)
+    const financialSummary = await this.financialSummaryService.getTripFinancialSummary(tripId)
+    const passengers = await this.getTripPassengers(tripId)
+    const primaryContact = await this.getPrimaryContact(tripId)
+    const agent = await this.getTripAgent(tripId)
+    const bookings = await this.getTripBookings(tripId)
+    const payments = await this.getTripPayments(tripId)
+
+    // Build data structures
+    const orderData = this.buildTripOrderData({
+      trip,
+      businessConfig,
+      financialSummary,
+      passengers,
+      primaryContact,
+      agent,
+      bookings,
+    })
+    const paymentSummary = this.buildPaymentSummary(
+      payments,
+      financialSummary.grandTotal.totalCostCents / 100
+    )
+    const bookingDetails = this.buildBookingDetails(bookings)
+
+    // Get next version number and insert
+    // Note: FOR UPDATE is not compatible with PgBouncer transaction pooling
+    // Using optimistic approach with unique constraint (trip_id, version_number)
+    const versionResult = await this.db.client.execute(sql`
+      SELECT COALESCE(MAX(version_number), 0) + 1 as next_version
+      FROM trip_orders
+      WHERE trip_id = ${tripId}
+    `)
+    const nextVersion = (versionResult as any)[0]?.next_version ?? 1
+
+    // Insert the new trip order (unique constraint handles race conditions)
+    const [newTripOrder] = await this.db.client
+      .insert(this.db.schema.tripOrders)
+      .values({
+        tripId,
+        agencyId,
+        versionNumber: nextVersion,
+        orderData: orderData as any,
+        paymentSummary: paymentSummary as any,
+        bookingDetails: bookingDetails as any,
+        businessConfig: businessConfig as any,
+        status: 'draft',
+        createdBy: userId,
+      })
+      .returning()
+
+    if (!newTripOrder) {
+      throw new Error('Failed to create trip order snapshot')
+    }
+
+    this.logger.log(`Created trip order snapshot v${newTripOrder.versionNumber} for trip ${tripId}`)
+
+    return this.mapTripOrderToDto(newTripOrder)
+  }
+
+  /**
+   * List all trip order versions for a trip
+   */
+  async listTripOrders(tripId: string, agencyId: string): Promise<TripOrderSnapshotDto[]> {
+    const tripOrders = await this.db.client
+      .select()
+      .from(this.db.schema.tripOrders)
+      .where(
+        and(
+          eq(this.db.schema.tripOrders.tripId, tripId),
+          eq(this.db.schema.tripOrders.agencyId, agencyId)
+        )
+      )
+      .orderBy(desc(this.db.schema.tripOrders.versionNumber))
+
+    return tripOrders.map((to) => this.mapTripOrderToDto(to))
+  }
+
+  /**
+   * Get a specific trip order by ID
+   */
+  async getTripOrderById(id: string, agencyId: string): Promise<TripOrderSnapshotDto> {
+    const [tripOrder] = await this.db.client
+      .select()
+      .from(this.db.schema.tripOrders)
+      .where(
+        and(
+          eq(this.db.schema.tripOrders.id, id),
+          eq(this.db.schema.tripOrders.agencyId, agencyId)
+        )
+      )
+      .limit(1)
+
+    if (!tripOrder) {
+      throw new NotFoundException(`Trip order ${id} not found`)
+    }
+
+    return this.mapTripOrderToDto(tripOrder)
+  }
+
+  /**
+   * Get the latest trip order for a trip (if exists)
+   */
+  async getLatestTripOrder(tripId: string, agencyId: string): Promise<TripOrderSnapshotDto | null> {
+    const [tripOrder] = await this.db.client
+      .select()
+      .from(this.db.schema.tripOrders)
+      .where(
+        and(
+          eq(this.db.schema.tripOrders.tripId, tripId),
+          eq(this.db.schema.tripOrders.agencyId, agencyId)
+        )
+      )
+      .orderBy(desc(this.db.schema.tripOrders.versionNumber))
+      .limit(1)
+
+    if (!tripOrder) {
+      return null
+    }
+
+    return this.mapTripOrderToDto(tripOrder)
+  }
+
+  /**
+   * Finalize a trip order (draft -> finalized)
+   * Once finalized, the trip order is locked and cannot be edited
+   */
+  async finalizeTripOrder(id: string, agencyId: string, userId: string): Promise<TripOrderSnapshotDto> {
+    const [tripOrder] = await this.db.client
+      .select()
+      .from(this.db.schema.tripOrders)
+      .where(
+        and(
+          eq(this.db.schema.tripOrders.id, id),
+          eq(this.db.schema.tripOrders.agencyId, agencyId)
+        )
+      )
+      .limit(1)
+
+    if (!tripOrder) {
+      throw new NotFoundException(`Trip order ${id} not found`)
+    }
+
+    if (tripOrder.status !== 'draft') {
+      throw new BadRequestException(`Trip order ${id} is already ${tripOrder.status}`)
+    }
+
+    const [updated] = await this.db.client
+      .update(this.db.schema.tripOrders)
+      .set({
+        status: 'finalized',
+        finalizedAt: new Date(),
+        finalizedBy: userId,
+      })
+      .where(eq(this.db.schema.tripOrders.id, id))
+      .returning()
+
+    this.logger.log(`Finalized trip order ${id}`)
+
+    return this.mapTripOrderToDto(updated)
+  }
+
+  /**
+   * Mark trip order as sent (finalized -> sent)
+   * Called after successfully sending the email
+   */
+  async markTripOrderSent(
+    id: string,
+    agencyId: string,
+    userId: string,
+    emailLogId?: string
+  ): Promise<TripOrderSnapshotDto> {
+    const [tripOrder] = await this.db.client
+      .select()
+      .from(this.db.schema.tripOrders)
+      .where(
+        and(
+          eq(this.db.schema.tripOrders.id, id),
+          eq(this.db.schema.tripOrders.agencyId, agencyId)
+        )
+      )
+      .limit(1)
+
+    if (!tripOrder) {
+      throw new NotFoundException(`Trip order ${id} not found`)
+    }
+
+    if (tripOrder.status === 'draft') {
+      throw new BadRequestException(`Trip order ${id} must be finalized before sending`)
+    }
+
+    const [updated] = await this.db.client
+      .update(this.db.schema.tripOrders)
+      .set({
+        status: 'sent',
+        sentAt: new Date(),
+        sentBy: userId,
+        emailLogId,
+      })
+      .where(eq(this.db.schema.tripOrders.id, id))
+      .returning()
+
+    this.logger.log(`Marked trip order ${id} as sent`)
+
+    return this.mapTripOrderToDto(updated)
+  }
+
+  /**
+   * Generate PDF from a stored trip order snapshot
+   */
+  async generatePdfFromSnapshot(id: string, agencyId: string): Promise<Buffer> {
+    const tripOrder = await this.getTripOrderById(id, agencyId)
+
+    const pdfProps: TripOrderPDFProps = {
+      tripOrder: tripOrder.orderData as TICOTripOrder,
+      businessConfig: tripOrder.businessConfig as BusinessConfiguration,
+      paymentSummary: tripOrder.paymentSummary as TripOrderPaymentSummary,
+      bookingDetails: tripOrder.bookingDetails as TripOrderBookingDetail[],
+      version: tripOrder.versionNumber,
+    }
+
+    const pdfBuffer = await renderToBuffer(
+      React.createElement(TripOrderPDF, pdfProps) as React.ReactElement
+    )
+    return Buffer.from(pdfBuffer)
+  }
+
+  /**
+   * Send a stored trip order via email
+   */
+  async sendStoredTripOrderEmail(
+    id: string,
+    agencyId: string,
+    userId: string,
+    options: SendTripOrderEmailOptions
+  ): Promise<EmailSendResult> {
+    // Get the trip order
+    const tripOrder = await this.getTripOrderById(id, agencyId)
+
+    // Finalize if still draft
+    if (tripOrder.status === 'draft') {
+      await this.finalizeTripOrder(id, agencyId, userId)
+    }
+
+    // Generate PDF from snapshot
+    const pdfBuffer = await this.generatePdfFromSnapshot(id, agencyId)
+
+    // Build recipient list
+    const recipients = await this.buildRecipientList(tripOrder.tripId, options)
+
+    if (recipients.to.length === 0) {
+      return {
+        success: false,
+        recipients: [],
+        error: 'No valid recipients found',
+      }
+    }
+
+    // Get trip name for email
+    const trip = await this.getTripDetails(tripOrder.tripId)
+    const primaryContact = await this.getPrimaryContact(tripOrder.tripId)
+
+    if (!trip) {
+      throw new NotFoundException(`Trip ${tripOrder.tripId} not found`)
+    }
+
+    // Render email template
+    let rendered: { subject: string; html: string; text?: string }
+    try {
+      rendered = await this.emailTemplatesService.renderTemplate('trip-order-pdf', {
+        agencyId,
+        tripId: tripOrder.tripId,
+        contactId: primaryContact?.id,
+      })
+    } catch {
+      // Fallback template
+      const contactName = primaryContact
+        ? `${primaryContact.firstName} ${primaryContact.lastName}`.trim()
+        : 'Valued Customer'
+      const businessConfig = tripOrder.businessConfig as BusinessConfiguration
+      rendered = {
+        subject: `Your Trip Order - ${trip.name} (v${tripOrder.versionNumber})`,
+        html: this.buildFallbackEmailHtml(trip, contactName, businessConfig),
+        text: `Your Trip Order - ${trip.name}\n\nPlease find attached your Trip Order document (Version ${tripOrder.versionNumber}).`,
+      }
+    }
+
+    // Send email
+    const result = await this.emailService.sendEmailWithAttachments({
+      to: recipients.to,
+      cc: recipients.cc,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      attachments: [
+        {
+          filename: `TripOrder-${trip.reference || trip.name?.replace(/[^a-zA-Z0-9]/g, '-') || tripOrder.tripId.slice(0, 8)}-v${tripOrder.versionNumber}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        },
+      ],
+      agencyId,
+      tripId: tripOrder.tripId,
+      contactId: primaryContact?.id,
+      templateSlug: 'trip-order-pdf',
+    })
+
+    // Mark as sent if successful
+    if (result.success) {
+      await this.markTripOrderSent(id, agencyId, userId, result.emailLogId)
+    }
+
+    return {
+      success: result.success,
+      emailLogId: result.emailLogId,
+      providerMessageId: result.providerMessageId,
+      recipients: [...recipients.to, ...recipients.cc],
+      error: result.error,
+    }
+  }
+
+  /**
+   * Helper to build fallback email HTML
+   */
+  private buildFallbackEmailHtml(
+    trip: { name: string; startDate: string | null; endDate: string | null; reference: string | null },
+    contactName: string,
+    businessConfig: BusinessConfiguration
+  ): string {
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #c59746 0%, #e89e4a 100%); padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+    <h1 style="color: white; margin: 0; font-size: 24px;">Your Trip Order</h1>
+    <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">${trip.name}</p>
+  </div>
+  <div style="padding: 30px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
+    <p>Dear ${contactName},</p>
+    <p>Please find attached your Trip Order document with complete details of your upcoming travel.</p>
+    <p>Best regards,<br><strong style="color: #c59746;">${businessConfig.company_name}</strong></p>
+  </div>
+</body>
+</html>`
+  }
+
+  /**
+   * Map database entity to DTO
+   */
+  private mapTripOrderToDto(tripOrder: any): TripOrderSnapshotDto {
+    return {
+      id: tripOrder.id,
+      tripId: tripOrder.tripId,
+      agencyId: tripOrder.agencyId,
+      versionNumber: tripOrder.versionNumber,
+      orderData: tripOrder.orderData,
+      paymentSummary: tripOrder.paymentSummary,
+      bookingDetails: tripOrder.bookingDetails,
+      businessConfig: tripOrder.businessConfig,
+      status: tripOrder.status,
+      createdAt: tripOrder.createdAt?.toISOString(),
+      finalizedAt: tripOrder.finalizedAt?.toISOString(),
+      sentAt: tripOrder.sentAt?.toISOString(),
+      createdBy: tripOrder.createdBy,
+      finalizedBy: tripOrder.finalizedBy,
+      sentBy: tripOrder.sentBy,
+      emailLogId: tripOrder.emailLogId,
     }
   }
 

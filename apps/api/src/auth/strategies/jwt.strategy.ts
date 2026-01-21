@@ -9,28 +9,27 @@ import { Injectable, UnauthorizedException } from '@nestjs/common'
 import { PassportStrategy } from '@nestjs/passport'
 import { ExtractJwt, Strategy } from 'passport-jwt'
 import { ConfigService } from '@nestjs/config'
-import * as jwksRsa from 'jwks-rsa'
 import type { AuthContext, JwtPayload } from '../auth.types'
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(configService: ConfigService) {
     const supabaseUrl = configService.get<string>('SUPABASE_URL')
+    const jwtSecret = configService.get<string>('SUPABASE_JWT_SECRET')
+
     if (!supabaseUrl) {
       throw new Error('SUPABASE_URL environment variable is required')
+    }
+    if (!jwtSecret) {
+      throw new Error('SUPABASE_JWT_SECRET environment variable is required')
     }
 
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      // Use JWKS for ES256 token verification
-      secretOrKeyProvider: jwksRsa.passportJwtSecret({
-        cache: true,
-        rateLimit: true,
-        jwksRequestsPerMinute: 5,
-        jwksUri: `${supabaseUrl}/auth/v1/.well-known/jwks.json`,
-      }),
-      algorithms: ['ES256'],
+      // Use HS256 with Supabase JWT secret for token verification
+      secretOrKey: jwtSecret,
+      algorithms: ['HS256'],
       issuer: `${supabaseUrl}/auth/v1`,
     })
   }

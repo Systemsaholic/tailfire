@@ -59,8 +59,12 @@ export class ReferenceDataService implements OnModuleInit {
       return
     }
 
-    // Pre-load cache on startup
-    await this.refreshCache()
+    // Pre-load cache on startup (non-blocking - catalog tables may not exist)
+    try {
+      await this.refreshCache()
+    } catch (error) {
+      this.logger.warn('Failed to preload reference data cache (catalog tables may not exist). Reference data endpoints will return empty arrays.')
+    }
   }
 
   /**
@@ -75,13 +79,18 @@ export class ReferenceDataService implements OnModuleInit {
     this.cruiseRegionsCache = null
     this.cruisePortsCache = null
 
-    // Pre-load main data
-    await Promise.all([
+    // Pre-load main data (catch errors for missing catalog tables)
+    const results = await Promise.allSettled([
       this.getCruiseLines(),
       this.getRegions(),
     ])
 
-    this.logger.log('Reference data cache refreshed')
+    const failed = results.filter(r => r.status === 'rejected')
+    if (failed.length > 0) {
+      this.logger.warn(`Reference data cache partially loaded (${failed.length} queries failed - catalog tables may not exist)`)
+    } else {
+      this.logger.log('Reference data cache refreshed')
+    }
   }
 
   /**
@@ -93,33 +102,38 @@ export class ReferenceDataService implements OnModuleInit {
       return this.cruiseLinesCache.data
     }
 
-    const db = this.databaseService.db
-    const schema = this.databaseService.schema
+    try {
+      const db = this.databaseService.db
+      const schema = this.databaseService.schema
 
-    const results = await db
-      .select({
-        id: schema.cruiseLines.id,
-        name: schema.cruiseLines.name,
-        slug: schema.cruiseLines.slug,
-        providerIdentifier: schema.cruiseLines.providerIdentifier,
-      })
-      .from(schema.cruiseLines)
-      .orderBy(schema.cruiseLines.name)
+      const results = await db
+        .select({
+          id: schema.cruiseLines.id,
+          name: schema.cruiseLines.name,
+          slug: schema.cruiseLines.slug,
+          providerIdentifier: schema.cruiseLines.providerIdentifier,
+        })
+        .from(schema.cruiseLines)
+        .orderBy(schema.cruiseLines.name)
 
-    const data: CruiseLineDto[] = results.map(r => ({
-      id: r.id,
-      name: r.name,
-      slug: r.slug,
-      providerIdentifier: r.providerIdentifier,
-    }))
+      const data: CruiseLineDto[] = results.map(r => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        providerIdentifier: r.providerIdentifier,
+      }))
 
-    // Update cache
-    this.cruiseLinesCache = {
-      data,
-      expiresAt: Date.now() + CACHE_TTL,
+      // Update cache
+      this.cruiseLinesCache = {
+        data,
+        expiresAt: Date.now() + CACHE_TTL,
+      }
+
+      return data
+    } catch {
+      // Return empty array if catalog tables don't exist
+      return []
     }
-
-    return data
   }
 
   /**
@@ -134,53 +148,58 @@ export class ReferenceDataService implements OnModuleInit {
       return cached.data
     }
 
-    const db = this.databaseService.db
-    const schema = this.databaseService.schema
+    try {
+      const db = this.databaseService.db
+      const schema = this.databaseService.schema
 
-    let query = db
-      .select({
-        id: schema.cruiseShips.id,
-        name: schema.cruiseShips.name,
-        slug: schema.cruiseShips.slug,
-        providerIdentifier: schema.cruiseShips.providerIdentifier,
-        cruiseLineId: schema.cruiseShips.cruiseLineId,
-        cruiseLineName: schema.cruiseLines.name,
-      })
-      .from(schema.cruiseShips)
-      .leftJoin(schema.cruiseLines, eq(schema.cruiseShips.cruiseLineId, schema.cruiseLines.id))
-      .orderBy(schema.cruiseShips.name)
+      let query = db
+        .select({
+          id: schema.cruiseShips.id,
+          name: schema.cruiseShips.name,
+          slug: schema.cruiseShips.slug,
+          providerIdentifier: schema.cruiseShips.providerIdentifier,
+          cruiseLineId: schema.cruiseShips.cruiseLineId,
+          cruiseLineName: schema.cruiseLines.name,
+        })
+        .from(schema.cruiseShips)
+        .leftJoin(schema.cruiseLines, eq(schema.cruiseShips.cruiseLineId, schema.cruiseLines.id))
+        .orderBy(schema.cruiseShips.name)
 
-    if (cruiseLineId) {
-      query = query.where(eq(schema.cruiseShips.cruiseLineId, cruiseLineId)) as typeof query
-    }
-
-    const results = await query
-
-    const data: CruiseShipDto[] = results.map(r => ({
-      id: r.id,
-      name: r.name,
-      slug: r.slug,
-      providerIdentifier: r.providerIdentifier,
-      cruiseLineId: r.cruiseLineId,
-      cruiseLineName: r.cruiseLineName,
-    }))
-
-    // Guard against unbounded cache growth
-    if (this.cruiseShipsCache.size >= MAX_CACHE_ENTRIES) {
-      // Remove oldest entry
-      const firstKey = this.cruiseShipsCache.keys().next().value
-      if (firstKey) {
-        this.cruiseShipsCache.delete(firstKey)
+      if (cruiseLineId) {
+        query = query.where(eq(schema.cruiseShips.cruiseLineId, cruiseLineId)) as typeof query
       }
+
+      const results = await query
+
+      const data: CruiseShipDto[] = results.map(r => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        providerIdentifier: r.providerIdentifier,
+        cruiseLineId: r.cruiseLineId,
+        cruiseLineName: r.cruiseLineName,
+      }))
+
+      // Guard against unbounded cache growth
+      if (this.cruiseShipsCache.size >= MAX_CACHE_ENTRIES) {
+        // Remove oldest entry
+        const firstKey = this.cruiseShipsCache.keys().next().value
+        if (firstKey) {
+          this.cruiseShipsCache.delete(firstKey)
+        }
+      }
+
+      // Update cache
+      this.cruiseShipsCache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + CACHE_TTL,
+      })
+
+      return data
+    } catch {
+      // Return empty array if catalog tables don't exist
+      return []
     }
-
-    // Update cache
-    this.cruiseShipsCache.set(cacheKey, {
-      data,
-      expiresAt: Date.now() + CACHE_TTL,
-    })
-
-    return data
   }
 
   /**
@@ -192,33 +211,38 @@ export class ReferenceDataService implements OnModuleInit {
       return this.cruiseRegionsCache.data
     }
 
-    const db = this.databaseService.db
-    const schema = this.databaseService.schema
+    try {
+      const db = this.databaseService.db
+      const schema = this.databaseService.schema
 
-    const results = await db
-      .select({
-        id: schema.cruiseRegions.id,
-        name: schema.cruiseRegions.name,
-        slug: schema.cruiseRegions.slug,
-        providerIdentifier: schema.cruiseRegions.providerIdentifier,
-      })
-      .from(schema.cruiseRegions)
-      .orderBy(schema.cruiseRegions.name)
+      const results = await db
+        .select({
+          id: schema.cruiseRegions.id,
+          name: schema.cruiseRegions.name,
+          slug: schema.cruiseRegions.slug,
+          providerIdentifier: schema.cruiseRegions.providerIdentifier,
+        })
+        .from(schema.cruiseRegions)
+        .orderBy(schema.cruiseRegions.name)
 
-    const data: CruiseRegionDto[] = results.map(r => ({
-      id: r.id,
-      name: r.name,
-      slug: r.slug,
-      providerIdentifier: r.providerIdentifier,
-    }))
+      const data: CruiseRegionDto[] = results.map(r => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        providerIdentifier: r.providerIdentifier,
+      }))
 
-    // Update cache
-    this.cruiseRegionsCache = {
-      data,
-      expiresAt: Date.now() + CACHE_TTL,
+      // Update cache
+      this.cruiseRegionsCache = {
+        data,
+        expiresAt: Date.now() + CACHE_TTL,
+      }
+
+      return data
+    } catch {
+      // Return empty array if catalog tables don't exist
+      return []
     }
-
-    return data
   }
 
   /**
@@ -230,33 +254,38 @@ export class ReferenceDataService implements OnModuleInit {
       return this.cruisePortsCache.data
     }
 
-    const db = this.databaseService.db
-    const schema = this.databaseService.schema
+    try {
+      const db = this.databaseService.db
+      const schema = this.databaseService.schema
 
-    const results = await db
-      .select({
-        id: schema.cruisePorts.id,
-        name: schema.cruisePorts.name,
-        slug: schema.cruisePorts.slug,
-        providerIdentifier: schema.cruisePorts.providerIdentifier,
-      })
-      .from(schema.cruisePorts)
-      .orderBy(schema.cruisePorts.name)
+      const results = await db
+        .select({
+          id: schema.cruisePorts.id,
+          name: schema.cruisePorts.name,
+          slug: schema.cruisePorts.slug,
+          providerIdentifier: schema.cruisePorts.providerIdentifier,
+        })
+        .from(schema.cruisePorts)
+        .orderBy(schema.cruisePorts.name)
 
-    const data: CruisePortDto[] = results.map(r => ({
-      id: r.id,
-      name: r.name,
-      slug: r.slug,
-      providerIdentifier: r.providerIdentifier,
-    }))
+      const data: CruisePortDto[] = results.map(r => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        providerIdentifier: r.providerIdentifier,
+      }))
 
-    // Update cache
-    this.cruisePortsCache = {
-      data,
-      expiresAt: Date.now() + CACHE_TTL,
+      // Update cache
+      this.cruisePortsCache = {
+        data,
+        expiresAt: Date.now() + CACHE_TTL,
+      }
+
+      return data
+    } catch {
+      // Return empty array if catalog tables don't exist
+      return []
     }
-
-    return data
   }
 
   /**
