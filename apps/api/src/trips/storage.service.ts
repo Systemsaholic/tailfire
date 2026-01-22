@@ -282,7 +282,15 @@ export class StorageService implements OnModuleInit {
 
     const startTime = Date.now()
     await this.mediaProvider.upload(file, path, { contentType })
-    const publicUrl = this.providerFactory.getMediaPublicUrl(path)
+
+    // Get public URL from the active provider (not hardcoded to R2)
+    const publicUrl = this.mediaProvider.getPublicUrl(path)
+    if (!publicUrl) {
+      throw new Error(
+        `Media provider ${this.mediaProvider.provider} does not support public URLs. ` +
+        'Check provider configuration.'
+      )
+    }
 
     this.logger.log(
       `[MEDIA] Uploaded ${file.length} bytes to ${path} (${Date.now() - startTime}ms) → ${publicUrl}`
@@ -320,7 +328,15 @@ export class StorageService implements OnModuleInit {
 
     const startTime = Date.now()
     await this.mediaProvider.upload(file, path, { contentType })
-    const url = this.providerFactory.getMediaPublicUrl(path)
+
+    // Get public URL from the active provider (not hardcoded to R2)
+    const url = this.mediaProvider.getPublicUrl(path)
+    if (!url) {
+      throw new Error(
+        `Media provider ${this.mediaProvider.provider} does not support public URLs. ` +
+        'Check provider configuration.'
+      )
+    }
 
     this.logger.log(
       `[MEDIA] Uploaded ${file.length} bytes: ${fileName} → ${path} (${Date.now() - startTime}ms)`
@@ -334,9 +350,19 @@ export class StorageService implements OnModuleInit {
    *
    * @param storagePath - Storage path of the media file
    * @returns Public URL (no expiration)
+   * @throws Error if media provider is not available or doesn't support public URLs
    */
   getMediaUrl(storagePath: string): string {
-    return this.providerFactory.getMediaPublicUrl(storagePath)
+    if (!this.mediaProvider) {
+      throw new Error('Media storage service not available')
+    }
+    const url = this.mediaProvider.getPublicUrl(storagePath)
+    if (!url) {
+      throw new Error(
+        `Media provider ${this.mediaProvider.provider} does not support public URLs`
+      )
+    }
+    return url
   }
 
   /**
@@ -382,7 +408,7 @@ export class StorageService implements OnModuleInit {
     const files = await this.mediaProvider.list(folder)
     return files.map(file => ({
       ...file,
-      url: this.providerFactory.getMediaPublicUrl(file.path),
+      url: this.mediaProvider!.getPublicUrl(file.path),
     }))
   }
 

@@ -33,11 +33,15 @@ export class BackblazeB2Provider implements StorageProvider {
   readonly provider = ApiProvider.BACKBLAZE_B2
   private readonly logger = new Logger(BackblazeB2Provider.name)
   private client: S3Client
+  private readonly publicUrl?: string
 
   constructor(
     credentials: BackblazeB2Credentials,
-    private readonly bucketName: string
+    private readonly bucketName: string,
+    publicUrl?: string
   ) {
+    this.publicUrl = publicUrl
+
     // Extract region from endpoint if not provided
     // Endpoint format: s3.us-west-004.backblazeb2.com
     const region = credentials.region ||
@@ -53,7 +57,7 @@ export class BackblazeB2Provider implements StorageProvider {
       },
     })
 
-    this.logger.log(`Initialized Backblaze B2 provider (bucket: ${bucketName}, region: ${region})`)
+    this.logger.log(`Initialized Backblaze B2 provider (bucket: ${bucketName}, region: ${region}${publicUrl ? `, publicUrl: ${publicUrl}` : ''})`)
   }
 
   async upload(file: Buffer, path: string, options?: UploadOptions): Promise<string> {
@@ -279,5 +283,13 @@ export class BackblazeB2Provider implements StorageProvider {
       provider: this.provider,
       bucketName: this.bucketName,
     }
+  }
+
+  getPublicUrl(path: string): string | undefined {
+    if (!this.publicUrl) {
+      return undefined
+    }
+    // B2 public URL format: {publicUrl}/{path}
+    return `${this.publicUrl}/${path}`
   }
 }

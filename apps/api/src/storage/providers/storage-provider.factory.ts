@@ -196,6 +196,9 @@ export class StorageProviderFactory {
     // Get the appropriate bucket name based on bucket type
     const bucketName = this.getBucketName(bucketType)
 
+    // Get public URL for media buckets (used by R2 and B2 providers)
+    const publicUrl = bucketType === 'media' ? this.mediaPublicUrl : undefined
+
     // Instantiate provider based on type
     switch (provider) {
       case ApiProvider.SUPABASE_STORAGE:
@@ -209,14 +212,16 @@ export class StorageProviderFactory {
           throw new Error('Invalid Cloudflare R2 credentials: missing required fields')
         }
         // For R2, use the configured bucket name based on bucket type
-        return new CloudflareR2Provider(credentials, bucketName)
+        // Pass public URL for media buckets to enable getPublicUrl()
+        return new CloudflareR2Provider(credentials, bucketName, publicUrl)
 
       case ApiProvider.BACKBLAZE_B2:
         if (!('keyId' in credentials && 'applicationKey' in credentials && 'endpoint' in credentials)) {
           throw new Error('Invalid Backblaze B2 credentials: missing required fields')
         }
         // For B2, use the configured bucket name based on bucket type
-        return new BackblazeB2Provider(credentials, bucketName)
+        // Pass public URL for media buckets to enable getPublicUrl()
+        return new BackblazeB2Provider(credentials, bucketName, publicUrl)
 
       default:
         throw new Error(`Unknown storage provider: ${provider}`)

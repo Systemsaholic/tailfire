@@ -106,8 +106,10 @@ export function ItineraryDaysList({ trip, itinerary }: ItineraryDaysListProps) {
               <div className="flex-shrink-0">
                 <TripSummaryColumn
                   days={days}
-                  itineraryId={itinerary.id}
-                  itineraryName={itinerary.name}
+                  tripId={trip.id}
+                  tripStartDate={trip.startDate}
+                  tripEndDate={trip.endDate}
+                  itinerary={itinerary}
                 />
               </div>
 

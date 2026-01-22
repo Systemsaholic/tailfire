@@ -147,4 +147,15 @@ export interface StorageProvider {
     region?: string
     endpoint?: string
   }
+
+  /**
+   * Get public URL for a file
+   *
+   * For public buckets (like media storage), returns the direct public URL.
+   * For private buckets, this may return undefined or throw an error.
+   *
+   * @param path - Storage path of the file
+   * @returns Public URL or undefined if not supported
+   */
+  getPublicUrl(path: string): string | undefined
 }
