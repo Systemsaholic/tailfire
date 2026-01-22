@@ -60,7 +60,28 @@ git push -u origin feature/your-feature
 
 ## Environment URLs
 
-- **Production API**: https://api.tailfire.ca
+### Production
+- **API**: https://api.tailfire.ca
 - **Admin**: https://tailfire.phoenixvoyages.ca
 - **OTA**: https://ota.phoenixvoyages.ca
 - **Client**: https://client.phoenixvoyages.ca
+
+### Dev/Preview
+- **API**: https://api-dev.tailfire.ca
+- **Admin**: https://tf-demo.phoenixvoyages.ca
+
+## Storage System (Cloudflare R2)
+
+The application uses Cloudflare R2 for file storage with two buckets:
+- **Documents**: `tailfire-documents` (PDFs, contracts, etc.)
+- **Media**: `tailfire-media` / `tailfire-media-stg` (images, cover photos, gallery)
+
+### Key Files
+- `apps/api/src/storage/providers/storage-provider.factory.ts` - Creates storage providers
+- `apps/api/src/api-credentials/credential-resolver.service.ts` - Resolves credentials from Doppler
+
+### Important: Module Initialization Order
+The `StorageProviderFactory` must NOT call `credentialResolver.isAvailable()` before creating providers. This is because `CredentialResolverService.onModuleInit()` may not have run yet when `StorageService.onModuleInit()` executes. The `resolve()` method already handles missing credentials by throwing `ConfigurationError`.
+
+### Unsplash Integration
+Stock photos are provided via Unsplash API. Credentials are managed through Doppler as a shared credential across environments.
