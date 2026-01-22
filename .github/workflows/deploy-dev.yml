@@ -129,8 +129,17 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"rootDirectory":"apps/admin","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build"}'
 
-      - name: Deploy Admin (Production)
-        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
+      - name: Deploy Admin (Preview)
+        id: deploy-admin
+        run: |
+          DEPLOYMENT_URL=$(VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes)
+          echo "deployment_url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: $DEPLOYMENT_URL"
+
+      - name: Alias Admin to custom domain
+        run: |
+          vercel alias set ${{ steps.deploy-admin.outputs.deployment_url }} tf-demo.phoenixvoyages.ca --token=$VERCEL_TOKEN --scope=$VERCEL_ORG_ID
+          echo "✅ Aliased to tf-demo.phoenixvoyages.ca"
 
   deploy-ota:
     name: Deploy OTA to Vercel
@@ -155,8 +164,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"rootDirectory":"apps/ota","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/ota build"}'
 
-      - name: Deploy OTA (Production)
-        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
+      - name: Deploy OTA (Preview)
+        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_OTA_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
 
   deploy-client:
     name: Deploy Client to Vercel
@@ -181,8 +190,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"rootDirectory":"apps/client","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/client build"}'
 
-      - name: Deploy Client (Production)
-        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --prod --token=$VERCEL_TOKEN --yes
+      - name: Deploy Client (Preview)
+        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_CLIENT_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
 
   smoke-test:
     name: Smoke Test All Services
