@@ -83,4 +83,4 @@ export type Trip = InferSelectModel<typeof trips>
 
 ## Development
 
-Types will be created during Sprint 1.2+ as features are implemented.
+Types are defined in `packages/shared-types/src/` and exported via the package's main entry point.

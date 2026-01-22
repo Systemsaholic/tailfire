@@ -166,11 +166,10 @@ pnpm db:seed:force        # For scripts/CI
 - Interactive confirmation (type "yes")
 - Dry-run mode for preview
 
-**Detailed Documentation:**
-- [Database Reset Guide](../../docs/development/DATABASE_RESET_GUIDE.md) - Complete usage guide
-- [Seed Data Scenarios](../../docs/development/SEED_DATA_SCENARIOS.md) - Test data reference
-- [Test Database Setup](../../docs/development/TEST_DATABASE_SETUP.md) - CI/CD examples
-- [Development Guides](../../docs/development/README.md) - All development docs
+**Related Documentation:**
+- [Local Development](../../docs/LOCAL_DEV.md) - Running apps locally
+- [Testing Guide](../../docs/TESTING.md) - Test frameworks and patterns
+- [Database Architecture](../../docs/DATABASE_ARCHITECTURE.md) - Schema overview
 
 ### Using Database in Services
 
@@ -220,15 +219,16 @@ See `.env.example` for all required environment variables.
 
 ## 📦 Storage Providers
 
-Tailfire supports multiple object storage providers for document and media storage.
+Tailfire uses Cloudflare R2 for document and media storage, with Supabase Storage as a fallback.
 
-### Supported Providers
+### Storage Configuration
 
-| Provider | Cost | Best For |
-|----------|------|----------|
-| **Cloudflare R2** | $0.015/GB, free bandwidth | Production (zero egress fees) |
-| **Backblaze B2** | $0.006/GB, low bandwidth | Archival storage |
-| **Supabase Storage** | $0.021/GB + bandwidth | Integrated with Supabase Auth |
+| Provider | Usage | Notes |
+|----------|-------|-------|
+| **Cloudflare R2** | Production | Zero egress fees, S3-compatible API |
+| **Supabase Storage** | Fallback | Used when R2 credentials unavailable |
+
+Credentials are managed via **Doppler** (see [ENVIRONMENTS.md](../../../docs/ENVIRONMENTS.md#storage-configuration-cloudflare-r2)).
 
 ### Configuring Storage
 
@@ -256,10 +256,15 @@ curl -X POST http://localhost:3101/api/v1/api-credentials/{id}/test-connection
 curl http://localhost:3101/api/v1/api-credentials/providers
 ```
 
-### Current Configuration
+### Bucket Configuration
 
-- **Active Provider:** Cloudflare R2 (`tailfire-documents` bucket)
-- **Setup Guide:** See [CLOUDFLARE_R2_SETUP.md](../../../CLOUDFLARE_R2_SETUP.md)
+| Environment | Bucket Name |
+|-------------|-------------|
+| Local Dev | `tailfire-media-dev` |
+| Cloud Preview | `tailfire-media-stg` |
+| Production | `tailfire-media` |
+
+See [ENVIRONMENTS.md](../../../docs/ENVIRONMENTS.md#storage-configuration-cloudflare-r2) for full configuration details.
 
 ### Provider Features
 

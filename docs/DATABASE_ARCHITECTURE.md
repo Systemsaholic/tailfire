@@ -4,15 +4,17 @@ This document provides a deep dive into the database schema organization, Drizzl
 
 ## Schema Organization
 
-Tailfire uses the PostgreSQL `public` schema for all application data:
+Tailfire uses PostgreSQL with two schemas:
+- **public** - Core application data (trips, contacts, activities, financials)
+- **catalog** - Cruise reference and sailing data (from Traveltek)
 
-| Environment | Table Count | Notes |
-|-------------|-------------|-------|
-| Local Dev (tailfire-Dev) | 76 tables | Includes 16 cruise_* development tables |
-| Cloud Preview (Tailfire-Preview) | 60 tables | Core application tables only |
-| Production (Tailfire-Prod) | 60 tables | Core application tables only |
+| Environment | Total Tables | Notes |
+|-------------|--------------|-------|
+| Local Dev (tailfire-Dev) | 75+ tables | Full schema including catalog |
+| Cloud Preview (Tailfire-Preview) | 75+ tables | Full schema (catalog via FDW or local) |
+| Production (Tailfire-Prod) | 75+ tables | Full schema including catalog |
 
-> **Note:** The cruise catalog tables (16 tables) currently exist only in Local Dev for development purposes. When Traveltek integration is complete, these will be added to Production with FDW access from Preview.
+> **Note:** Table counts include ~59 public schema tables and 16 catalog schema tables (cruise data).
 
 ---
 
@@ -106,10 +108,11 @@ The public schema contains all application data:
 
 | Table | Purpose |
 |-------|---------|
-| `activities` | Base activity records (all types) |
+| `itinerary_activities` | Base activity records (all component types) |
 | `activity_media` | Photos/videos for activities |
 | `activity_documents` | Attached documents |
-| `activity_pricing` | Cost breakdown |
+| `activity_pricing` | Cost breakdown with line items |
+| `activity_pricing_items` | Individual pricing line items |
 | `activity_suppliers` | Vendor information |
 | `activity_travelers` | Per-traveler assignments |
 
@@ -118,26 +121,73 @@ The public schema contains all application data:
 | Table | Activity Type |
 |-------|---------------|
 | `flight_details` | Flight bookings |
+| `flight_segments` | Multi-segment flights |
 | `lodging_details` | Hotels, resorts |
 | `dining_details` | Restaurant reservations |
 | `transportation_details` | Car rentals, transfers |
 | `custom_cruise_details` | Custom cruise bookings |
 | `port_info_details` | Port day information |
-| `options_details` | Optional add-ons |
+| `options_details` | Optional add-ons, excursions |
+| `package_details` | Package-specific details |
 
 ### CRM & Contacts
 
 | Table | Purpose |
 |-------|---------|
 | `contacts` | Customer records |
-| `tags` | Tagging system |
+| `contact_addresses` | Addresses per contact |
+| `contact_documents` | ID/passport/visa documents |
+| `tags` | Central tag repository |
+| `trip_tags` | Trip-to-tag mapping |
+| `contact_tags` | Contact-to-tag mapping |
 
-### Financials
+### Email & Communication
 
 | Table | Purpose |
 |-------|---------|
-| `financials` | Financial records |
-| `payment_templates` | Payment schedule templates |
+| `email_logs` | Email sending records with status |
+| `email_templates` | Reusable email templates |
+
+### Insurance
+
+| Table | Purpose |
+|-------|---------|
+| `trip_insurance_packages` | Available insurance packages |
+| `trip_traveler_insurance` | Per-traveler insurance status |
+
+### Media & Documents
+
+| Table | Purpose |
+|-------|---------|
+| `trip_media` | Trip-level images/videos/documents |
+
+### Templates
+
+| Table | Purpose |
+|-------|---------|
+| `itinerary_templates` | Reusable itinerary structures |
+| `package_templates` | Reusable package templates |
+
+### API & Integration
+
+| Table | Purpose |
+|-------|---------|
+| `api_credentials` | Encrypted API keys per provider |
+| `api_provider_configs` | External API runtime configuration |
+
+### Financials & Payments
+
+| Table | Purpose |
+|-------|---------|
+| `expected_payment_items` | Payment schedule milestones |
+| `payment_transactions` | Actual payment records |
+| `payment_schedule_templates` | Reusable payment schedule patterns |
+| `payment_schedule_template_items` | Milestones within templates |
+| `payment_schedule_audit_log` | Immutable audit log (TICO compliance) |
+| `currency_exchange_rates` | Exchange rate cache |
+| `activity_traveller_splits` | Per-traveler cost breakdown |
+| `service_fees` | Service fees via Stripe Connect |
+| `trip_orders` | Versioned trip order JSON snapshots |
 
 ---
 
@@ -188,16 +238,16 @@ export default defineConfig({
 **Location**: `packages/database/src/schema/index.ts`
 
 All schemas are exported from a single entry point:
-- Catalog schema definition
-- All 16 cruise tables
-- All ~47 public tables
+- Catalog schema definition (16 cruise tables)
+- Public schema tables (~59 tables)
 - Relations and enums
+- Total: 75+ tables across both schemas
 
 ---
 
-## FDW Architecture (Planned)
+## FDW Architecture
 
-> **Status:** The FDW architecture is designed but not yet active. Cruise tables currently exist only in Local Dev. This section describes the planned architecture for when Traveltek integration is complete.
+> **Status:** The FDW architecture is designed and migrations exist. The catalog schema tables are present in all environments. FDW allows Preview/Dev to read catalog data from Production when Traveltek sync is active in Production only.
 
 ### Overview
 
@@ -330,7 +380,7 @@ Tailfire uses **Drizzle-only** migrations:
 
 - **Location**: `packages/database/src/migrations/`
 - **Tracking**: `migrations/meta/_journal.json`
-- **Total**: 89 SQL files, 48 tracked entries
+- **Total**: 110+ SQL migration files
 
 ### Migration Types
 

@@ -111,4 +111,4 @@ See `apps/admin/docs/activity-form-patterns.md` for frontend implementation patt
 
 ## Development
 
-Schema files will be created during Sprint 1.2+ following the roadmap in `docs/planning/MONTH_BY_MONTH_ROADMAP.md`.
+Schema files are defined in `packages/database/src/schema/` and migrations in `packages/database/src/migrations/`.

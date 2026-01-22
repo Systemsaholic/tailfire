@@ -40,8 +40,8 @@ Tailfire uses different naming conventions for different purposes:
 - **Doppler config:** `dev`
 - **Admin:** `http://localhost:3100`
 - **API:** `http://localhost:3101`
-- **OTA:** `http://localhost:3103`
-- **Client:** `http://localhost:3102`
+- **OTA:** `http://localhost:3102`
+- **Client:** `http://localhost:3103`
 
 ### Cloud Preview (Staging)
 
@@ -93,8 +93,8 @@ Tailfire uses different naming conventions for different purposes:
 |-----|-----|------|
 | **Admin** | `http://localhost:3100` | 3100 |
 | **API** | `http://localhost:3101/api/v1` | 3101 |
-| **OTA** | `http://localhost:3103` | 3103 |
-| **Client** | `http://localhost:3102` | 3102 |
+| **OTA** | `http://localhost:3102` | 3102 |
+| **Client** | `http://localhost:3103` | 3103 |
 
 ---
 
@@ -236,30 +236,28 @@ Quick reference for Railway API deployment configuration:
 | `ENABLE_SWAGGER_DOCS` | Yes | `true` in dev, `false` in prod |
 | `RUN_MIGRATIONS_ON_STARTUP` | No | `false` in both (CI/CD handles) |
 
-### JWT Algorithm Requirements
+### JWT Algorithm Support
 
-**CRITICAL:** All Supabase projects must use the **HS256** JWT signing algorithm.
+The NestJS API supports **both HS256 and ES256** JWT algorithms with automatic detection:
 
-The NestJS API validates JWT tokens using HS256. If a Supabase project uses ES256 (or another algorithm), all authenticated API requests will fail with "invalid algorithm" error.
+| Algorithm | Verification Method | Supabase Project Type |
+|-----------|--------------------|-----------------------|
+| **HS256** | `SUPABASE_JWT_SECRET` | Older projects |
+| **ES256** | JWKS endpoint (public key) | Newer projects |
 
-**How to verify your JWT algorithm:**
-1. Get a valid access token from Supabase Auth
-2. Decode the token header at [jwt.io](https://jwt.io)
-3. Check the `alg` field - it must be `"HS256"`
+The JWT strategy automatically detects the algorithm from the token header and uses the appropriate verification method.
 
-**If your Supabase project uses ES256:**
-1. Go to Supabase Dashboard → Project Settings → API
-2. Regenerate the JWT secret (this will invalidate all existing tokens)
-3. Update `SUPABASE_JWT_SECRET` in Doppler with the new secret
-4. Redeploy the API service
+**Configuration by environment:**
 
-| Environment | Supabase Project | Expected Algorithm |
-|-------------|------------------|-------------------|
-| Local Dev | tailfire-Dev | HS256 |
-| Cloud Preview | Tailfire-Preview | HS256 |
-| Production | Tailfire-Prod | HS256 |
+| Environment | Supabase Project | Notes |
+|-------------|------------------|-------|
+| Local Dev | tailfire-Dev | Supports HS256 or ES256 |
+| Cloud Preview | Tailfire-Preview | Supports HS256 or ES256 |
+| Production | Tailfire-Prod | Supports HS256 or ES256 |
 
-See [API Deployment](./DEPLOYMENT_API.md) for full Railway configuration details.
+> **Note:** Ensure `SUPABASE_JWT_SECRET` is configured in Doppler for HS256 projects, or the JWKS endpoint is accessible for ES256 projects.
+
+See [Security Model](./SECURITY.md#api-layer-nestjs) for implementation details.
 
 ---
 
@@ -325,8 +323,50 @@ Doppler is used for centralized secrets management across all environments.
 Variables managed via Doppler (not committed to git):
 - Database credentials (`DATABASE_URL`, `SUPABASE_*`)
 - API keys for third-party services (OpenAI, Resend, etc.)
-- Storage credentials (Cloudflare R2, Backblaze B2)
+- Storage credentials (Cloudflare R2)
 - JWT secrets and encryption keys
+
+---
+
+## Storage Configuration (Cloudflare R2)
+
+Tailfire uses Cloudflare R2 for media storage (trip photos, documents, etc.).
+
+### R2 Buckets by Environment
+
+| Environment | Bucket Name | Public URL |
+|-------------|-------------|------------|
+| **Local Dev** | `tailfire-media-dev` | Via R2 public access |
+| **Cloud Preview** | `tailfire-media-stg` | Via R2 public access |
+| **Production** | `tailfire-media` | Via R2 public access |
+
+### R2 Environment Variables
+
+All R2 credentials are managed via Doppler:
+
+| Variable | Description | Env-Specific? |
+|----------|-------------|---------------|
+| `CLOUDFLARE_R2_ACCOUNT_ID` | Cloudflare account ID | No (shared) |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` | R2 API access key ID | No (shared) |
+| `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | R2 API secret key | No (shared) |
+| `CLOUDFLARE_R2_BUCKET_NAME` | Bucket name for this env | Yes |
+| `R2_MEDIA_BUCKET` | Alias for bucket name | Yes |
+| `R2_MEDIA_PUBLIC_URL` | Public URL for media access | Yes |
+
+> **Note:** The R2 API credentials are shared across environments (same Cloudflare account), but each environment uses a different bucket to isolate data.
+
+### Storage Provider Configuration
+
+The API uses a `StorageProviderFactory` that automatically selects the storage backend based on available credentials:
+
+1. **Cloudflare R2** (production) - When `CLOUDFLARE_R2_*` credentials are present
+2. **Supabase Storage** (fallback) - When only Supabase credentials are available
+3. **Local/Mock** (development) - When no cloud credentials are configured
+
+The storage provider is initialized at API startup and logged:
+```
+✓ cloudflare_r2: credentials configured (env-specific)
+```
 
 ---
 

@@ -110,7 +110,7 @@ Feature Branch → preview branch → main branch
 | **Frontend** | Next.js 15, shadcn/ui, TanStack Query |
 | **Database** | Supabase PostgreSQL |
 | **Auth** | Supabase Auth + JWT |
-| **Storage** | Cloudflare R2, Backblaze B2, Supabase Storage |
+| **Storage** | Cloudflare R2 (Supabase Storage as fallback) |
 
 ## Scripts
 

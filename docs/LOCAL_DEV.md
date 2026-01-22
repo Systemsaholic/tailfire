@@ -10,6 +10,34 @@ This document describes how to run Tailfire locally, including port assignments 
 
 ## Quick Start
 
+### Option A: With Doppler (Recommended)
+
+Doppler provides centralized secrets management with all credentials pre-configured:
+
+```bash
+# 1. Install dependencies
+pnpm install
+
+# 2. Install and authenticate Doppler CLI
+brew install dopplerhq/cli/doppler
+doppler login
+
+# 3. Setup Doppler for local dev
+doppler setup --project tailfire --config dev
+
+# 4. Run database migrations (first time only)
+doppler run -- pnpm --filter @tailfire/api db:migrate
+
+# 5. Start all apps with Doppler-injected secrets
+doppler run -- pnpm dev
+```
+
+> **Benefits:** Full access to R2 storage, email services, and all third-party integrations without managing `.env` files.
+
+### Option B: Manual `.env` Files
+
+If you don't have Doppler access, use manual environment files:
+
 ```bash
 # 1. Install dependencies
 pnpm install
@@ -28,6 +56,8 @@ cd apps/api && pnpm db:migrate && cd ../..
 # 5. Start all apps
 pnpm dev
 ```
+
+> **Note:** Without Doppler, some features (R2 storage, email) will use fallback providers or be unavailable.
 
 ---
 
@@ -290,6 +320,50 @@ pnpm install
 pnpm --filter @tailfire/database build
 
 # Then restart dev servers
+```
+
+### Storage Provider Errors at Startup
+
+If you see storage provider initialization errors:
+
+1. **With Doppler:** This is normal - credentials load on-demand. Look for later log: `✓ cloudflare_r2: credentials configured`
+2. **Without Doppler:** Storage features will use fallback providers. Add R2 credentials to `.env` if needed.
+
+---
+
+## Doppler Integration
+
+Doppler is used for centralized secrets management. See [ENVIRONMENTS.md](./ENVIRONMENTS.md#doppler-configuration) for full details.
+
+### Common Doppler Commands
+
+```bash
+# Check current config
+doppler configure
+
+# List all secrets (masked)
+doppler secrets
+
+# Run any command with secrets injected
+doppler run -- <command>
+
+# Switch between environments
+doppler setup --project tailfire --config dev   # Local dev
+doppler setup --project tailfire --config stg   # Preview/staging
+doppler setup --project tailfire --config prd   # Production (read-only recommended)
+```
+
+### Running Individual Apps with Doppler
+
+```bash
+# API only
+doppler run -- pnpm --filter @tailfire/api dev
+
+# Admin only
+doppler run -- pnpm --filter @tailfire/admin dev
+
+# All apps
+doppler run -- pnpm dev
 ```
 
 ---

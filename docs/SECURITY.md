@@ -57,11 +57,12 @@ The anon key (`NEXT_PUBLIC_SUPABASE_ANON_KEY`) is safe to expose publicly. It on
 
 ### API Layer (NestJS)
 
-The API validates JWTs using Supabase's JWKS (JSON Web Key Set):
+The API validates JWTs using dynamic algorithm detection:
 
 **JWT Strategy** (`apps/api/src/auth/strategies/jwt.strategy.ts`):
-- Fetches public keys from Supabase JWKS endpoint
-- Validates ES256 signature
+- Supports **both HS256 and ES256** algorithms (auto-detected from token header)
+- **HS256**: Uses `SUPABASE_JWT_SECRET` for verification (older Supabase projects)
+- **ES256**: Uses JWKS endpoint for public key verification (newer Supabase projects)
 - Extracts custom claims: `agency_id`, `role`, `user_id`, `user_status`
 - Rejects tokens missing required claims (fail-fast)
 
@@ -230,7 +231,7 @@ CREATE POLICY "trips_update_admin_or_owner" ON trips
 
 External API credentials are encrypted before storage:
 - Supabase storage keys
-- Cloudflare R2 / Backblaze B2 credentials
+- Cloudflare R2 credentials
 - Amadeus OAuth2 secrets
 - Google Places API keys
 

@@ -232,6 +232,22 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 | `TRAVELTEK_API_URL` | Cruise API endpoint | Optional |
 | `TRAVELTEK_API_KEY` | Cruise API key | Optional |
 
+### Storage (Cloudflare R2)
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `CLOUDFLARE_R2_ACCOUNT_ID` | Cloudflare account ID | Yes |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` | R2 API access key ID | Yes |
+| `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | R2 API secret key | Yes |
+| `CLOUDFLARE_R2_BUCKET_NAME` | Bucket name (env-specific) | Yes |
+| `R2_MEDIA_BUCKET` | Alias for bucket name | Yes |
+| `R2_MEDIA_PUBLIC_URL` | Public URL for media access | Yes |
+
+> **Note:** R2 credentials are managed via Doppler. Each environment uses a different bucket:
+> - Development: `tailfire-media-dev`
+> - Preview/Staging: `tailfire-media-stg`
+> - Production: `tailfire-media`
+
 ### Feature Flags
 
 | Variable | Description | Production Value |
@@ -409,9 +425,35 @@ If production schema is out of sync:
 
 ---
 
+## Secrets Management (Doppler)
+
+Railway environment variables are managed via **Doppler** for centralized secrets management:
+
+| Doppler Config | Railway Environment | Purpose |
+|----------------|---------------------|---------|
+| `stg` | Development (`api-dev`) | Preview/staging secrets |
+| `prd` | Production (`api-prod`) | Production secrets |
+
+Railway is configured to sync secrets from Doppler automatically. To update secrets:
+
+1. Update the value in Doppler dashboard or CLI
+2. Railway will sync on next deployment (or trigger manual sync)
+
+```bash
+# View secrets for an environment
+doppler secrets --config prd
+
+# Update a secret
+doppler secrets set VARIABLE_NAME=value --config prd
+```
+
+> **Important:** Do not set secrets directly in Railway. Always use Doppler as the source of truth.
+
+---
+
 ## Environment Variable Template
 
-Copy this template for Railway environment configuration:
+Reference template for Railway environment configuration (managed via Doppler):
 
 ```bash
 # Core
@@ -437,6 +479,14 @@ CORS_ORIGINS=https://tailfire.phoenixvoyages.ca,https://ota.phoenixvoyages.ca,ht
 RESEND_API_KEY=re_...
 EMAIL_FROM_ADDRESS=noreply@phoenixvoyages.ca
 EMAIL_FROM_NAME=Phoenix Voyages
+
+# Storage (Cloudflare R2)
+CLOUDFLARE_R2_ACCOUNT_ID=your-cloudflare-account-id
+CLOUDFLARE_R2_ACCESS_KEY_ID=your-r2-access-key-id
+CLOUDFLARE_R2_SECRET_ACCESS_KEY=your-r2-secret-key
+CLOUDFLARE_R2_BUCKET_NAME=tailfire-media
+R2_MEDIA_BUCKET=tailfire-media
+R2_MEDIA_PUBLIC_URL=https://your-r2-public-url
 
 # Features
 ENABLE_SWAGGER_DOCS=false
