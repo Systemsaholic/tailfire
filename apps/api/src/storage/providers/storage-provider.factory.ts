@@ -186,12 +186,11 @@ export class StorageProviderFactory {
     provider: ApiProvider,
     bucketType: StorageBucketType
   ): Promise<StorageProvider> {
-    // Check if credentials are available via CredentialResolverService (Doppler env vars)
-    if (!this.credentialResolver.isAvailable(provider)) {
-      throw new Error(`No credentials configured for provider: ${provider}`)
-    }
-
     // Fetch credentials from environment variables (Doppler-managed)
+    // Note: resolve() will throw ConfigurationError if credentials are missing.
+    // We removed the isAvailable() pre-check because it depends on
+    // CredentialResolverService.onModuleInit() having run first, which causes
+    // initialization order issues when StorageService.onModuleInit() runs first.
     const credentials = await this.credentialResolver.resolve(provider) as unknown as StorageCredentials
 
     // Get the appropriate bucket name based on bucket type
