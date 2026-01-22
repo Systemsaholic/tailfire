@@ -10,6 +10,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { createClient } from '@/lib/supabase/client'
 import {
   Upload,
   Image as ImageIcon,
@@ -31,6 +32,19 @@ import { ApiError } from '@/lib/api'
 
 // Default API URL
 const DEFAULT_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1'
+
+/**
+ * Get authorization headers with the current session token
+ */
+async function getAuthHeaders(): Promise<HeadersInit> {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+
+  if (session?.access_token) {
+    return { Authorization: `Bearer ${session.access_token}` }
+  }
+  return {}
+}
 
 // File validation constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
@@ -190,7 +204,10 @@ export function MediaUploader({
   } = useQuery({
     queryKey,
     queryFn: async () => {
-      const response = await fetch(resolvedApiEndpoint)
+      const authHeaders = await getAuthHeaders()
+      const response = await fetch(resolvedApiEndpoint, {
+        headers: authHeaders,
+      })
       if (!response.ok) {
         throw new ApiError(response.status, 'Failed to fetch media')
       }
@@ -216,9 +233,11 @@ export function MediaUploader({
         formData.append('isCoverPhoto', 'true')
       }
 
+      const authHeaders = await getAuthHeaders()
       const response = await fetch(resolvedApiEndpoint, {
         method: 'POST',
         body: formData,
+        headers: authHeaders,
       })
 
       if (!response.ok) {
@@ -248,9 +267,10 @@ export function MediaUploader({
   // Update caption mutation
   const updateCaptionMutation = useMutation({
     mutationFn: async ({ mediaId, caption }: { mediaId: string; caption: string }) => {
+      const authHeaders = await getAuthHeaders()
       const response = await fetch(`${resolvedApiEndpoint}/${mediaId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ caption }),
       })
 
@@ -270,8 +290,10 @@ export function MediaUploader({
   // Delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (mediaId: string) => {
+      const authHeaders = await getAuthHeaders()
       const response = await fetch(`${resolvedApiEndpoint}/${mediaId}`, {
         method: 'DELETE',
+        headers: authHeaders,
       })
 
       if (!response.ok) {
@@ -290,9 +312,10 @@ export function MediaUploader({
   // External media mutation (Unsplash stock photos)
   const externalMediaMutation = useMutation({
     mutationFn: async (photo: UnsplashPhoto) => {
+      const authHeaders = await getAuthHeaders()
       const response = await fetch(resolvedExternalEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           unsplashPhotoId: photo.id,
           downloadLocation: photo.links.download_location,

@@ -130,7 +130,16 @@ jobs:
             -d '{"rootDirectory":"apps/admin","installCommand":"pnpm install","buildCommand":"pnpm --filter @tailfire/database build && pnpm --filter @tailfire/shared-types build && pnpm --filter @tailfire/admin build"}'
 
       - name: Deploy Admin (Preview)
-        run: VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes
+        id: deploy-admin
+        run: |
+          DEPLOYMENT_URL=$(VERCEL_ORG_ID=$VERCEL_ORG_ID VERCEL_PROJECT_ID=$VERCEL_ADMIN_PROJECT_ID vercel deploy --token=$VERCEL_TOKEN --yes)
+          echo "deployment_url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: $DEPLOYMENT_URL"
+
+      - name: Alias Admin to custom domain
+        run: |
+          vercel alias set ${{ steps.deploy-admin.outputs.deployment_url }} tf-demo.phoenixvoyages.ca --token=$VERCEL_TOKEN --scope=$VERCEL_ORG_ID
+          echo "✅ Aliased to tf-demo.phoenixvoyages.ca"
 
   deploy-ota:
     name: Deploy OTA to Vercel

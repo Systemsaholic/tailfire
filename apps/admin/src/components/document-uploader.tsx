@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { createClient } from '@/lib/supabase/client'
 import {
   Upload,
   File,
@@ -28,6 +29,19 @@ import { ApiError } from '@/lib/api'
 
 // Default API URL
 const DEFAULT_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3101/api/v1'
+
+/**
+ * Get authorization headers with the current session token
+ */
+async function getAuthHeaders(): Promise<HeadersInit> {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+
+  if (session?.access_token) {
+    return { Authorization: `Bearer ${session.access_token}` }
+  }
+  return {}
+}
 
 /**
  * Build and validate API endpoint URL
@@ -226,7 +240,10 @@ export function DocumentUploader(props: DocumentUploaderProps | LegacyDocumentUp
   } = useQuery({
     queryKey: queryKeyBase,
     queryFn: async () => {
-      const response = await fetch(apiEndpoint)
+      const authHeaders = await getAuthHeaders()
+      const response = await fetch(apiEndpoint, {
+        headers: authHeaders,
+      })
       if (!response.ok) {
         throw new ApiError(response.status, 'Failed to fetch documents')
       }
@@ -270,9 +287,11 @@ export function DocumentUploader(props: DocumentUploaderProps | LegacyDocumentUp
       formData.append('file', file)
       formData.append('documentType', selectedType)
 
+      const authHeaders = await getAuthHeaders()
       const response = await fetch(apiEndpoint, {
         method: 'POST',
         body: formData,
+        headers: authHeaders,
       })
 
       if (!response.ok) {
@@ -294,9 +313,10 @@ export function DocumentUploader(props: DocumentUploaderProps | LegacyDocumentUp
   // Delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (documentId: string) => {
+      const authHeaders = await getAuthHeaders()
       const response = await fetch(
         `${apiEndpoint}/${documentId}`,
-        { method: 'DELETE' }
+        { method: 'DELETE', headers: authHeaders }
       )
 
       if (!response.ok) {
