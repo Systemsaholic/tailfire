@@ -1,12 +1,17 @@
 /**
  * Cruise Repository Controller
  *
- * Public API endpoints for browsing cruise sailings.
- * Used by admin UI and eventually client-facing apps.
+ * API endpoints for browsing cruise sailings.
+ * Supports tiered authentication:
+ * - JWT auth (admin/client portal) - no rate limiting
+ * - API key auth (OTA public) - aggressive rate limiting
  */
 
-import { Controller, Get, Query, Param, ParseUUIDPipe, ParseIntPipe, DefaultValuePipe } from '@nestjs/common'
-import { ApiTags, ApiOperation, ApiParam, ApiQuery, ApiResponse } from '@nestjs/swagger'
+import { Controller, Get, Query, Param, ParseUUIDPipe, ParseIntPipe, DefaultValuePipe, UseGuards } from '@nestjs/common'
+import { ApiTags, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiHeader, ApiSecurity } from '@nestjs/swagger'
+import { Public } from '../auth/decorators/public.decorator'
+import { CatalogAuthGuard } from './guards/catalog-auth.guard'
+import { CatalogThrottleGuard } from './guards/catalog-throttle.guard'
 import { CruiseRepositoryService } from './cruise-repository.service'
 import {
   SailingSearchDto,
@@ -23,6 +28,14 @@ import {
 
 @ApiTags('Cruise Repository')
 @Controller('cruise-repository')
+@Public() // Bypass global JWT guard - we use our own hybrid auth
+@UseGuards(CatalogAuthGuard, CatalogThrottleGuard)
+@ApiSecurity('bearer')
+@ApiHeader({
+  name: 'x-catalog-api-key',
+  description: 'Catalog API key for OTA public access (alternative to JWT)',
+  required: false,
+})
 export class CruiseRepositoryController {
   constructor(private readonly cruiseRepository: CruiseRepositoryService) {}
 

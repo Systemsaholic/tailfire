@@ -57,12 +57,12 @@ import { DashboardModule } from './dashboard/dashboard.module'
     // Scheduled tasks
     ScheduleModule.forRoot(),
 
-    // Rate limiting
+    // Rate limiting (30 req/min default for API key users; JWT users skip via custom guards)
     ThrottlerModule.forRoot([
       {
         name: 'default',
         ttl: Number(process.env.THROTTLE_TTL) || 60000,
-        limit: Number(process.env.THROTTLE_LIMIT) || 10,
+        limit: Number(process.env.THROTTLE_LIMIT) || 30,
       },
     ]),
 
