@@ -2,11 +2,14 @@
  * Cruise Import Controller
  *
  * REST API endpoints for cruise data sync operations.
- * Intended for admin/internal use (not public-facing).
+ * Protected by internal API key (x-internal-api-key header).
+ * Intended for admin/internal use only.
  */
 
-import { Controller, Post, Get, Body, Query, HttpException, HttpStatus } from '@nestjs/common'
-import { ApiTags } from '@nestjs/swagger'
+import { Controller, Post, Get, Body, Query, HttpException, HttpStatus, UseGuards } from '@nestjs/common'
+import { ApiTags, ApiHeader } from '@nestjs/swagger'
+import { Public } from '../auth/decorators/public.decorator'
+import { InternalApiKeyGuard } from './guards/internal-api-key.guard'
 import { ImportOrchestratorService } from './services/import-orchestrator.service'
 import { SailingImportService } from './services/sailing-import.service'
 import { RawJsonPurgeService } from './services/raw-json-purge.service'
@@ -17,6 +20,13 @@ import { FtpSyncOptions, ImportMetrics, PurgeResult, PastSailingCleanupResult } 
 
 @ApiTags('Cruise Import')
 @Controller('cruise-import')
+@Public() // Bypass JWT auth
+@UseGuards(InternalApiKeyGuard) // Require internal API key instead
+@ApiHeader({
+  name: 'x-internal-api-key',
+  description: 'Internal API key for cruise sync operations',
+  required: true,
+})
 export class CruiseImportController {
   constructor(
     private readonly orchestrator: ImportOrchestratorService,
