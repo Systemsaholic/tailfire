@@ -8,7 +8,6 @@
  */
 
 import { Module } from '@nestjs/common'
-import { JwtModule } from '@nestjs/jwt'
 import { CruiseRepositoryController } from './cruise-repository.controller'
 import { CruiseRepositoryService } from './cruise-repository.service'
 import { CatalogAuthGuard } from './guards/catalog-auth.guard'
@@ -20,7 +19,7 @@ import { CruiseImportModule } from '../cruise-import/cruise-import.module'
   imports: [
     DatabaseModule,
     CruiseImportModule,
-    JwtModule.register({}), // For JWT verification in CatalogAuthGuard
+    // CatalogAuthGuard uses Passport JWT strategy from AuthModule (global)
     // ThrottlerModule is configured globally in AppModule
     // CatalogThrottleGuard handles tiered rate limiting
   ],

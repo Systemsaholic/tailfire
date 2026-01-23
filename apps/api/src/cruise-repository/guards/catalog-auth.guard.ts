@@ -3,7 +3,7 @@
  *
  * Hybrid authentication guard for cruise repository endpoints.
  * Allows access via:
- * 1. Valid JWT token (for admin/client portal users)
+ * 1. Valid JWT token (for admin/client portal users) - uses Passport JWT strategy
  * 2. Valid catalog API key (for OTA public access)
  *
  * Attaches auth type to request for downstream rate limiting.
@@ -11,16 +11,18 @@
 
 import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { JwtService } from '@nestjs/jwt'
+import { AuthGuard } from '@nestjs/passport'
 
 export type CatalogAuthType = 'jwt' | 'api_key'
 
 @Injectable()
 export class CatalogAuthGuard implements CanActivate {
-  constructor(
-    private configService: ConfigService,
-    private jwtService: JwtService
-  ) {}
+  private readonly jwtGuard: InstanceType<ReturnType<typeof AuthGuard>>
+
+  constructor(private configService: ConfigService) {
+    // Create a JWT guard instance for reuse
+    this.jwtGuard = new (AuthGuard('jwt'))()
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest()
@@ -28,18 +30,13 @@ export class CatalogAuthGuard implements CanActivate {
     // 1. Try JWT auth first (preferred for admin/client portal)
     const authHeader = request.headers['authorization']
     if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.slice(7)
       try {
-        // Verify JWT using Supabase JWT secret
-        const jwtSecret = this.configService.get<string>('SUPABASE_JWT_SECRET')
-        if (jwtSecret) {
-          const payload = this.jwtService.verify(token, { secret: jwtSecret })
-          if (payload) {
-            // Valid JWT - attach auth type for rate limiting decisions
-            request.catalogAuthType = 'jwt' as CatalogAuthType
-            request.user = payload
-            return true
-          }
+        // Use Passport JWT strategy for verification
+        const result = await this.jwtGuard.canActivate(context)
+        if (result) {
+          // JWT valid - attach auth type for rate limiting decisions
+          request.catalogAuthType = 'jwt' as CatalogAuthType
+          return true
         }
       } catch {
         // JWT invalid, fall through to API key check
