@@ -145,3 +145,48 @@ The `StorageProviderFactory` must NOT call `credentialResolver.isAvailable()` be
 
 ### Unsplash Integration
 Stock photos are provided via Unsplash API. Credentials are managed through Doppler as a shared credential across environments.
+
+## Cruise Catalog (FDW Architecture)
+
+The cruise catalog data is synchronized from Traveltek FTP and uses Foreign Data Wrapper (FDW) to share data across environments.
+
+### Architecture
+
+| Environment | Database | Cruise Data Source | Notes |
+|-------------|----------|-------------------|-------|
+| **Local Dev** | tailfire-Dev | Local `catalog` schema | For offline development |
+| **Preview** | Tailfire-Preview | FDW → Prod `catalog` | Reads from production |
+| **Prod** | Tailfire-Prod | Local `catalog` schema | **Source of truth** |
+
+### Data Flow
+- **Production**: Traveltek FTP sync runs daily at 2 AM → populates `catalog.*` tables
+- **Preview**: FDW queries routed to Production → always has current data
+- **Local Dev**: Has local copy for development isolation (may drift from Prod)
+
+### Key Points
+- **DO NOT sync cruise data to dev/preview databases** - they should use FDW to production
+- The FDW migration (`20260104205000_setup_catalog_fdw.sql`) auto-detects environment
+- If local `catalog` tables exist, FDW setup is skipped (guard clause)
+- Production has 16 catalog tables; other environments import them as foreign tables
+
+### Sync Endpoints (Protected by Internal API Key)
+```bash
+# Test connection
+curl https://api.tailfire.ca/api/v1/cruise-import/test-connection \
+  -H "x-internal-api-key: <key>"
+
+# Trigger sync
+curl -X POST https://api.tailfire.ca/api/v1/cruise-import/sync \
+  -H "x-internal-api-key: <key>" \
+  -H "Content-Type: application/json" \
+  -d '{"concurrency": 4}'
+
+# Check status
+curl https://api.tailfire.ca/api/v1/cruise-import/sync/status \
+  -H "x-internal-api-key: <key>"
+```
+
+### Cruise Repository API (Tiered Auth)
+- **JWT auth** (admin/client portal): No rate limiting
+- **API key auth** (`x-catalog-api-key`): 30 req/min rate limit
+- Both auth types work for `/cruise-repository/*` endpoints
