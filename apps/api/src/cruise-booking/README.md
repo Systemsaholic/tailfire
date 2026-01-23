@@ -116,16 +116,19 @@ The FusionAPI is **stateful** and uses a `sessionkey` (UUID) to maintain context
 Search for available cruises.
 
 ```
-GET /cruiseresults.pl
-Authorization: Bearer {token}
+GET /cruiseresults.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&adults=2&startdate=2026-02-01&enddate=2026-03-01
 ```
+
+> **Note:** All parameters including authentication (`sid`, `requestid`) are passed as query parameters for GET requests.
 
 **Key Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `sid` | String | **Required.** Site ID from `TRAVELTEK_SID` |
+| `requestid` | String | **Required.** OAuth access token |
 | `sessionkey` | UUID | Session identifier (create new or reuse) |
-| `departfrom` | Date | Departure date (YYYY-MM-DD) |
-| `departto` | Date | Latest departure date |
+| `startdate` | Date | Departure date (YYYY-MM-DD) |
+| `enddate` | Date | Latest departure date |
 | `destinations` | String | Destination codes (comma-separated) |
 | `cruiseline` | String | Cruise line code |
 | `ship` | String | Ship code |
@@ -144,13 +147,14 @@ Authorization: Bearer {token}
 Get available rate/fare codes for a specific sailing.
 
 ```
-GET /cruiseratecodes.pl
-Authorization: Bearer {token}
+GET /cruiseratecodes.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocruiseid={ID}&resultno=1
 ```
 
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `sid` | String | **Required.** Site ID |
+| `requestid` | String | **Required.** OAuth access token |
 | `sessionkey` | UUID | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
@@ -164,13 +168,14 @@ Authorization: Bearer {token}
 Get cabin categories and pricing.
 
 ```
-GET /cruisecabingrades.pl
-Authorization: Bearer {token}
+GET /cruisecabingrades.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocruiseid={ID}&resultno=1
 ```
 
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `sid` | String | **Required.** Site ID |
+| `requestid` | String | **Required.** OAuth access token |
 | `sessionkey` | UUID | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
@@ -187,13 +192,14 @@ Authorization: Bearer {token}
 Get detailed pricing breakdown for a cabin grade.
 
 ```
-GET /cruisecabingradebreakdown.pl
-Authorization: Bearer {token}
+GET /cruisecabingradebreakdown.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocruiseid={ID}&resultno=1&gradeno=1
 ```
 
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `sid` | String | **Required.** Site ID |
+| `requestid` | String | **Required.** OAuth access token |
 | `sessionkey` | UUID | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
@@ -211,13 +217,14 @@ Authorization: Bearer {token}
 Get specific cabin numbers within a grade (if supported by cruise line).
 
 ```
-GET /cruisecabins.pl
-Authorization: Bearer {token}
+GET /cruisecabins.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocruiseid={ID}&resultno=1&gradeno=1
 ```
 
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `sid` | String | **Required.** Site ID |
+| `requestid` | String | **Required.** OAuth access token |
 | `sessionkey` | UUID | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
@@ -233,13 +240,14 @@ Authorization: Bearer {token}
 Look up past passenger data (for returning customers).
 
 ```
-GET /cruisegetpaxdata.pl
-Authorization: Bearer {token}
+GET /cruisegetpaxdata.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&cruiseline={CODE}&pastpaxid={ID}
 ```
 
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `sid` | String | **Required.** Site ID |
+| `requestid` | String | **Required.** OAuth access token |
 | `sessionkey` | UUID | Session identifier |
 | `cruiseline` | String | Cruise line code |
 | `pastpaxid` | String | Past passenger ID/loyalty number |
@@ -249,13 +257,14 @@ Authorization: Bearer {token}
 Add a cruise selection to the booking basket.
 
 ```
-GET /basketadd.pl
-Authorization: Bearer {token}
+GET /basketadd.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocruiseid={ID}&resultno=1&gradeno=1&farecode={CODE}
 ```
 
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `sid` | String | **Required.** Site ID |
+| `requestid` | String | **Required.** OAuth access token |
 | `sessionkey` | UUID | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
@@ -273,13 +282,14 @@ Authorization: Bearer {token}
 Get current basket contents and totals.
 
 ```
-GET /basket.pl
-Authorization: Bearer {token}
+GET /basket.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}
 ```
 
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `sid` | String | **Required.** Site ID |
+| `requestid` | String | **Required.** OAuth access token |
 | `sessionkey` | UUID | Session identifier |
 
 **Response includes:**
@@ -293,10 +303,12 @@ Authorization: Bearer {token}
 Finalize the booking with passenger details.
 
 ```
-POST /book.pl
-Authorization: Bearer {token}
+POST /book.pl?sid={SID}
+requestid: {TOKEN}
 Content-Type: application/json
 ```
+
+> **Note:** For POST requests, `requestid` is passed as a **header** (not query parameter). The `sid` remains as query parameter.
 
 **Request Body:**
 ```json
@@ -424,28 +436,32 @@ curl "${TRAVELTEK_API_URL}/cruiseresults.pl?sid=${TRAVELTEK_SID}&requestid=${TOK
 
 > **Note:** To run these commands locally, first load credentials with: `eval $(doppler secrets download --no-file --format=env -p tailfire -c dev)`
 
-## Architecture
+## Proposed Architecture
+
+> **Status:** This module is **not yet implemented**. The structure below is the proposed implementation plan.
+> See [CRUISE_ARCHITECTURE.md](../../../docs/CRUISE_ARCHITECTURE.md) for complete system documentation.
 
 ```
-cruise-booking/
-├── controllers/
-│   └── cruise-booking.controller.ts    # HTTP endpoints
+cruise-booking/                         # TO BE IMPLEMENTED
+├── cruise-booking.module.ts            # NestJS module
+├── cruise-booking.controller.ts        # HTTP endpoints
 ├── services/
-│   ├── traveltek-auth.service.ts       # OAuth token management
-│   ├── cruise-search.service.ts        # Search operations
-│   ├── cruise-pricing.service.ts       # Pricing & availability
-│   ├── basket.service.ts               # Basket management
+│   ├── traveltek-auth.service.ts       # OAuth token management with caching
+│   ├── fusion-api.service.ts           # FusionAPI client wrapper
+│   ├── session.service.ts              # Session state management
+│   ├── basket.service.ts               # Basket operations
 │   └── booking.service.ts              # Booking creation
 ├── dto/
 │   ├── search.dto.ts                   # Search request/response
-│   ├── cabin.dto.ts                    # Cabin grade DTOs
+│   ├── cabin-grade.dto.ts              # Cabin pricing DTOs
 │   ├── basket.dto.ts                   # Basket DTOs
 │   └── booking.dto.ts                  # Booking DTOs
-├── cruise-booking.types.ts             # TypeScript interfaces
-└── cruise-booking.module.ts            # NestJS module
+└── types/
+    └── fusion-api.types.ts             # TypeScript interfaces
 ```
 
 ## Related Documentation
 
+- [Cruise Architecture](../../../docs/CRUISE_ARCHITECTURE.md) - Complete system architecture (FTP + FusionAPI)
 - [Cruise Import Module](../cruise-import/README.md) - FTP-based catalogue sync
 - [Traveltek FusionAPI Docs](https://docs.traveltek.com/FKpitwn16WopwZdCaW17) - Official API documentation
