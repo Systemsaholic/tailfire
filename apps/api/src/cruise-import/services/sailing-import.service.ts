@@ -430,7 +430,7 @@ export class SailingImportService {
     if (Object.keys(metadataUpdate).length > 0) {
       // Use raw SQL to merge metadata (don't overwrite existing fields)
       await this.db.db.execute(sql`
-        UPDATE cruise_lines
+        UPDATE catalog.cruise_lines
         SET metadata = metadata || ${JSON.stringify(metadataUpdate)}::jsonb,
             updated_at = NOW()
         WHERE id = ${cruiseLineId}
@@ -593,7 +593,7 @@ export class SailingImportService {
     if (Object.keys(metadataUpdate).length > 0 || imageUrl) {
       // Use raw SQL to merge metadata and update image_url
       await this.db.db.execute(sql`
-        UPDATE cruise_ships
+        UPDATE catalog.cruise_ships
         SET metadata = metadata || ${JSON.stringify(metadataUpdate)}::jsonb,
             ship_class = COALESCE(ship_class, ${shipContent.shipclass ?? null}),
             image_url = COALESCE(image_url, ${imageUrl ?? null}),
@@ -896,9 +896,9 @@ export class SailingImportService {
    */
   async backfillAlternateSailingFKs(): Promise<number> {
     const result = await this.db.db.execute(sql`
-      UPDATE cruise_alternate_sailings alt
+      UPDATE catalog.cruise_alternate_sailings alt
       SET alternate_sailing_id = s.id
-      FROM cruise_sailings s
+      FROM catalog.cruise_sailings s
       WHERE alt.alternate_sailing_id IS NULL
         AND s.provider = alt.provider
         AND s.provider_identifier = alt.alternate_provider_identifier
@@ -1033,7 +1033,7 @@ export class SailingImportService {
     if (Object.keys(metadataUpdate).length > 0) {
       // Use raw SQL to merge metadata - only update if port lacks coordinates
       await this.db.db.execute(sql`
-        UPDATE cruise_ports
+        UPDATE catalog.cruise_ports
         SET metadata = metadata || ${JSON.stringify(metadataUpdate)}::jsonb,
             updated_at = NOW()
         WHERE id = ${portId}
@@ -1151,13 +1151,13 @@ export class SailingImportService {
 
       // Query total pending stubs
       const pending = await this.db.db.execute(sql`
-        SELECT 'cruise_lines' as type, COUNT(*)::int as count FROM cruise_lines WHERE metadata->>'needs_review' = 'true'
+        SELECT 'cruise_lines' as type, COUNT(*)::int as count FROM catalog.cruise_lines WHERE metadata->>'needs_review' = 'true'
         UNION ALL
-        SELECT 'cruise_ships', COUNT(*)::int FROM cruise_ships WHERE metadata->>'needs_review' = 'true'
+        SELECT 'cruise_ships', COUNT(*)::int FROM catalog.cruise_ships WHERE metadata->>'needs_review' = 'true'
         UNION ALL
-        SELECT 'cruise_ports', COUNT(*)::int FROM cruise_ports WHERE metadata->>'needs_review' = 'true'
+        SELECT 'cruise_ports', COUNT(*)::int FROM catalog.cruise_ports WHERE metadata->>'needs_review' = 'true'
         UNION ALL
-        SELECT 'cruise_regions', COUNT(*)::int FROM cruise_regions WHERE metadata->>'needs_review' = 'true'
+        SELECT 'cruise_regions', COUNT(*)::int FROM catalog.cruise_regions WHERE metadata->>'needs_review' = 'true'
       `)
 
       this.logger.warn(`Total pending review: ${JSON.stringify(pending)}`)
@@ -1249,13 +1249,13 @@ export class SailingImportService {
     oldestStubs: Array<{ type: string; name: string; createdAt: string }>
   }> {
     const counts = await this.db.db.execute<{ type: string; count: string }>(sql`
-      SELECT 'cruise_lines' as type, COUNT(*)::text as count FROM cruise_lines WHERE metadata->>'needs_review' = 'true'
+      SELECT 'cruise_lines' as type, COUNT(*)::text as count FROM catalog.cruise_lines WHERE metadata->>'needs_review' = 'true'
       UNION ALL
-      SELECT 'cruise_ships', COUNT(*)::text FROM cruise_ships WHERE metadata->>'needs_review' = 'true'
+      SELECT 'cruise_ships', COUNT(*)::text FROM catalog.cruise_ships WHERE metadata->>'needs_review' = 'true'
       UNION ALL
-      SELECT 'cruise_ports', COUNT(*)::text FROM cruise_ports WHERE metadata->>'needs_review' = 'true'
+      SELECT 'cruise_ports', COUNT(*)::text FROM catalog.cruise_ports WHERE metadata->>'needs_review' = 'true'
       UNION ALL
-      SELECT 'cruise_regions', COUNT(*)::text FROM cruise_regions WHERE metadata->>'needs_review' = 'true'
+      SELECT 'cruise_regions', COUNT(*)::text FROM catalog.cruise_regions WHERE metadata->>'needs_review' = 'true'
     `)
 
     const countMap: Record<string, number> = {}
@@ -1277,8 +1277,8 @@ export class SailingImportService {
           p.id,
           p.metadata->>'latitude' as lat,
           COUNT(DISTINCT st.sailing_id) > 0 as is_active
-        FROM cruise_ports p
-        LEFT JOIN cruise_sailing_stops st ON st.port_id = p.id
+        FROM catalog.cruise_ports p
+        LEFT JOIN catalog.cruise_sailing_stops st ON st.port_id = p.id
         GROUP BY p.id, p.metadata->>'latitude'
       )
       SELECT
@@ -1308,13 +1308,13 @@ export class SailingImportService {
       name: string
       created_at: string
     }>(sql`
-      (SELECT 'cruise_lines' as type, name, created_at::text FROM cruise_lines WHERE metadata->>'needs_review' = 'true' ORDER BY created_at LIMIT 2)
+      (SELECT 'cruise_lines' as type, name, created_at::text FROM catalog.cruise_lines WHERE metadata->>'needs_review' = 'true' ORDER BY created_at LIMIT 2)
       UNION ALL
-      (SELECT 'cruise_ships', name, created_at::text FROM cruise_ships WHERE metadata->>'needs_review' = 'true' ORDER BY created_at LIMIT 2)
+      (SELECT 'cruise_ships', name, created_at::text FROM catalog.cruise_ships WHERE metadata->>'needs_review' = 'true' ORDER BY created_at LIMIT 2)
       UNION ALL
-      (SELECT 'cruise_ports', name, created_at::text FROM cruise_ports WHERE metadata->>'needs_review' = 'true' ORDER BY created_at LIMIT 2)
+      (SELECT 'cruise_ports', name, created_at::text FROM catalog.cruise_ports WHERE metadata->>'needs_review' = 'true' ORDER BY created_at LIMIT 2)
       UNION ALL
-      (SELECT 'cruise_regions', name, created_at::text FROM cruise_regions WHERE metadata->>'needs_review' = 'true' ORDER BY created_at LIMIT 2)
+      (SELECT 'cruise_regions', name, created_at::text FROM catalog.cruise_regions WHERE metadata->>'needs_review' = 'true' ORDER BY created_at LIMIT 2)
       ORDER BY created_at
       LIMIT 5
     `)
@@ -1394,9 +1394,9 @@ export class SailingImportService {
       SELECT
         COUNT(*)::text as total,
         COUNT(*) FILTER (WHERE image_url IS NOT NULL)::text as with_image,
-        (SELECT COUNT(DISTINCT ship_id) FROM cruise_ship_decks)::text as with_decks,
+        (SELECT COUNT(DISTINCT ship_id) FROM catalog.cruise_ship_decks)::text as with_decks,
         COUNT(*) FILTER (WHERE metadata->>'needs_review' = 'true')::text as needs_review
-      FROM cruise_ships
+      FROM catalog.cruise_ships
     `)
 
     // Cruise lines coverage
@@ -1409,7 +1409,7 @@ export class SailingImportService {
         COUNT(*)::text as total,
         COUNT(*) FILTER (WHERE metadata->>'logo_url' IS NOT NULL)::text as with_logo,
         COUNT(*) FILTER (WHERE metadata->>'needs_review' = 'true')::text as needs_review
-      FROM cruise_lines
+      FROM catalog.cruise_lines
     `)
 
     // Ports coverage
@@ -1421,10 +1421,10 @@ export class SailingImportService {
     }>(sql`
       SELECT
         COUNT(*)::text as total,
-        (SELECT COUNT(DISTINCT port_id) FROM cruise_sailing_stops WHERE port_id IS NOT NULL)::text as active,
+        (SELECT COUNT(DISTINCT port_id) FROM catalog.cruise_sailing_stops WHERE port_id IS NOT NULL)::text as active,
         COUNT(*) FILTER (WHERE metadata->>'latitude' IS NOT NULL AND metadata->>'longitude' IS NOT NULL)::text as with_coords,
         COUNT(*) FILTER (WHERE metadata->>'needs_review' = 'true')::text as needs_review
-      FROM cruise_ports
+      FROM catalog.cruise_ports
     `)
 
     // Regions coverage
@@ -1435,7 +1435,7 @@ export class SailingImportService {
       SELECT
         COUNT(*)::text as total,
         COUNT(*) FILTER (WHERE metadata->>'needs_review' = 'true')::text as needs_review
-      FROM cruise_regions
+      FROM catalog.cruise_regions
     `)
 
     // Sailings stats
@@ -1446,7 +1446,7 @@ export class SailingImportService {
       SELECT
         COUNT(*)::text as total,
         COUNT(*) FILTER (WHERE sail_date >= CURRENT_DATE AND is_active = true)::text as active_future
-      FROM cruise_sailings
+      FROM catalog.cruise_sailings
     `)
 
     return {

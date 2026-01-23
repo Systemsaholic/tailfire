@@ -58,6 +58,44 @@ git push -u origin feature/your-feature
 | `list_migrations` | Always allowed | - |
 | `get_logs` | Always allowed | - |
 
+## Doppler CLI
+
+Environment secrets are managed via Doppler. The CLI is available for managing secrets.
+
+### Project and Configs
+- **Project**: `tailfire`
+- **Configs**: `dev`, `stg` (staging/preview), `prd` (production)
+
+### Common Commands
+```bash
+# List all projects
+doppler projects
+
+# List configs for tailfire
+doppler configs -p tailfire
+
+# View secrets (masked)
+doppler secrets -p tailfire -c dev
+
+# Set a secret
+doppler secrets set KEY="value" -p tailfire -c dev
+
+# Set multiple secrets
+doppler secrets set KEY1="value1" KEY2="value2" -p tailfire -c prd
+
+# Delete a secret
+doppler secrets delete KEY -p tailfire -c dev
+```
+
+### Key Secrets
+| Secret | Description |
+|--------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
+| `INTERNAL_API_KEY` | API key for internal endpoints (cruise-import) |
+| `ENABLE_SCHEDULED_CRUISE_SYNC` | Enable daily cruise sync cron (`true`/`false`) |
+
 ## Environment URLs
 
 ### Production
@@ -69,6 +107,13 @@ git push -u origin feature/your-feature
 ### Dev/Preview
 - **API**: https://api-dev.tailfire.ca
 - **Admin**: https://tf-demo.phoenixvoyages.ca
+
+### Local Development (Turbo Repo)
+- **Admin**: http://localhost:3100
+- **API**: http://localhost:3101 (prefix: `api/v1`)
+- **API Docs**: http://localhost:3101/api/v1/docs (when `ENABLE_SWAGGER_DOCS=true`)
+
+Start all services: `turbo dev` from project root
 
 ## Storage System (Multi-Provider)
 
