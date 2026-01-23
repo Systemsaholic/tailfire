@@ -1,6 +1,8 @@
-# Cruise Import Module
+# Cruise Import Module (FTP Catalogue)
 
-This module handles importing cruise data from the Traveltek FTP server into the Tailfire database.
+This module handles importing cruise catalogue data from the Traveltek FTP server into the Tailfire database. It provides the static cruise data (ships, itineraries, ports, base pricing) that powers search and browse functionality.
+
+> **Note:** This module works alongside the [Cruise Booking Module](../cruise-booking/README.md) which handles real-time availability, live pricing, and booking creation via the Traveltek FusionAPI.
 
 ## Features
 
