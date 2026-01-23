@@ -227,11 +227,11 @@ export class CruiseRepositoryService {
       .leftJoin(cruiseShips, eq(cruiseSailings.shipId, cruiseShips.id))
       .leftJoin(cruiseLines, eq(cruiseSailings.cruiseLineId, cruiseLines.id))
       .leftJoin(
-        sql`cruise_ports as embark_port`,
+        sql`catalog.cruise_ports as embark_port`,
         sql`${cruiseSailings.embarkPortId} = embark_port.id`
       )
       .leftJoin(
-        sql`cruise_ports as disembark_port`,
+        sql`catalog.cruise_ports as disembark_port`,
         sql`${cruiseSailings.disembarkPortId} = disembark_port.id`
       )
       .where(whereClause)
