@@ -505,6 +505,13 @@
       "when": 1768990800000,
       "tag": "20260120210000_sync_all_environments",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1769292596000,
+      "tag": "20260123220956_fix_fdw_restore_foreign_tables",
+      "breakpoints": true
     }
   ]
 }
