@@ -169,7 +169,7 @@ export function TripMediaTab({ trip }: TripMediaTabProps) {
 
           {coverPhoto ? (
             <div className="relative group">
-              <div className="aspect-[16/9] overflow-hidden rounded-lg border border-tern-gray-200">
+              <div className="aspect-[3/1] max-h-48 overflow-hidden rounded-lg border border-tern-gray-200">
                 <img
                   src={coverPhoto.fileUrl}
                   alt={coverPhoto.caption || 'Trip cover photo'}
@@ -223,7 +223,7 @@ export function TripMediaTab({ trip }: TripMediaTabProps) {
               </div>
             </div>
           ) : (
-            <div className="aspect-[16/9] rounded-lg border-2 border-dashed border-tern-gray-300 flex items-center justify-center bg-tern-gray-50">
+            <div className="aspect-[3/1] max-h-48 rounded-lg border-2 border-dashed border-tern-gray-300 flex items-center justify-center bg-tern-gray-50">
               <div className="text-center">
                 <ImageIcon className="h-12 w-12 text-tern-gray-300 mx-auto mb-2" />
                 <p className="text-sm text-tern-gray-500">No cover photo set</p>

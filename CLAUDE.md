@@ -60,7 +60,43 @@ git push -u origin feature/your-feature
 
 ## Environment URLs
 
-- **Production API**: https://api.tailfire.ca
+### Production
+- **API**: https://api.tailfire.ca
 - **Admin**: https://tailfire.phoenixvoyages.ca
 - **OTA**: https://ota.phoenixvoyages.ca
 - **Client**: https://client.phoenixvoyages.ca
+
+### Dev/Preview
+- **API**: https://api-dev.tailfire.ca
+- **Admin**: https://tf-demo.phoenixvoyages.ca
+
+## Storage System (Multi-Provider)
+
+The application supports multiple storage providers with automatic failover:
+- **Cloudflare R2** (primary) - S3-compatible, cost-effective
+- **Backblaze B2** - S3-compatible, very low storage costs
+- **Supabase Storage** - Integrated with Supabase
+
+### Buckets
+- **Documents**: `tailfire-documents` (PDFs, contracts - private, signed URLs)
+- **Media**: `tailfire-media` / `tailfire-media-stg` (images, cover photos - public URLs)
+
+### Key Files
+- `apps/api/src/storage/providers/storage-provider.interface.ts` - Provider interface
+- `apps/api/src/storage/providers/storage-provider.factory.ts` - Creates and caches providers
+- `apps/api/src/trips/storage.service.ts` - High-level storage operations
+- `apps/api/src/api-credentials/credential-resolver.service.ts` - Resolves credentials from Doppler
+
+### Provider-Aware URL Generation
+Each provider implements `getPublicUrl(path)` to generate URLs appropriate for that provider:
+- **Supabase**: `{supabaseUrl}/storage/v1/object/public/{bucket}/{path}`
+- **R2**: `{publicUrl}/{path}` (requires R2_MEDIA_PUBLIC_URL)
+- **B2**: `{publicUrl}/{path}` (requires B2 public URL config)
+
+The `StorageService` uses the active provider's `getPublicUrl()` method, ensuring URLs match where files are actually stored.
+
+### Important: Module Initialization Order
+The `StorageProviderFactory` must NOT call `credentialResolver.isAvailable()` before creating providers. This is because `CredentialResolverService.onModuleInit()` may not have run yet when `StorageService.onModuleInit()` executes. The `resolve()` method already handles missing credentials by throwing `ConfigurationError`.
+
+### Unsplash Integration
+Stock photos are provided via Unsplash API. Credentials are managed through Doppler as a shared credential across environments.

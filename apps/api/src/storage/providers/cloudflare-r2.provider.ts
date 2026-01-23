@@ -34,14 +34,17 @@ export class CloudflareR2Provider implements StorageProvider {
   private readonly logger = new Logger(CloudflareR2Provider.name)
   private client: S3Client
   private readonly endpoint: string
+  private readonly publicUrl?: string
 
   constructor(
     credentials: CloudflareR2Credentials,
-    private readonly bucketName: string
+    private readonly bucketName: string,
+    publicUrl?: string
   ) {
     // Use provided endpoint or construct default R2 endpoint
     this.endpoint = credentials.endpoint ||
       `https://${credentials.accountId}.r2.cloudflarestorage.com`
+    this.publicUrl = publicUrl
 
     this.client = new S3Client({
       region: 'auto', // R2 uses 'auto' for region
@@ -52,7 +55,7 @@ export class CloudflareR2Provider implements StorageProvider {
       },
     })
 
-    this.logger.log(`Initialized Cloudflare R2 provider (bucket: ${bucketName})`)
+    this.logger.log(`Initialized Cloudflare R2 provider (bucket: ${bucketName}${publicUrl ? `, publicUrl: ${publicUrl}` : ''})`)
   }
 
   async upload(file: Buffer, path: string, options?: UploadOptions): Promise<string> {
@@ -280,5 +283,13 @@ export class CloudflareR2Provider implements StorageProvider {
       endpoint: this.endpoint,
       region: 'auto',
     }
+  }
+
+  getPublicUrl(path: string): string | undefined {
+    if (!this.publicUrl) {
+      return undefined
+    }
+    // R2 public URL format: {publicUrl}/{path}
+    return `${this.publicUrl}/${path}`
   }
 }

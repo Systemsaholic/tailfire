@@ -17,10 +17,12 @@ import { ImportOrchestratorService } from './services/import-orchestrator.servic
 import { RawJsonPurgeService } from './services/raw-json-purge.service'
 import { PastSailingCleanupService } from './services/past-sailing-cleanup.service'
 import { CruiseImportController } from './cruise-import.controller'
+import { InternalApiKeyGuard } from './guards/internal-api-key.guard'
 
 @Module({
   controllers: [CruiseImportController],
   providers: [
+    InternalApiKeyGuard,
     TraveltekFtpService,
     SailingImportService,
     ReferenceDataCacheService,

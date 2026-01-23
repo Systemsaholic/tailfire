@@ -1,8 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import { FileText, Pencil } from 'lucide-react'
-import { useParams, useRouter } from 'next/navigation'
-import type { ItineraryDayWithActivitiesDto } from '@tailfire/shared-types/api'
+import type { ItineraryDayWithActivitiesDto, ItineraryResponseDto } from '@tailfire/shared-types/api'
 import { cn } from '@/lib/utils'
 import {
   SUMMARY_COLUMN_WIDTH,
@@ -17,22 +17,24 @@ import { Button } from '@/components/ui/button'
 import { useDroppable } from '@dnd-kit/core'
 import { ActivitySummaryItem } from './activity-summary-item'
 import { filterItineraryActivities } from '@/lib/activity-constants'
+import { EditItineraryDialog } from './edit-itinerary-dialog'
 
 interface TripSummaryColumnProps {
   days: ItineraryDayWithActivitiesDto[]
-  itineraryId: string
-  itineraryName: string
+  tripId: string
+  tripStartDate?: string | null
+  tripEndDate?: string | null
+  itinerary: ItineraryResponseDto
 }
 
-export function TripSummaryColumn({ days, itineraryId, itineraryName }: TripSummaryColumnProps) {
-  const router = useRouter()
-  const params = useParams<{ id: string }>()
+export function TripSummaryColumn({ days, tripId, tripStartDate, tripEndDate, itinerary }: TripSummaryColumnProps) {
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
   // Droppable zone for the summary column
   const { setNodeRef, isOver } = useDroppable({
     id: 'trip-summary',
     data: {
       type: 'trip-summary',
-      itineraryId,
+      itineraryId: itinerary.id,
     },
   })
 
@@ -57,15 +59,15 @@ export function TripSummaryColumn({ days, itineraryId, itineraryName }: TripSumm
           <Button
             variant="ghost"
             size="sm"
-            aria-label="Edit trip"
+            aria-label="Edit itinerary"
             className={cn('h-8 w-8 p-0 hover:bg-tern-gray-100', FOCUS_VISIBLE_RING)}
-            onClick={() => router.push(`/trips/${params.id}/edit`)}
+            onClick={() => setEditDialogOpen(true)}
           >
             <Pencil className="h-4 w-4 text-tern-gray-500" />
           </Button>
         </div>
-        <p className="text-xs text-tern-gray-500 line-clamp-1" title={itineraryName}>
-          {itineraryName}
+        <p className="text-xs text-tern-gray-500 line-clamp-1" title={itinerary.name}>
+          {itinerary.name}
         </p>
       </div>
 
@@ -112,7 +114,7 @@ export function TripSummaryColumn({ days, itineraryId, itineraryName }: TripSumm
                     </p>
                   )}
                   <ActivitySummaryItem
-                    itineraryId={itineraryId}
+                    itineraryId={itinerary.id}
                     activity={activity}
                     dayId={activity.dayId}
                   />
@@ -122,6 +124,16 @@ export function TripSummaryColumn({ days, itineraryId, itineraryName }: TripSumm
           </div>
         )}
       </div>
+
+      {/* Edit Itinerary Dialog */}
+      <EditItineraryDialog
+        tripId={tripId}
+        tripStartDate={tripStartDate}
+        tripEndDate={tripEndDate}
+        itinerary={itinerary}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+      />
     </div>
   )
 }

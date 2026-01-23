@@ -19,11 +19,13 @@ export class SupabaseStorageProvider implements StorageProvider {
   readonly provider = ApiProvider.SUPABASE_STORAGE
   private readonly logger = new Logger(SupabaseStorageProvider.name)
   private client: SupabaseClient
+  private readonly supabaseUrl: string
 
   constructor(
     credentials: SupabaseStorageCredentials,
     private readonly bucketName: string
   ) {
+    this.supabaseUrl = credentials.url
     this.client = createClient(credentials.url, credentials.serviceRoleKey, {
       auth: {
         autoRefreshToken: false,
@@ -206,5 +208,11 @@ export class SupabaseStorageProvider implements StorageProvider {
       provider: this.provider,
       bucketName: this.bucketName,
     }
+  }
+
+  getPublicUrl(path: string): string {
+    // Supabase Storage public URL format:
+    // {supabaseUrl}/storage/v1/object/public/{bucket}/{path}
+    return `${this.supabaseUrl}/storage/v1/object/public/${this.bucketName}/${path}`
   }
 }

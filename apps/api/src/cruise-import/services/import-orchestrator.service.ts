@@ -10,6 +10,8 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
+import { Cron, CronExpression } from '@nestjs/schedule'
 import { createHash } from 'crypto'
 import { TraveltekFtpService } from './traveltek-ftp.service'
 import { SailingImportService } from './sailing-import.service'
@@ -29,7 +31,7 @@ import {
   type SyncHistoryError,
   type SyncHistoryMetrics,
 } from '@tailfire/database'
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, sql } from 'drizzle-orm'
 
 @Injectable()
 export class ImportOrchestratorService {
@@ -58,7 +60,8 @@ export class ImportOrchestratorService {
     private readonly ftpService: TraveltekFtpService,
     private readonly sailingImporter: SailingImportService,
     private readonly cache: ReferenceDataCacheService,
-    private readonly db: DatabaseService
+    private readonly db: DatabaseService,
+    private readonly configService: ConfigService
   ) {}
 
   // ============================================================================
@@ -795,5 +798,74 @@ export class ImportOrchestratorService {
     }
 
     return status
+  }
+
+  // ============================================================================
+  // SCHEDULED SYNC (CRON JOB)
+  // ============================================================================
+
+  /**
+   * Scheduled daily sync at 2 AM Toronto time.
+   * Controlled by ENABLE_SCHEDULED_CRUISE_SYNC env var.
+   * Uses PostgreSQL advisory lock to prevent concurrent execution across replicas.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_2AM, { timeZone: 'America/Toronto' })
+  async scheduledSync(): Promise<void> {
+    // Check if scheduled sync is enabled
+    const enabled = this.configService.get('ENABLE_SCHEDULED_CRUISE_SYNC')
+    if (!enabled || enabled === 'false') {
+      return
+    }
+
+    // Acquire distributed lock to prevent concurrent syncs across replicas
+    const lockAcquired = await this.acquireSyncLock()
+    if (!lockAcquired) {
+      this.logger.warn('Scheduled sync skipped - another instance holds the lock')
+      return
+    }
+
+    try {
+      if (this.isSyncInProgress()) {
+        this.logger.warn('Scheduled sync skipped - sync already in progress locally')
+        return
+      }
+
+      this.logger.log('Starting scheduled Traveltek cruise sync')
+      await this.runSync({ concurrency: 4 })
+    } catch (error) {
+      this.logger.error(`Scheduled sync failed: ${error instanceof Error ? error.message : error}`)
+    } finally {
+      await this.releaseSyncLock()
+    }
+  }
+
+  /**
+   * Acquire PostgreSQL advisory lock for distributed sync coordination.
+   * Returns true if lock was acquired, false if another process holds it.
+   */
+  private async acquireSyncLock(): Promise<boolean> {
+    try {
+      const result = await this.db.db.execute(
+        sql`SELECT pg_try_advisory_lock(hashtext('cruise_sync_lock')) as acquired`
+      )
+      const row = (result as any)[0]
+      return row?.acquired === true
+    } catch (error) {
+      this.logger.warn(`Failed to acquire sync lock: ${error}`)
+      return false
+    }
+  }
+
+  /**
+   * Release PostgreSQL advisory lock after sync completes.
+   */
+  private async releaseSyncLock(): Promise<void> {
+    try {
+      await this.db.db.execute(
+        sql`SELECT pg_advisory_unlock(hashtext('cruise_sync_lock'))`
+      )
+    } catch (error) {
+      this.logger.warn(`Failed to release sync lock: ${error}`)
+    }
   }
 }
