@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS cruise_booking_idempotency (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   idempotency_key uuid NOT NULL UNIQUE,
   activity_id uuid NOT NULL REFERENCES itinerary_activities(id) ON DELETE CASCADE,
-  user_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
   booking_ref varchar(100),
   booking_response jsonb,
   status varchar(20) NOT NULL DEFAULT 'pending'
