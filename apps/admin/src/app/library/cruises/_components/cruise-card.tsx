@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Image from 'next/image'
 import { format, parseISO } from 'date-fns'
 import { Ship, Calendar, MapPin, Anchor } from 'lucide-react'
@@ -36,6 +37,8 @@ function getCheapestPrice(prices: SailingSearchItem['prices']): number | null {
 }
 
 export function CruiseCard({ sailing, onSelect }: CruiseCardProps) {
+  const [shipImageError, setShipImageError] = useState(false)
+  const [logoImageError, setLogoImageError] = useState(false)
   const cheapestPrice = getCheapestPrice(sailing.prices)
   const sailDate = parseISO(sailing.sailDate)
 
@@ -50,7 +53,7 @@ export function CruiseCard({ sailing, onSelect }: CruiseCardProps) {
     >
       {/* Ship Image */}
       <div className="relative h-36 bg-tern-gray-100">
-        {sailing.ship.imageUrl ? (
+        {sailing.ship.imageUrl && !shipImageError ? (
           <Image
             src={sailing.ship.imageUrl}
             alt={sailing.ship.name}
@@ -58,6 +61,7 @@ export function CruiseCard({ sailing, onSelect }: CruiseCardProps) {
             className="object-cover transition-transform duration-300 group-hover:scale-105"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
             unoptimized
+            onError={() => setShipImageError(true)}
           />
         ) : (
           <div className="flex items-center justify-center h-full">
@@ -66,7 +70,7 @@ export function CruiseCard({ sailing, onSelect }: CruiseCardProps) {
         )}
 
         {/* Cruise Line Logo Badge */}
-        {sailing.cruiseLine.logoUrl && (
+        {sailing.cruiseLine.logoUrl && !logoImageError && (
           <div className="absolute top-2 left-2 bg-white rounded-lg p-1.5 shadow-md">
             <div className="relative w-9 h-9">
               <Image
@@ -76,6 +80,7 @@ export function CruiseCard({ sailing, onSelect }: CruiseCardProps) {
                 className="rounded object-contain"
                 sizes="36px"
                 unoptimized
+                onError={() => setLogoImageError(true)}
               />
             </div>
           </div>
@@ -142,12 +147,6 @@ export function CruiseCard({ sailing, onSelect }: CruiseCardProps) {
           </Button>
         </div>
 
-        {/* Updating indicator */}
-        {sailing.pricesUpdating && (
-          <p className="text-[10px] text-amber-600 text-center">
-            Prices updating...
-          </p>
-        )}
       </CardContent>
     </Card>
   )

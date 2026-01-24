@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Image from 'next/image'
 import { format, parseISO } from 'date-fns'
 import {
@@ -28,7 +28,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCruiseSailing, useAddCruiseToItinerary } from '@/hooks/use-cruise-library'
 import { PortScheduleList } from './port-schedule-list'
@@ -58,8 +57,17 @@ export function CruiseDetailModal({
 
   // Image gallery state
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
+  const [failedImageIndices, setFailedImageIndices] = useState<Set<number>>(new Set())
+  const [logoImageError, setLogoImageError] = useState(false)
   const images = sailing?.ship.images ?? []
   const hasMultipleImages = images.length > 1
+
+  // Reset image error states when sailing changes
+  useEffect(() => {
+    setCurrentImageIndex(0)
+    setFailedImageIndices(new Set())
+    setLogoImageError(false)
+  }, [sailingId])
 
   const handleAddToItinerary = async () => {
     if (!sailing || !tripContext) return
@@ -80,9 +88,20 @@ export function CruiseDetailModal({
     setCurrentImageIndex((prev) => (prev === images.length - 1 ? 0 : prev + 1))
   }
 
-  // Get current image URL
+  const handleImageError = () => {
+    setFailedImageIndices((prev) => new Set([...prev, currentImageIndex]))
+    // Try to skip to next image if there are more
+    if (images.length > 1 && failedImageIndices.size < images.length - 1) {
+      handleNextImage()
+    }
+  }
+
+  // Get current image URL, checking if all images have failed
+  const allImagesFailed = failedImageIndices.size >= images.length
   const currentImage = images[currentImageIndex]
-  const imageUrl = currentImage?.url2k ?? currentImage?.urlHd ?? currentImage?.url ?? sailing?.ship.imageUrl
+  const imageUrl = allImagesFailed
+    ? null
+    : (currentImage?.url2k ?? currentImage?.urlHd ?? currentImage?.url ?? sailing?.ship.imageUrl)
 
   // Calculate sea days
   const seaDays = sailing?.itinerary.filter((s) => s.isSeaDay).length ?? 0
@@ -131,7 +150,7 @@ export function CruiseDetailModal({
               </DialogDescription>
               <div className="flex items-start gap-4">
                 {/* Cruise Line Logo */}
-                {sailing.cruiseLine.logoUrl && (
+                {sailing.cruiseLine.logoUrl && !logoImageError && (
                   <div className="flex-shrink-0">
                     <Image
                       src={sailing.cruiseLine.logoUrl}
@@ -139,6 +158,7 @@ export function CruiseDetailModal({
                       width={48}
                       height={48}
                       className="rounded-lg object-contain"
+                      onError={() => setLogoImageError(true)}
                     />
                   </div>
                 )}
@@ -163,8 +183,8 @@ export function CruiseDetailModal({
               </div>
             </DialogHeader>
 
-            <ScrollArea className="flex-1 min-h-0">
-              <div className="space-y-6 px-6 pb-6">
+            <div className="flex-1 h-0 overflow-y-auto">
+                <div className="space-y-6 px-6 pb-6">
                 {/* Ship Image Gallery */}
                 <div className="relative h-64 bg-tern-gray-100 rounded-lg overflow-hidden">
                   {imageUrl ? (
@@ -175,6 +195,7 @@ export function CruiseDetailModal({
                         fill
                         className="object-cover"
                         sizes="(max-width: 896px) 100vw, 896px"
+                        onError={handleImageError}
                       />
                       {/* Gallery Navigation */}
                       {hasMultipleImages && (
@@ -298,19 +319,11 @@ export function CruiseDetailModal({
                 {/* Port Schedule */}
                 <Separator />
                 <PortScheduleList sailing={sailing} />
-              </div>
-            </ScrollArea>
+                </div>
+            </div>
 
             <DialogFooter className="flex-shrink-0 border-t border-tern-gray-200 p-6 pt-4">
-              <div className="flex items-center justify-between w-full">
-                <div className="text-sm text-tern-gray-500">
-                  {sailing.pricesUpdating && (
-                    <span className="flex items-center gap-1 text-amber-600">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Prices updating...
-                    </span>
-                  )}
-                </div>
+              <div className="flex justify-end w-full">
                 <div className="flex gap-3">
                   <Button variant="outline" onClick={onClose}>
                     Cancel
