@@ -16,6 +16,7 @@ import {
   Users,
   Ruler,
   Building2,
+  Plus,
 } from 'lucide-react'
 import {
   Dialog,
@@ -32,6 +33,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useCruiseSailing, useAddCruiseToItinerary } from '@/hooks/use-cruise-library'
 import { PortScheduleList } from './port-schedule-list'
 import { CabinPricingGrid } from './cabin-pricing-grid'
+import { AddToTripDialog } from './add-to-trip-dialog'
 
 interface CruiseDetailModalProps {
   sailingId: string | null
@@ -59,6 +61,9 @@ export function CruiseDetailModal({
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [failedImageIndices, setFailedImageIndices] = useState<Set<number>>(new Set())
   const [logoImageError, setLogoImageError] = useState(false)
+
+  // Add to trip dialog state (when no tripContext)
+  const [showAddToTripDialog, setShowAddToTripDialog] = useState(false)
   const images = sailing?.ship.images ?? []
   const hasMultipleImages = images.length > 1
 
@@ -344,8 +349,12 @@ export function CruiseDetailModal({
                       )}
                     </Button>
                   ) : (
-                    <Button disabled variant="secondary">
-                      Select from a trip to add
+                    <Button
+                      onClick={() => setShowAddToTripDialog(true)}
+                      className="bg-tern-teal-600 hover:bg-tern-teal-700"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add to Trip
                     </Button>
                   )}
                 </div>
@@ -354,6 +363,20 @@ export function CruiseDetailModal({
           </>
         ) : null}
       </DialogContent>
+
+      {/* Add to Trip Dialog - shown when no tripContext */}
+      {sailing && (
+        <AddToTripDialog
+          sailing={sailing}
+          isOpen={showAddToTripDialog}
+          onClose={() => setShowAddToTripDialog(false)}
+          onSuccess={() => {
+            setShowAddToTripDialog(false)
+            onAddedToItinerary?.()
+            onClose()
+          }}
+        />
+      )}
     </Dialog>
   )
 }

@@ -523,18 +523,29 @@ export function mapSailingToCustomCruise(
  * Creates custom_cruise activity and generates port schedule.
  * Automatically assigns the cruise to the day matching the departure date.
  * Also imports ship images from the library to the cruise's media gallery.
+ *
+ * @param defaultItineraryId - Optional default itineraryId for backward compatibility.
+ *                             Can be overridden by passing itineraryId in mutation variables.
  */
-export function useAddCruiseToItinerary(itineraryId: string) {
+export function useAddCruiseToItinerary(defaultItineraryId?: string) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
   return useMutation({
     mutationFn: async ({
       sailing,
+      itineraryId: dynamicItineraryId,
     }: {
       sailing: SailingDetailResponse
+      itineraryId?: string  // Dynamic itineraryId - overrides hook-level default
       dayId?: string  // Deprecated: no longer used - day is determined by sailing.sailDate
     }) => {
+      // Use dynamic itineraryId if provided, otherwise fall back to hook-level default
+      const itineraryId = dynamicItineraryId || defaultItineraryId
+      if (!itineraryId) {
+        throw new Error('itineraryId is required - provide it in mutation variables or hook parameter')
+      }
+
       // 1. Find or create the day matching the cruise departure date
       const departureDayResponse = await api.post<{ id: string }>(
         `/itineraries/${itineraryId}/days/find-or-create-by-date`,
@@ -628,7 +639,14 @@ export function useAddCruiseToItinerary(itineraryId: string) {
 
       return { cruise, portSchedule, importedImagesCount, failedImagesCount }
     },
-    onMutate: async ({ sailing }) => {
+    onMutate: async ({ sailing, itineraryId: dynamicItineraryId }) => {
+      // Resolve the itineraryId
+      const itineraryId = dynamicItineraryId || defaultItineraryId
+      if (!itineraryId) {
+        // Can't do optimistic update without itineraryId
+        return { previousDaysWithActivities: undefined, itineraryId: undefined }
+      }
+
       // Cancel outgoing refetches to prevent race conditions
       await queryClient.cancelQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
 
@@ -713,12 +731,17 @@ export function useAddCruiseToItinerary(itineraryId: string) {
         }
       )
 
-      return { previousDaysWithActivities }
+      // Return itineraryId in context for onSuccess/onError
+      return { previousDaysWithActivities, itineraryId }
     },
-    onSuccess: (result) => {
-      // Invalidate itinerary queries to show new activities
-      // Single invalidation - withActivities includes all needed data
-      void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+    onSuccess: (result, _variables, context) => {
+      // Use itineraryId from context (set in onMutate)
+      const itineraryId = context?.itineraryId
+      if (itineraryId) {
+        // Invalidate itinerary queries to show new activities
+        // Single invalidation - withActivities includes all needed data
+        void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      }
 
       const portCount = result.portSchedule.created.length
       const imageText = result.importedImagesCount > 0
@@ -740,7 +763,8 @@ export function useAddCruiseToItinerary(itineraryId: string) {
     },
     onError: (error, _variables, context) => {
       // Rollback to previous state on error
-      if (context?.previousDaysWithActivities) {
+      const itineraryId = context?.itineraryId
+      if (context?.previousDaysWithActivities && itineraryId) {
         queryClient.setQueryData(
           itineraryDayKeys.withActivities(itineraryId),
           context.previousDaysWithActivities
