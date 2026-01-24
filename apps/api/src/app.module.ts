@@ -24,6 +24,7 @@ import { AmenitiesModule } from './amenities/amenities.module'
 import { ExternalApisModule } from './external-apis/external-apis.module'
 import { CruiseImportModule } from './cruise-import/cruise-import.module'
 import { CruiseRepositoryModule } from './cruise-repository/cruise-repository.module'
+import { CruiseBookingModule } from './cruise-booking/cruise-booking.module'
 import { TemplatesModule } from './templates/templates.module'
 import { UserProfilesModule } from './user-profiles/user-profiles.module'
 import { UsersModule } from './users/users.module'
@@ -85,6 +86,9 @@ import { DashboardModule } from './dashboard/dashboard.module'
 
     // Cruise repository (search/detail API)
     CruiseRepositoryModule,
+
+    // Cruise booking (FusionAPI real-time booking)
+    CruiseBookingModule,
 
     // Itinerary & Package Templates (Library)
     TemplatesModule,

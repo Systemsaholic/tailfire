@@ -92,6 +92,12 @@ export const customCruiseDetails = pgTable('custom_cruise_details', {
   fareCode: varchar('fare_code', { length: 50 }),
   bookingDeadline: date('booking_deadline'),
 
+  // FusionAPI Booking Confirmation (durable booking facts, not session state)
+  fusionBookingRef: varchar('fusion_booking_ref', { length: 100 }),
+  fusionBookingStatus: varchar('fusion_booking_status', { length: 50 }),
+  fusionBookedAt: timestamp('fusion_booked_at', { withTimezone: true }),
+  fusionBookingResponse: jsonb('fusion_booking_response'),
+
   // JSON Data (Traveltek structures) - service returns [] or {} not null
   portCallsJson: jsonb('port_calls_json').default([]),
   cabinPricingJson: jsonb('cabin_pricing_json').default({}),

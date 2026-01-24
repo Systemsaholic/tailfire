@@ -63,6 +63,9 @@ export * from './port-info-details.schema'
 export * from './options-details.schema'
 export * from './custom-cruise-details.schema'
 
+// Cruise booking sessions (FusionAPI integration)
+export * from './cruise-booking-sessions.schema'
+
 // Amenities system (dynamic, API-driven amenities)
 export * from './amenities.schema'
 

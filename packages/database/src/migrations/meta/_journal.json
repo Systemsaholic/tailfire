@@ -512,6 +512,27 @@
       "when": 1769292596000,
       "tag": "20260123220956_fix_fdw_restore_foreign_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1769306160000,
+      "tag": "20260124031600_create_cruise_booking_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1769306220000,
+      "tag": "20260124031700_create_cruise_booking_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1769306280000,
+      "tag": "20260124031800_add_fusion_booking_to_cruise_details",
+      "breakpoints": true
     }
   ]
 }
