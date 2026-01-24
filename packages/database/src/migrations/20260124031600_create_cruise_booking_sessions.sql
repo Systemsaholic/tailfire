@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS cruise_booking_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   activity_id uuid NOT NULL REFERENCES itinerary_activities(id) ON DELETE CASCADE,
-  user_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  user_id uuid REFERENCES user_profiles(id) ON DELETE SET NULL,
   trip_id uuid REFERENCES trips(id) ON DELETE CASCADE,
   trip_traveler_id uuid REFERENCES trip_travelers(id) ON DELETE SET NULL,
 
