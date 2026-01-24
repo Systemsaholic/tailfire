@@ -445,10 +445,11 @@ export function mapSailingToCustomCruise(
     ?? sailing.priceSummary.cheapestSuite
 
   // Build port calls JSON from itinerary
+  // Note: portId from catalog is a UUID string, not an integer
   const portCallsJson = sailing.itinerary.map((stop) => ({
     day: stop.dayNumber,
     portName: stop.portName,
-    portId: stop.portId ? parseInt(stop.portId, 10) : undefined,
+    portId: stop.portId ?? undefined, // UUID string from catalog
     arriveDate: sailing.sailDate, // Approximate - could be computed from dayNumber
     departDate: sailing.sailDate,
     arriveTime: stop.arrivalTime ?? '',

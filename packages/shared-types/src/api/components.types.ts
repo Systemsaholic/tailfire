@@ -140,7 +140,8 @@ export type CabinCategory = 'suite' | 'balcony' | 'oceanview' | 'inside'
 export type CruisePortCall = {
   day: number
   portName: string
-  portId?: number
+  // portId can be a UUID string (from catalog) or integer (from FusionAPI)
+  portId?: string | number | null
   arriveDate: string
   departDate: string
   arriveTime: string
@@ -149,6 +150,8 @@ export type CruisePortCall = {
   description?: string
   latitude?: string
   longitude?: string
+  // isSeaDay flag from catalog itinerary
+  isSeaDay?: boolean
 }
 
 /**

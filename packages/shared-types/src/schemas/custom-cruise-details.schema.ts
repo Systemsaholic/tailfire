@@ -24,7 +24,8 @@ export type CabinCategory = z.infer<typeof cabinCategorySchema>
 export const cruisePortCallSchema = z.object({
   day: z.number().int(),
   portName: z.string(),
-  portId: z.number().int().optional(),
+  // portId can be a UUID string (from catalog) or integer (from FusionAPI)
+  portId: z.union([z.string(), z.number()]).nullable().optional(),
   arriveDate: z.string(),
   departDate: z.string(),
   arriveTime: z.string(),
@@ -33,6 +34,8 @@ export const cruisePortCallSchema = z.object({
   description: z.string().optional(),
   latitude: z.string().optional(),
   longitude: z.string().optional(),
+  // isSeaDay flag from catalog itinerary
+  isSeaDay: z.boolean().optional(),
 })
 
 export type CruisePortCall = z.infer<typeof cruisePortCallSchema>

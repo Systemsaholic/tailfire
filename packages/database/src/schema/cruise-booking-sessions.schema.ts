@@ -8,7 +8,7 @@
  * Sessions have a lifecycle: active → completed/expired/cancelled
  */
 
-import { pgTable, pgEnum, uuid, varchar, integer, timestamp, jsonb, index, uniqueIndex } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, varchar, integer, timestamp, jsonb } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 import { itineraryActivities } from './activities.schema'
 import { trips, tripTravelers } from './trips.schema'
