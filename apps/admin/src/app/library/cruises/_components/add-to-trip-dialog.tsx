@@ -102,10 +102,11 @@ export function AddToTripDialog({
 
     if (!itineraryId) return
 
-    // Add cruise to the itinerary - pass itineraryId dynamically
+    // Add cruise to the itinerary - pass itineraryId and tripId dynamically
     await addCruiseMutation.mutateAsync({
       sailing,
       itineraryId,
+      tripId: selectedTripId,
     })
 
     onSuccess?.()

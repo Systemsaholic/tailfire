@@ -80,6 +80,7 @@ export function CruiseDetailModal({
     // The mutation will automatically place the cruise on the day matching the departure date
     await addCruiseMutation.mutateAsync({
       sailing,
+      tripId: tripContext.tripId,
     })
 
     onAddedToItinerary?.()

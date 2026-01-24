@@ -9,10 +9,13 @@
  * - Add cruise to itinerary mutation
  */
 
+import { createElement } from 'react'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
+import { useRouter } from 'next/navigation'
 import { api } from '@/lib/api'
 import { itineraryDayKeys } from './use-itinerary-days'
 import { useToast } from './use-toast'
+import { ToastAction, type ToastActionElement } from '@/components/ui/toast'
 import type {
   CreateCustomCruiseActivityDto,
   CustomCruiseActivityDto,
@@ -530,6 +533,7 @@ export function mapSailingToCustomCruise(
 export function useAddCruiseToItinerary(defaultItineraryId?: string) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const router = useRouter()
 
   return useMutation({
     mutationFn: async ({
@@ -538,7 +542,8 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
     }: {
       sailing: SailingDetailResponse
       itineraryId?: string  // Dynamic itineraryId - overrides hook-level default
-      dayId?: string  // Deprecated: no longer used - day is determined by sailing.sailDate
+      tripId?: string       // Trip ID for navigation after success
+      dayId?: string        // Deprecated: no longer used - day is determined by sailing.sailDate
     }) => {
       // Use dynamic itineraryId if provided, otherwise fall back to hook-level default
       const itineraryId = dynamicItineraryId || defaultItineraryId
@@ -639,12 +644,12 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
 
       return { cruise, portSchedule, importedImagesCount, failedImagesCount }
     },
-    onMutate: async ({ sailing, itineraryId: dynamicItineraryId }) => {
+    onMutate: async ({ sailing, itineraryId: dynamicItineraryId, tripId }) => {
       // Resolve the itineraryId
       const itineraryId = dynamicItineraryId || defaultItineraryId
       if (!itineraryId) {
         // Can't do optimistic update without itineraryId
-        return { previousDaysWithActivities: undefined, itineraryId: undefined }
+        return { previousDaysWithActivities: undefined, itineraryId: undefined, tripId: undefined }
       }
 
       // Cancel outgoing refetches to prevent race conditions
@@ -731,12 +736,13 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
         }
       )
 
-      // Return itineraryId in context for onSuccess/onError
-      return { previousDaysWithActivities, itineraryId }
+      // Return itineraryId and tripId in context for onSuccess/onError
+      return { previousDaysWithActivities, itineraryId, tripId }
     },
     onSuccess: (result, _variables, context) => {
       // Use itineraryId from context (set in onMutate)
       const itineraryId = context?.itineraryId
+      const tripId = context?.tripId
       if (itineraryId) {
         // Invalidate itinerary queries to show new activities
         // Single invalidation - withActivities includes all needed data
@@ -748,16 +754,26 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
         ? ` and ${result.importedImagesCount} ${result.importedImagesCount === 1 ? 'image' : 'images'}`
         : ''
 
+      // Create action button to view trip (if tripId available)
+      const viewTripAction = tripId
+        ? (createElement(ToastAction, {
+            altText: 'View Trip',
+            onClick: () => router.push(`/trips/${tripId}`),
+          }, 'View Trip') as unknown as ToastActionElement)
+        : undefined
+
       // Show toast - note if some images failed
       if (result.failedImagesCount > 0) {
         toast({
           title: 'Cruise added (some images failed)',
           description: `Created cruise with ${portCount} port ${portCount === 1 ? 'stop' : 'stops'}${imageText}. ${result.failedImagesCount} image(s) could not be imported.`,
+          action: viewTripAction,
         })
       } else {
         toast({
           title: 'Cruise added to itinerary',
           description: `Created cruise with ${portCount} port ${portCount === 1 ? 'stop' : 'stops'}${imageText}.`,
+          action: viewTripAction,
         })
       }
     },
