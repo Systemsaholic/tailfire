@@ -229,8 +229,26 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 | `RESEND_API_KEY` | Email service API key | Yes |
 | `EMAIL_FROM_ADDRESS` | Sender email | Yes |
 | `EMAIL_FROM_NAME` | Sender name | Yes |
-| `TRAVELTEK_API_URL` | Cruise API endpoint | Optional |
-| `TRAVELTEK_API_KEY` | Cruise API key | Optional |
+
+### Traveltek FusionAPI (Cruise Booking)
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `TRAVELTEK_API_URL` | FusionAPI base URL (`https://fusionapi.traveltek.net/2.1/json`) | Yes |
+| `TRAVELTEK_USERNAME` | OAuth username | Yes |
+| `TRAVELTEK_PASSWORD` | OAuth password | Yes |
+| `TRAVELTEK_SID` | Site ID for API requests | Yes |
+
+### Traveltek FTP (Cruise Catalogue)
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `TRAVELTEK_FTP_HOST` | FTP server hostname | Yes |
+| `TRAVELTEK_FTP_USER` | FTP username (e.g., `SYH_9_CAD`) | Yes |
+| `TRAVELTEK_FTP_PASSWORD` | FTP password | Yes |
+
+> See [Cruise Booking README](../apps/api/src/cruise-booking/README.md) for FusionAPI details.
+> See [Cruise Import README](../apps/api/src/cruise-import/README.md) for FTP sync details.
 
 ### Storage (Cloudflare R2)
 
@@ -425,29 +443,80 @@ If production schema is out of sync:
 
 ---
 
-## Secrets Management (Doppler)
+## Secrets Management (Doppler + Railway Native Integration)
 
-Railway environment variables are managed via **Doppler** for centralized secrets management:
+Railway environment variables are managed via **Doppler's native Railway integration** for real-time, continuous secret synchronization.
 
-| Doppler Config | Railway Environment | Purpose |
-|----------------|---------------------|---------|
-| `stg` | Development (`api-dev`) | Preview/staging secrets |
-| `prd` | Production (`api-prod`) | Production secrets |
+### Configuration Overview
 
-Railway is configured to sync secrets from Doppler automatically. To update secrets:
+| Doppler Config | Railway Environment | Service | Purpose |
+|----------------|---------------------|---------|---------|
+| `stg` | Development | `api-dev` | Preview/staging secrets |
+| `prd` | Production | `api-prod` | Production secrets |
 
-1. Update the value in Doppler dashboard or CLI
-2. Railway will sync on next deployment (or trigger manual sync)
+### How It Works
+
+Doppler's native Railway integration provides:
+- **Real-time sync**: Secrets sync automatically when changed (not just on deploy)
+- **Auto-redeploy**: Railway can auto-redeploy when secrets change (recommended)
+- **Single source of truth**: Doppler dashboard is the authoritative source
+- **No CI/CD workflow changes**: Integration is configured once in Doppler
+
+### Setup Steps
+
+1. **Generate Railway API Token** (Account Settings → Tokens)
+   - Must be **account-level** token (not project-specific)
+   - Project-specific tokens don't work with Doppler integration
+
+2. **Configure in Doppler Dashboard**
+   - Navigate to Project `tailfire` → Config (`prd` or `stg`) → Integrations
+   - Add Railway integration with the token
+   - Select Railway project, environment, and service
+   - Enable auto-redeploy (recommended)
+
+3. **Verify in Railway Dashboard**
+   - Check service Variables tab shows secrets from Doppler
+   - Secrets should include all Doppler values
+
+### Managing Secrets
 
 ```bash
 # View secrets for an environment
-doppler secrets --config prd
+doppler secrets -p tailfire -c prd
 
 # Update a secret
-doppler secrets set VARIABLE_NAME=value --config prd
+doppler secrets set VARIABLE_NAME=value -p tailfire -c prd
+
+# Set multiple secrets
+doppler secrets set KEY1=value1 KEY2=value2 -p tailfire -c prd
 ```
 
-> **Important:** Do not set secrets directly in Railway. Always use Doppler as the source of truth.
+> **Important:** Do not set secrets directly in Railway. Always use Doppler as the source of truth. Changes in Doppler sync to Railway automatically.
+
+### Cruise Sync Secrets
+
+The following secrets are required for cruise catalog synchronization:
+
+| Secret | Description | Required |
+|--------|-------------|----------|
+| `INTERNAL_API_KEY` | Protects `/cruise-import/*` endpoints | Yes |
+| `ENABLE_SCHEDULED_CRUISE_SYNC` | Enable daily CRON sync (set to `true`) | Yes |
+| `TRAVELTEK_FTP_HOST` | FTP server hostname | Yes |
+| `TRAVELTEK_FTP_USER` | FTP username | Yes |
+| `TRAVELTEK_FTP_PASSWORD` | FTP password | Yes |
+
+### CRON Schedule
+
+When `ENABLE_SCHEDULED_CRUISE_SYNC=true`, the following scheduled jobs run:
+
+| Job | Time (Toronto) | Description |
+|-----|----------------|-------------|
+| Cruise Sync | 2:00 AM | Full catalog sync from Traveltek FTP |
+| Raw JSON Purge | 3:00 AM | Clean up old raw import data |
+| Past Sailing Cleanup | 4:00 AM | Archive departed sailings |
+| Daily Stub Report | 6:00 AM | Report on unmatched cruise data |
+
+Reference: [Doppler Railway Integration Docs](https://docs.doppler.com/docs/railway)
 
 ---
 

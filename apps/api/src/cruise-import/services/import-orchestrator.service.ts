@@ -7,6 +7,13 @@
  * - Tracks metrics and generates reports
  * - Supports dry-run mode
  * - Delta sync: skips files that haven't changed since last sync
+ *
+ * IMPORTANT: This service should ONLY run on Production (api.tailfire.ca).
+ * Dev and Preview environments use FDW (Foreign Data Wrapper) to read
+ * catalog data directly from Production. Running sync on non-prod will
+ * create local tables that break the FDW architecture.
+ *
+ * See CLAUDE.md "Critical Rule #3" for details.
  */
 
 import { Injectable, Logger } from '@nestjs/common'
@@ -69,6 +76,23 @@ export class ImportOrchestratorService {
   // ============================================================================
 
   async runSync(options: FtpSyncOptions = {}): Promise<ImportMetrics> {
+    // ==========================================================================
+    // ENVIRONMENT GUARD: Only Production should run cruise sync!
+    // Dev and Preview use FDW (Foreign Data Wrapper) to read from Production.
+    // Running sync on non-prod creates local tables that break FDW architecture.
+    // ==========================================================================
+    const apiUrl = this.configService.get<string>('API_URL') || ''
+    const isProduction = apiUrl.includes('api.tailfire.ca')
+    const bypassGuard = this.configService.get('BYPASS_SYNC_ENVIRONMENT_GUARD') === 'true'
+
+    if (!isProduction && !bypassGuard) {
+      throw new Error(
+        'Cruise sync is only allowed on Production (api.tailfire.ca). ' +
+        'Dev and Preview environments use FDW to read catalog data from Production. ' +
+        'See CLAUDE.md "Critical Rule #3" for details.'
+      )
+    }
+
     if (this.syncInProgress) {
       throw new Error('Sync already in progress')
     }

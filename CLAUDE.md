@@ -25,7 +25,63 @@
 3. Verify changes work on preview environment
 4. Create PR and merge to `main` for production deployment
 
-## Migration Workflow
+### 3. NEVER Run Cruise Sync on Non-Production Environments
+
+**DO NOT:**
+- Run `cruise-import/sync` endpoint against localhost or dev API
+- Set `ENABLE_SCHEDULED_CRUISE_SYNC=true` in dev/stg Doppler configs
+- Trigger FTP sync from local development (`turbo dev`)
+
+**WHY:** Dev and Preview databases use **FDW (Foreign Data Wrapper)** to read catalog data directly from Production. Running sync locally creates duplicate local tables that break the FDW architecture and waste storage.
+
+**CORRECT WORKFLOW:**
+1. Cruise sync runs ONLY on Production API (`api.tailfire.ca`) via scheduled CRON
+2. Dev/Preview environments automatically see Production data through FDW
+3. To test sync code changes: deploy to production and monitor the daily 2 AM sync
+
+## Development Workflow (A to Z)
+
+### Complete Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. LOCAL DEVELOPMENT                                                         │
+│    Database: tailfire-Dev (hplioumsywqgtnhwcivw)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│    turbo dev                      # Start all services                       │
+│    cd apps/api && pnpm db:migrate # Run migrations locally                   │
+│    # Test at localhost:3100 (admin) / localhost:3101 (api)                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. PREVIEW DEPLOYMENT                                                        │
+│    Database: Tailfire-Preview (gaqacfstpnmwphekjzae)                         │
+│    Trigger: Push to `preview` branch                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│    git checkout -b feature/your-feature                                      │
+│    git push -u origin feature/your-feature                                   │
+│    git checkout preview && git merge feature/your-feature && git push        │
+│    # OR: Push directly to preview branch                                     │
+│    # Runs: .github/workflows/deploy-preview.yml                              │
+│    # Test at tf-demo.phoenixvoyages.ca / api-dev.tailfire.ca                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. PRODUCTION DEPLOYMENT                                                     │
+│    Database: Tailfire-Prod (cmktvanwglszgadjrorm)                            │
+│    Trigger: Merge PR to `main` branch                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│    # Create PR from feature branch to main                                   │
+│    # Review and approve                                                      │
+│    # Merge PR                                                                │
+│    # Runs: .github/workflows/deploy-prod.yml                                 │
+│    # Live at tailfire.phoenixvoyages.ca / api.tailfire.ca                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Migration Workflow
 
 See `packages/database/MIGRATIONS.md` for detailed migration conventions.
 
@@ -40,12 +96,16 @@ touch packages/database/src/migrations/${TIMESTAMP}_description.sql
 
 # 3. Register in meta/_journal.json
 
-# 4. Push to feature branch (triggers dev deployment)
+# 4. Run migration locally (tailfire-Dev)
+cd apps/api && pnpm db:migrate
+
+# 5. Push to preview branch (triggers preview deployment)
 git push -u origin feature/your-feature
+git checkout preview && git merge feature/your-feature && git push
 
-# 5. Verify on dev environment
+# 6. Verify on preview environment (tf-demo.phoenixvoyages.ca)
 
-# 6. Create PR to main (triggers prod deployment after merge)
+# 7. Create PR to main (triggers prod deployment after merge)
 ```
 
 ## Supabase MCP Usage
@@ -95,6 +155,10 @@ doppler secrets delete KEY -p tailfire -c dev
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
 | `INTERNAL_API_KEY` | API key for internal endpoints (cruise-import) |
 | `ENABLE_SCHEDULED_CRUISE_SYNC` | Enable daily cruise sync cron (`true`/`false`) |
+| `TRAVELTEK_API_URL` | FusionAPI base URL for cruise booking |
+| `TRAVELTEK_USERNAME` | FusionAPI OAuth username |
+| `TRAVELTEK_PASSWORD` | FusionAPI OAuth password |
+| `TRAVELTEK_SID` | FusionAPI agency session ID |
 
 ## Environment URLs
 
@@ -114,6 +178,46 @@ doppler secrets delete KEY -p tailfire -c dev
 - **API Docs**: http://localhost:3101/api/v1/docs (when `ENABLE_SWAGGER_DOCS=true`)
 
 Start all services: `turbo dev` from project root
+
+## Database Environments
+
+### Supabase Projects
+
+| Project | ID | Region | Purpose |
+|---------|-----|--------|---------|
+| **tailfire-Dev** | `hplioumsywqgtnhwcivw` | us-east-1 | Local development only |
+| **Tailfire-Preview** | `gaqacfstpnmwphekjzae` | ca-central-1 | CI/CD preview deployments |
+| **Tailfire-Prod** | `cmktvanwglszgadjrorm` | ca-central-1 | Production |
+
+### Environment Mapping
+
+| Context | Database | Config Source |
+|---------|----------|---------------|
+| `turbo dev` (localhost) | tailfire-Dev | Local `.env` files |
+| `deploy-dev.yml` (tf-demo) | Tailfire-Preview | Doppler `dev` config |
+| `deploy-prod.yml` (production) | Tailfire-Prod | Doppler `prd` config |
+
+### Doppler Configs
+
+| Doppler Config | Target Database | Purpose |
+|----------------|-----------------|---------|
+| `dev` | tailfire-Dev | Local development |
+| `stg` | Tailfire-Preview | CI/CD preview deployments |
+| `prd` | Tailfire-Prod | Production |
+
+### Running Migrations
+
+```bash
+# Local development (tailfire-Dev) - EITHER method works:
+cd apps/api && pnpm db:migrate                    # Uses local .env
+doppler run -p tailfire -c dev -- pnpm db:migrate # Uses Doppler dev
+
+# Preview environment (via CI/CD only)
+# Triggered by pushing to preview branch → deploy-preview.yml
+
+# Production (via CI/CD only)
+# Triggered by merging to main → deploy-prod.yml
+```
 
 ## Storage System (Multi-Provider)
 
@@ -152,30 +256,50 @@ The cruise catalog data is synchronized from Traveltek FTP and uses Foreign Data
 
 ### Architecture
 
-| Environment | Database | Cruise Data Source | Notes |
-|-------------|----------|-------------------|-------|
-| **Local Dev** | tailfire-Dev | Local `catalog` schema | For offline development |
-| **Preview** | Tailfire-Preview | FDW → Prod `catalog` | Reads from production |
-| **Prod** | Tailfire-Prod | Local `catalog` schema | **Source of truth** |
+| Environment | Database | Cruise Data Source | Sync Allowed? |
+|-------------|----------|-------------------|---------------|
+| **Local Dev** | tailfire-Dev | FDW → Prod `catalog` | **NO** |
+| **Preview** | Tailfire-Preview | FDW → Prod `catalog` | **NO** |
+| **Prod** | Tailfire-Prod | Local `catalog` schema | **YES** (CRON at 2 AM) |
 
 ### Data Flow
-- **Production**: Traveltek FTP sync runs daily at 2 AM → populates `catalog.*` tables
-- **Preview**: FDW queries routed to Production → always has current data
-- **Local Dev**: Has local copy for development isolation (may drift from Prod)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PRODUCTION ONLY                               │
+│  Traveltek FTP ──► CRON (2 AM) ──► catalog.* tables             │
+│                    api.tailfire.ca                               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                    FDW (Foreign Data Wrapper)
+                              │
+        ┌─────────────────────┴─────────────────────┐
+        │                                           │
+        ▼                                           ▼
+┌───────────────────┐                   ┌───────────────────┐
+│   LOCAL DEV       │                   │   PREVIEW         │
+│   tailfire-Dev    │                   │   Tailfire-Preview│
+│   (FDW read-only) │                   │   (FDW read-only) │
+└───────────────────┘                   └───────────────────┘
+```
 
 ### Key Points
-- **DO NOT sync cruise data to dev/preview databases** - they should use FDW to production
+- **ONLY Production runs cruise sync** - scheduled CRON at 2 AM Toronto time
+- **Dev and Preview use FDW** - foreign tables that read directly from Production
+- **DO NOT run sync locally** - it will create local tables that break FDW architecture
 - The FDW migration (`20260104205000_setup_catalog_fdw.sql`) auto-detects environment
-- If local `catalog` tables exist, FDW setup is skipped (guard clause)
-- Production has 16 catalog tables; other environments import them as foreign tables
+- Production has 16 local catalog tables; Dev/Preview have 16 foreign tables pointing to Prod
 
-### Sync Endpoints (Protected by Internal API Key)
+### Sync Endpoints (Production Only!)
+
+> **WARNING:** These endpoints must ONLY be called against `api.tailfire.ca` (Production).
+> Never call sync endpoints on localhost or api-dev.tailfire.ca - this breaks the FDW architecture.
+
 ```bash
-# Test connection
+# Test connection (Production only)
 curl https://api.tailfire.ca/api/v1/cruise-import/test-connection \
   -H "x-internal-api-key: <key>"
 
-# Trigger sync
+# Trigger sync (Production only - normally runs via CRON at 2 AM)
 curl -X POST https://api.tailfire.ca/api/v1/cruise-import/sync \
   -H "x-internal-api-key: <key>" \
   -H "Content-Type: application/json" \
@@ -190,3 +314,80 @@ curl https://api.tailfire.ca/api/v1/cruise-import/sync/status \
 - **JWT auth** (admin/client portal): No rate limiting
 - **API key auth** (`x-catalog-api-key`): 30 req/min rate limit
 - Both auth types work for `/cruise-repository/*` endpoints
+
+## Cruise Booking Module (FusionAPI)
+
+Real-time cruise booking via Traveltek FusionAPI. Supports three booking flows:
+
+| Flow | Description |
+|------|-------------|
+| **Agent** | Agent searches, selects cabin, books on behalf of client |
+| **Client Handoff** | Agent searches & holds cabin → Client completes booking |
+| **OTA** | Client self-service search and booking |
+
+### Key Files
+- `apps/api/src/cruise-booking/cruise-booking.controller.ts` - 10 API endpoints
+- `apps/api/src/cruise-booking/services/booking.service.ts` - Booking orchestration
+- `apps/api/src/cruise-booking/services/fusion-api.service.ts` - FusionAPI client
+- `apps/api/src/cruise-booking/services/traveltek-auth.service.ts` - OAuth token management
+
+### Session Tables
+- `cruise_booking_sessions` - Ephemeral FusionAPI session state
+- `cruise_booking_idempotency` - Double-booking prevention (24h TTL)
+
+### Two Expiry Times
+| Expiry | Duration | Purpose |
+|--------|----------|---------|
+| **Session** | 2+ hours | FusionAPI stateful context |
+| **Cabin Hold** | 15-30 min | Inventory reservation |
+
+### Required Environment Variables
+| Variable | Description |
+|----------|-------------|
+| `TRAVELTEK_API_URL` | FusionAPI base URL |
+| `TRAVELTEK_USERNAME` | OAuth client username |
+| `TRAVELTEK_PASSWORD` | OAuth client password |
+| `TRAVELTEK_SID` | Agency session ID |
+
+## Codex Collaboration (tmux)
+
+When collaborating with Codex for plan validation or code review, **USE THE SKILL**:
+
+```
+/validate-with-codex
+```
+
+This skill provides a complete 7-step workflow including:
+1. Prepare the query
+2. Send to Codex (with **CRITICAL** `tmux send-keys -t 1 Enter` step)
+3. Wait for response
+4. Capture the response
+5. Read and analyze
+6. **Loop back to Step 1 if issues found** - iterate until approved
+7. Present summary to user
+
+### Common Use Cases
+- **Plan validation**: Send implementation plans before coding
+- **Security review**: Review credentials, auth flows, API designs
+- **Documentation review**: Validate technical accuracy
+- **Architecture decisions**: Get second opinion on design choices
+
+### Quick Reference (if not using skill)
+```bash
+# Write query
+cat > /tmp/codex_query.txt << 'EOF'
+Your query for Codex...
+EOF
+
+# Send to Codex - ALL STEPS REQUIRED
+tmux load-buffer /tmp/codex_query.txt
+tmux paste-buffer -t 1
+tmux send-keys -t 1 C-m  # <-- CRITICAL: C-m is Ctrl+M (Enter key)
+
+# Wait and capture
+sleep 10
+tmux capture-pane -t 1 -p -S -200 > /tmp/codex_response.txt
+cat /tmp/codex_response.txt
+```
+
+> **Note**: Use `C-m` (Ctrl+M) instead of `Enter` for tmux send-keys. The `Enter` keyword may not work reliably in all terminal configurations.
