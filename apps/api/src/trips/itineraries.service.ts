@@ -4,9 +4,10 @@
  * Business logic for managing trip itineraries.
  */
 
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
+import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common'
 import { eq, and, ne, sql, asc } from 'drizzle-orm'
 import { DatabaseService } from '../db/database.service'
+import { ItineraryDaysService } from './itinerary-days.service'
 import type {
   CreateItineraryDto,
   UpdateItineraryDto,
@@ -16,7 +17,13 @@ import type {
 
 @Injectable()
 export class ItinerariesService {
-  constructor(private readonly db: DatabaseService) {}
+  private readonly logger = new Logger(ItinerariesService.name)
+
+  constructor(
+    private readonly db: DatabaseService,
+    @Inject(forwardRef(() => ItineraryDaysService))
+    private readonly itineraryDaysService: ItineraryDaysService,
+  ) {}
 
   /**
    * Create a new itinerary for a trip
@@ -81,6 +88,33 @@ export class ItinerariesService {
         sequenceOrder: dto.sequenceOrder || 0,
       })
       .returning()
+
+    if (!itinerary) {
+      throw new Error('Failed to create itinerary')
+    }
+
+    // Auto-generate days if itinerary has both start and end dates
+    if (dto.startDate && dto.endDate) {
+      try {
+        await this.itineraryDaysService.autoGenerate({
+          itineraryId: itinerary.id,
+          includePreTravelDay: false,
+        })
+        this.logger.log({
+          message: 'Auto-generated itinerary days on creation',
+          itineraryId: itinerary.id,
+          startDate: dto.startDate,
+          endDate: dto.endDate,
+        })
+      } catch (error) {
+        // Log but don't fail itinerary creation if day generation fails
+        this.logger.warn({
+          message: 'Failed to auto-generate itinerary days',
+          itineraryId: itinerary.id,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        })
+      }
+    }
 
     return this.mapToResponseDto(itinerary)
   }
