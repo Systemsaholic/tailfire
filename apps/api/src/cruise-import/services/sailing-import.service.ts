@@ -122,7 +122,11 @@ export class SailingImportService {
     }
     const sailDate = new Date(data.saildate)
     const endDate = new Date(sailDate)
-    endDate.setDate(endDate.getDate() + data.nights)
+    // IMPORTANT: Coerce nights to number to prevent string concatenation bug
+    // If nights comes as string "7" from JSON, getDate() + "7" = "257" (string concat)
+    // which sets date to day 257 of the year instead of adding 7 days
+    const nightsNum = Number(data.nights) || 0
+    endDate.setDate(endDate.getDate() + nightsNum)
     const endDateStr = endDate.toISOString().split('T')[0] ?? ''
 
     // Perform atomic upsert
@@ -159,8 +163,8 @@ export class SailingImportService {
           name: data.name || `Cruise ${providerIdentifier}`,
           sailDate: data.saildate,
           endDate: endDateStr,
-          nights: data.nights,
-          seaDays: data.seadays ?? null,
+          nights: nightsNum,
+          seaDays: data.seadays != null ? Number(data.seadays) : null,
           voyageCode: data.voyagecode ?? null,
           // Market and flight data (dedicated columns)
           marketId: data.marketid ?? null,
@@ -181,8 +185,8 @@ export class SailingImportService {
             name: data.name || `Cruise ${providerIdentifier}`,
             sailDate: data.saildate,
             endDate: endDateStr,
-            nights: data.nights,
-            seaDays: data.seadays ?? null,
+            nights: nightsNum,
+            seaDays: data.seadays != null ? Number(data.seadays) : null,
             voyageCode: data.voyagecode ?? null,
             // Market and flight data (dedicated columns)
             marketId: data.marketid ?? null,

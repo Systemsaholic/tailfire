@@ -435,6 +435,16 @@ function normalizeTimeString(time: string | null | undefined, defaultValue: stri
 }
 
 /**
+ * Compute arrival date from sail date and number of nights
+ * This is more reliable than using the catalog's endDate which may be corrupted
+ */
+function computeArrivalDate(sailDate: string, nights: number): string {
+  const date = new Date(sailDate + 'T00:00:00')
+  date.setDate(date.getDate() + nights)
+  return date.toISOString().split('T')[0]!
+}
+
+/**
  * Map sailing detail to CreateCustomCruiseActivityDto
  */
 export function mapSailingToCustomCruise(
@@ -446,6 +456,9 @@ export function mapSailingToCustomCruise(
     ?? sailing.priceSummary.cheapestOceanview
     ?? sailing.priceSummary.cheapestBalcony
     ?? sailing.priceSummary.cheapestSuite
+
+  // Compute arrival date from sailDate + nights (more reliable than catalog endDate)
+  const arrivalDate = computeArrivalDate(sailing.sailDate, sailing.nights)
 
   // Build port calls JSON from itinerary
   // Note: portId from catalog is a UUID string, not an integer
@@ -497,7 +510,7 @@ export function mapSailingToCustomCruise(
     departureTime: sailing.itinerary[0]?.departureTime ?? '16:00',
     arrivalPort: sailing.disembarkPort?.name ?? sailing.disembarkPortName,
     arrivalPortId: sailing.disembarkPort?.id,
-    arrivalDate: sailing.endDate,
+    arrivalDate, // Computed from sailDate + nights (more reliable than catalog endDate)
     arrivalTime: sailing.itinerary[sailing.itinerary.length - 1]?.arrivalTime ?? '10:00',
     portCallsJson,
     cabinPricingJson,
@@ -510,7 +523,7 @@ export function mapSailingToCustomCruise(
     name: `${sailing.nights} Night ${sailing.regions[0]?.name ?? 'Cruise'}`,
     description: sailing.name,
     startDatetime: `${sailing.sailDate}T${normalizeTimeString(customCruiseDetails.departureTime, '16:00:00')}`,
-    endDatetime: `${sailing.endDate}T${normalizeTimeString(customCruiseDetails.arrivalTime, '10:00:00')}`,
+    endDatetime: `${arrivalDate}T${normalizeTimeString(customCruiseDetails.arrivalTime, '10:00:00')}`,
     timezone: 'UTC', // Would need port timezone from API
     location: sailing.embarkPort?.name ?? sailing.embarkPortName,
     status: 'proposed',
@@ -571,7 +584,8 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
           itineraryId,
           customCruiseDetails: {
             departureDate: cruiseData.customCruiseDetails?.departureDate || sailing.sailDate,
-            arrivalDate: cruiseData.customCruiseDetails?.arrivalDate || sailing.endDate,
+            // Use cruiseData arrivalDate (computed from sailDate + nights) - don't fall back to sailing.endDate which may be corrupted
+            arrivalDate: cruiseData.customCruiseDetails?.arrivalDate || computeArrivalDate(sailing.sailDate, sailing.nights),
             portCallsJson: cruiseData.customCruiseDetails?.portCallsJson,
             departurePort: cruiseData.customCruiseDetails?.departurePort,
             arrivalPort: cruiseData.customCruiseDetails?.arrivalPort,
@@ -664,6 +678,8 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
       const sailDate = sailing.sailDate // ISO date string e.g. "2025-03-15"
 
       // Create optimistic cruise activity
+      // Compute arrival date from sailDate + nights (don't use sailing.endDate which may be corrupted)
+      const optimisticArrivalDate = computeArrivalDate(sailing.sailDate, sailing.nights)
       const optimisticCruise: ActivityResponseDto = {
         id: `temp-cruise-${Date.now()}`,
         itineraryDayId: '', // Will be set when we find/create the day
@@ -674,7 +690,7 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
         description: sailing.name,
         sequenceOrder: 0,
         startDatetime: `${sailing.sailDate}T16:00:00`,
-        endDatetime: `${sailing.endDate}T10:00:00`,
+        endDatetime: `${optimisticArrivalDate}T10:00:00`,
         timezone: 'UTC',
         location: sailing.embarkPort?.name ?? sailing.embarkPortName ?? null,
         address: null,
