@@ -115,6 +115,10 @@ export class ImportOrchestratorService {
       this.cache.resetStats()
       this.sailingImporter.resetStubsCreated()
 
+      // Force fresh FTP connection to avoid stale connection issues
+      // This fixes the "0 files found" bug caused by reusing stale persistent connections
+      await this.ftpService.forceReconnect()
+
       // 1. List files from FTP (with cancellation support)
       this.logger.log('Listing files from FTP...')
       const optionsWithCancel: FtpSyncOptions = {

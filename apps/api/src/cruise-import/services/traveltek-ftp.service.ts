@@ -253,6 +253,23 @@ export class TraveltekFtpService implements OnModuleDestroy {
   }
 
   /**
+   * Force a fresh FTP connection by closing any existing connection first.
+   * Use this at the start of sync operations to avoid stale connections.
+   */
+  async forceReconnect(): Promise<void> {
+    this.logger.log('Forcing fresh FTP connection...')
+    if (this.client) {
+      try {
+        this.client.close()
+      } catch {
+        // Ignore close errors on stale client
+      }
+      this.client = null
+    }
+    await this.connect()
+  }
+
+  /**
    * Initialize the connection pool for parallel downloads.
    * Call this before running concurrent file downloads.
    */
