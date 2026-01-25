@@ -10,6 +10,7 @@ import {
   Ship,
   Calendar,
   Check,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   Dialog,
@@ -38,6 +39,43 @@ interface AddToTripDialogProps {
 }
 
 type Step = 'select-trip' | 'select-itinerary'
+
+/**
+ * Check if cruise dates fit within itinerary dates
+ * Returns true if the cruise can be added to the itinerary
+ */
+function checkDatesCompatible(
+  cruiseSailDate: string,
+  cruiseEndDate: string,
+  itineraryStartDate: string | null | undefined,
+  itineraryEndDate: string | null | undefined
+): { compatible: boolean; reason?: string } {
+  // If itinerary has no dates, it's compatible (dates will be set from cruise)
+  if (!itineraryStartDate || !itineraryEndDate) {
+    return { compatible: true }
+  }
+
+  const cruiseStart = new Date(cruiseSailDate + 'T00:00:00')
+  const cruiseEnd = new Date(cruiseEndDate + 'T00:00:00')
+  const itinStart = new Date(itineraryStartDate + 'T00:00:00')
+  const itinEnd = new Date(itineraryEndDate + 'T00:00:00')
+
+  if (cruiseStart < itinStart) {
+    return {
+      compatible: false,
+      reason: `Cruise departs before itinerary starts (${itineraryStartDate})`,
+    }
+  }
+
+  if (cruiseEnd > itinEnd) {
+    return {
+      compatible: false,
+      reason: `Cruise returns after itinerary ends (${itineraryEndDate})`,
+    }
+  }
+
+  return { compatible: true }
+}
 
 export function AddToTripDialog({
   sailing,
@@ -124,9 +162,21 @@ export function AddToTripDialog({
   }
 
   const isAddingCruise = createItineraryMutation.isPending || addCruiseMutation.isPending
+
+  // Check if selected itinerary is date-compatible
+  const selectedItinerary = itineraries?.find((i) => i.id === selectedItineraryId)
+  const selectedItineraryDateCheck = selectedItinerary
+    ? checkDatesCompatible(
+        sailing.sailDate,
+        sailing.endDate,
+        selectedItinerary.startDate,
+        selectedItinerary.endDate
+      )
+    : { compatible: true }
+
   const canProceed = createNewItinerary
     ? newItineraryName.trim().length > 0
-    : !!selectedItineraryId
+    : !!selectedItineraryId && selectedItineraryDateCheck.compatible
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -136,9 +186,16 @@ export function AddToTripDialog({
             {step === 'select-trip' ? 'Add to Trip' : 'Select Itinerary'}
           </DialogTitle>
           <DialogDescription>
-            {step === 'select-trip'
-              ? 'Select a trip to add this cruise to'
-              : 'Choose an existing itinerary or create a new one'}
+            {step === 'select-trip' ? (
+              'Select a trip to add this cruise to'
+            ) : (
+              <>
+                Choose an existing itinerary or create a new one.
+                <span className="block mt-1 text-tern-teal-600 font-medium">
+                  Cruise dates: {format(parseISO(sailing.sailDate), 'MMM d')} - {format(parseISO(sailing.endDate), 'MMM d, yyyy')}
+                </span>
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -244,37 +301,73 @@ export function AddToTripDialog({
                     <Label className="text-xs text-tern-gray-500 uppercase tracking-wide">
                       Existing Itineraries
                     </Label>
-                    {itineraries.map((itinerary) => (
-                      <div
-                        key={itinerary.id}
-                        className={cn(
-                          'flex items-center space-x-3 p-3 rounded-lg border cursor-pointer transition-colors',
-                          selectedItineraryId === itinerary.id
-                            ? 'border-tern-teal-500 bg-tern-teal-50'
-                            : 'hover:bg-tern-gray-50'
-                        )}
-                        onClick={() => {
-                          setCreateNewItinerary(false)
-                          setSelectedItineraryId(itinerary.id)
-                        }}
-                      >
-                        <RadioGroupItem value={itinerary.id} id={itinerary.id} />
-                        <div className="flex-1">
-                          <Label
-                            htmlFor={itinerary.id}
-                            className="font-medium text-sm cursor-pointer"
-                          >
-                            {itinerary.name}
-                          </Label>
-                          <p className="text-xs text-tern-gray-500 mt-0.5">
-                            {itinerary.status} • {itinerary.isSelected ? 'Selected' : 'Not selected'}
-                          </p>
+                    {itineraries.map((itinerary) => {
+                      const dateCheck = checkDatesCompatible(
+                        sailing.sailDate,
+                        sailing.endDate,
+                        itinerary.startDate,
+                        itinerary.endDate
+                      )
+                      const isIncompatible = !dateCheck.compatible
+
+                      return (
+                        <div
+                          key={itinerary.id}
+                          className={cn(
+                            'flex items-start space-x-3 p-3 rounded-lg border transition-colors',
+                            isIncompatible
+                              ? 'opacity-60 border-amber-300 bg-amber-50 cursor-not-allowed'
+                              : selectedItineraryId === itinerary.id
+                              ? 'border-tern-teal-500 bg-tern-teal-50 cursor-pointer'
+                              : 'hover:bg-tern-gray-50 cursor-pointer'
+                          )}
+                          onClick={() => {
+                            if (!isIncompatible) {
+                              setCreateNewItinerary(false)
+                              setSelectedItineraryId(itinerary.id)
+                            }
+                          }}
+                        >
+                          <RadioGroupItem
+                            value={itinerary.id}
+                            id={itinerary.id}
+                            disabled={isIncompatible}
+                            className="mt-0.5"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <Label
+                              htmlFor={itinerary.id}
+                              className={cn(
+                                'font-medium text-sm',
+                                isIncompatible ? 'cursor-not-allowed' : 'cursor-pointer'
+                              )}
+                            >
+                              {itinerary.name}
+                            </Label>
+                            <p className="text-xs text-tern-gray-500 mt-0.5">
+                              {itinerary.startDate && itinerary.endDate ? (
+                                <>
+                                  {format(parseISO(itinerary.startDate), 'MMM d')} - {format(parseISO(itinerary.endDate), 'MMM d, yyyy')}
+                                  <span className="mx-1">•</span>
+                                </>
+                              ) : (
+                                <span className="text-tern-gray-400">No dates set • </span>
+                              )}
+                              {itinerary.status}
+                            </p>
+                            {isIncompatible && (
+                              <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                                <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                                <span>{dateCheck.reason}</span>
+                              </p>
+                            )}
+                          </div>
+                          {!isIncompatible && itinerary.isSelected && (
+                            <Check className="h-4 w-4 text-tern-teal-600 flex-shrink-0" />
+                          )}
                         </div>
-                        {itinerary.isSelected && (
-                          <Check className="h-4 w-4 text-tern-teal-600" />
-                        )}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
 
@@ -304,6 +397,9 @@ export function AddToTripDialog({
                         <Plus className="h-3.5 w-3.5" />
                         Create new itinerary
                       </Label>
+                      <p className="text-xs text-tern-gray-500 mt-0.5">
+                        Will use cruise dates: {format(parseISO(sailing.sailDate), 'MMM d')} - {format(parseISO(sailing.endDate), 'MMM d, yyyy')}
+                      </p>
                       {createNewItinerary && (
                         <Input
                           placeholder="Itinerary name"
