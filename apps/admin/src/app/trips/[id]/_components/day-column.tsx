@@ -25,12 +25,18 @@ import { ActivityTypeSelector } from './activity-type-selector'
 import { getActivityTypeMetadata, filterItineraryActivities, type UIActivityType } from '@/lib/activity-constants'
 import { useActivityNavigation } from '@/hooks/use-activity-navigation'
 
+import type { ActivityResponseDto } from '@tailfire/shared-types/api'
+
 interface DayColumnProps {
   day: ItineraryDayWithActivitiesDto
   itineraryId: string
+  /** Pre-filtered activities (excluding spanning activities) */
+  filteredActivities?: ActivityResponseDto[]
+  /** Hide the header (rendered separately in DayHeadersRow) */
+  hideHeader?: boolean
 }
 
-export function DayColumn({ day, itineraryId }: DayColumnProps) {
+export function DayColumn({ day, itineraryId, filteredActivities, hideHeader }: DayColumnProps) {
   const router = useRouter()
   const params = useParams<{ id: string }>()
   const [showEditModal, setShowEditModal] = useState(false)
@@ -45,8 +51,8 @@ export function DayColumn({ day, itineraryId }: DayColumnProps) {
     },
   })
 
-  // Filter out packages - they belong in Bookings tab, not itinerary
-  const activities = filterItineraryActivities(day.activities)
+  // Use pre-filtered activities if provided, otherwise filter out packages
+  const activities = filteredActivities ?? filterItineraryActivities(day.activities)
 
   // Format date for display (e.g., "Wed, Sep 9")
   // Uses parseISODate to avoid TZ shift when parsing date-only strings
@@ -86,41 +92,43 @@ export function DayColumn({ day, itineraryId }: DayColumnProps) {
   return (
     <>
       <div className={cn(COLUMN_WIDTH, ITINERARY_CARD_STYLES, 'p-0')}>
-        {/* Day Header */}
-        <div className="group p-3 border-b border-tern-gray-200">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="font-medium text-sm text-tern-gray-900">
-                  {dayHeaderTitle}
-                </p>
-                <TernBadge variant="secondary">
-                  {activities.length}
-                </TernBadge>
+        {/* Day Header - only shown when not using separate DayHeadersRow */}
+        {!hideHeader && (
+          <div className="group p-3 border-b border-tern-gray-200">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-sm text-tern-gray-900">
+                    {dayHeaderTitle}
+                  </p>
+                  <TernBadge variant="secondary">
+                    {activities.length}
+                  </TernBadge>
+                </div>
+                {day.title && (
+                  <p
+                    className="text-xs text-tern-gray-500 truncate mt-0.5"
+                    title={day.title}
+                  >
+                    {day.title}
+                  </p>
+                )}
               </div>
-              {day.title && (
-                <p
-                  className="text-xs text-tern-gray-500 truncate mt-0.5"
-                  title={day.title}
-                >
-                  {day.title}
-                </p>
-              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowEditModal(true)}
+                aria-label="Edit day"
+                className={cn(
+                  'h-6 w-6 p-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity',
+                  FOCUS_VISIBLE_RING
+                )}
+              >
+                <Pencil className="h-3.5 w-3.5 text-tern-gray-500" />
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowEditModal(true)}
-              aria-label="Edit day"
-              className={cn(
-                'h-6 w-6 p-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity',
-                FOCUS_VISIBLE_RING
-              )}
-            >
-              <Pencil className="h-3.5 w-3.5 text-tern-gray-500" />
-            </Button>
           </div>
-        </div>
+        )}
 
         {/* Drop Zone for Activities */}
         <div
@@ -168,13 +176,15 @@ export function DayColumn({ day, itineraryId }: DayColumnProps) {
         </div>
       </div>
 
-      {/* Day Edit Modal */}
-      <DayEditModal
-        day={day}
-        itineraryId={itineraryId}
-        open={showEditModal}
-        onOpenChange={setShowEditModal}
-      />
+      {/* Day Edit Modal - only when header is shown (otherwise modal is in DayHeadersRow) */}
+      {!hideHeader && (
+        <DayEditModal
+          day={day}
+          itineraryId={itineraryId}
+          open={showEditModal}
+          onOpenChange={setShowEditModal}
+        />
+      )}
     </>
   )
 }

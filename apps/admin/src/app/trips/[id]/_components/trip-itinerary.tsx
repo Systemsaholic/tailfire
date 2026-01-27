@@ -243,7 +243,7 @@ export function TripItinerary({ trip }: TripItineraryProps) {
         // Find the target day to get its date for display
         const targetDay = days?.find((d) => d.id === targetDayId)
 
-        const returnUrl = `/trips/${trip.id}`
+        const returnUrl = `/trips/${trip.id}?tab=itinerary`
         const params = new URLSearchParams({
           itineraryId: selectedItinerary.id,
           dayId: targetDayId,
@@ -268,7 +268,7 @@ export function TripItinerary({ trip }: TripItineraryProps) {
           return
         }
 
-        const returnUrl = `/trips/${trip.id}`
+        const returnUrl = `/trips/${trip.id}?tab=itinerary`
         const params = new URLSearchParams({
           tripId: trip.id,
           dayId: targetDayId,
@@ -343,7 +343,7 @@ export function TripItinerary({ trip }: TripItineraryProps) {
           return
         }
 
-        const returnUrl = `/trips/${trip.id}`
+        const returnUrl = `/trips/${trip.id}?tab=itinerary`
         const params = new URLSearchParams({
           itineraryId: selectedItinerary.id,
           dayId: firstDay.id,
@@ -378,7 +378,7 @@ export function TripItinerary({ trip }: TripItineraryProps) {
           })
           return
         }
-        const returnUrl = `/trips/${trip.id}`
+        const returnUrl = `/trips/${trip.id}?tab=itinerary`
         const params = new URLSearchParams({
           tripId: trip.id,
           dayId: firstDay.id,

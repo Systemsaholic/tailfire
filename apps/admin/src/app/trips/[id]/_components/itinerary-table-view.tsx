@@ -49,6 +49,8 @@ import { ActivityIconBadge } from '@/components/ui/activity-icon-badge'
 import { parseISODate } from '@/lib/date-utils'
 import { formatCurrency } from '@/lib/pricing/currency-helpers'
 import { useActivityNavigation } from '@/hooks/use-activity-navigation'
+import { useSpanningActivities } from '@/hooks/use-spanning-activities'
+import { isSpanningActivity, getActivityNights } from '@/lib/spanning-activity-utils'
 
 interface ItineraryTableViewProps {
   trip: TripResponseDto
@@ -194,20 +196,59 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
     }
   }
 
+  // Process spanning activities
+  const { spanningActivities } = useSpanningActivities(daysWithActivities || [])
+
+  // Build a map of activity IDs to their spanning info
+  const spanningActivityMap = useMemo(() => {
+    const map = new Map<string, {
+      spannedDayIds: string[]
+      totalNights: number | null
+    }>()
+    for (const spanning of spanningActivities) {
+      map.set(spanning.id, {
+        spannedDayIds: spanning.spannedDayIds,
+        totalNights: getActivityNights(spanning),
+      })
+    }
+    return map
+  }, [spanningActivities])
+
   // Flatten activities with day info for table rows (filter out packages - they belong in Bookings tab)
   const tableRows = useMemo(() => {
     if (!daysWithActivities) return []
 
     return daysWithActivities.flatMap((day) =>
-      filterItineraryActivities(day.activities).map((activity) => ({
-        dayId: day.id,
-        dayNumber: day.dayNumber,
-        dayDate: day.date,
-        dayTitle: day.title,
-        activity,
-      }))
+      filterItineraryActivities(day.activities).map((activity) => {
+        const spanningInfo = spanningActivityMap.get(activity.id)
+        const isActivitySpanning = isSpanningActivity(activity)
+
+        // Determine the position within the span (first, middle, last)
+        let spanPosition: 'first' | 'middle' | 'last' | null = null
+        if (isActivitySpanning && spanningInfo) {
+          const dayIndex = spanningInfo.spannedDayIds.indexOf(day.id)
+          if (dayIndex === 0) {
+            spanPosition = 'first'
+          } else if (dayIndex === spanningInfo.spannedDayIds.length - 1) {
+            spanPosition = 'last'
+          } else if (dayIndex > 0) {
+            spanPosition = 'middle'
+          }
+        }
+
+        return {
+          dayId: day.id,
+          dayNumber: day.dayNumber,
+          dayDate: day.date,
+          dayTitle: day.title,
+          activity,
+          isSpanning: isActivitySpanning,
+          spanPosition,
+          spanningInfo,
+        }
+      })
     )
-  }, [daysWithActivities])
+  }, [daysWithActivities, spanningActivityMap])
 
   if (isLoading) {
     return (
@@ -301,19 +342,32 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
               <TableRow
                 key={`${row.dayId}-${row.activity.id}`}
                 tabIndex={0}
-                aria-label={`${row.activity.name} on Day ${row.dayNumber}`}
+                aria-label={`${row.activity.name} on Day ${row.dayNumber}${row.isSpanning ? ` (spans ${row.spanningInfo?.totalNights || 'multiple'} nights)` : ''}`}
                 className={cn(
                   'hover:bg-tern-gray-50 cursor-pointer transition-colors',
                   FOCUS_VISIBLE_RING,
-                  showDayInfo && index > 0 && 'border-t-2 border-tern-gray-200'
+                  showDayInfo && index > 0 && 'border-t-2 border-tern-gray-200',
+                  row.isSpanning && 'bg-tern-teal-25/50'
                 )}
                 onClick={() => handleRowClick(row.activity.id, row.dayId)}
                 onKeyDown={(e) => e.key === 'Enter' && handleRowClick(row.activity.id, row.dayId)}
               >
-                {/* Day Column */}
-                <TableCell className="py-2">
+                {/* Day Column with Spanning Indicator */}
+                <TableCell className="py-2 relative">
+                  {/* Spanning activity connector line */}
+                  {row.isSpanning && row.spanPosition && (
+                    <div
+                      className={cn(
+                        'absolute left-0 w-1 bg-tern-teal-400',
+                        row.spanPosition === 'first' && 'top-1/2 bottom-0 rounded-t',
+                        row.spanPosition === 'middle' && 'top-0 bottom-0',
+                        row.spanPosition === 'last' && 'top-0 bottom-1/2 rounded-b'
+                      )}
+                      aria-hidden="true"
+                    />
+                  )}
                   {showDayInfo ? (
-                    <div className="flex flex-col">
+                    <div className="flex flex-col pl-2">
                       <span className="font-medium text-xs text-tern-gray-900">Day {row.dayNumber}</span>
                       {row.dayDate && (
                         <span className="text-xs text-tern-gray-500">
@@ -321,7 +375,9 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
                         </span>
                       )}
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="pl-2" />
+                  )}
                 </TableCell>
 
                 {/* Type Column */}
@@ -364,19 +420,27 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
 
                 {/* Time Column */}
                 <TableCell className="py-2">
-                  {row.activity.startDatetime ? (
-                    <div className="flex items-center gap-1 text-xs text-tern-gray-700">
-                      <Clock className="h-3 w-3 text-tern-gray-400" />
-                      <span>
-                        {formatTime(row.activity.startDatetime)}
-                        {row.activity.endDatetime && (
-                          <> - {formatTime(row.activity.endDatetime)}</>
-                        )}
+                  <div className="flex flex-col gap-0.5">
+                    {row.activity.startDatetime ? (
+                      <div className="flex items-center gap-1 text-xs text-tern-gray-700">
+                        <Clock className="h-3 w-3 text-tern-gray-400" />
+                        <span>
+                          {formatTime(row.activity.startDatetime)}
+                          {row.activity.endDatetime && !row.isSpanning && (
+                            <> - {formatTime(row.activity.endDatetime)}</>
+                          )}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-tern-gray-400">-</span>
+                    )}
+                    {/* Show duration badge for spanning activities */}
+                    {row.isSpanning && row.spanPosition === 'first' && row.spanningInfo?.totalNights && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-tern-teal-100 text-tern-teal-800 w-fit">
+                        {row.spanningInfo.totalNights} Night{row.spanningInfo.totalNights > 1 ? 's' : ''}
                       </span>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-tern-gray-400">-</span>
-                  )}
+                    )}
+                  </div>
                 </TableCell>
 
                 {/* Location Column */}

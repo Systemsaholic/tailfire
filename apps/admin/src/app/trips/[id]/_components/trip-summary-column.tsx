@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { FileText, Pencil } from 'lucide-react'
 import type { ItineraryDayWithActivitiesDto, ItineraryResponseDto } from '@tailfire/shared-types/api'
 import { cn } from '@/lib/utils'
@@ -16,8 +16,9 @@ import {
 import { Button } from '@/components/ui/button'
 import { useDroppable } from '@dnd-kit/core'
 import { ActivitySummaryItem } from './activity-summary-item'
-import { filterItineraryActivities } from '@/lib/activity-constants'
 import { EditItineraryDialog } from './edit-itinerary-dialog'
+import { useSpanningActivities } from '@/hooks/use-spanning-activities'
+import type { ActivityWithSpan } from '@/lib/spanning-activity-utils'
 
 interface TripSummaryColumnProps {
   days: ItineraryDayWithActivitiesDto[]
@@ -38,14 +39,64 @@ export function TripSummaryColumn({ days, tripId, tripStartDate, tripEndDate, it
     },
   })
 
-  // Collect all activities from all days (filter out packages - they belong in Bookings tab)
-  const allActivities = days.flatMap((day) =>
-    filterItineraryActivities(day.activities).map((activity) => ({
-      ...activity,
-      dayId: day.id,
-      dayDate: day.date,
-    }))
-  )
+  // Process spanning activities
+  const { spanningActivities, dayActivities } = useSpanningActivities(days)
+
+  // Build a map of dayId -> spanning activities that are continuing through this day
+  // (not starting, just continuing from a previous day)
+  const continuingSpansByDay = useMemo(() => {
+    const map = new Map<string, ActivityWithSpan[]>()
+    for (const spanning of spanningActivities) {
+      // For each day the activity spans (except the first/start day), mark it as continuing
+      for (let i = 1; i < spanning.spannedDayIds.length; i++) {
+        const dayId = spanning.spannedDayIds[i]
+        if (dayId) {
+          const existing = map.get(dayId) || []
+          existing.push(spanning)
+          map.set(dayId, existing)
+        }
+      }
+    }
+    return map
+  }, [spanningActivities])
+
+  // Collect activities organized by day, including spanning activities at their start day
+  const activitiesByDay = useMemo(() => {
+    const result: Array<{
+      dayId: string
+      day: ItineraryDayWithActivitiesDto
+      activities: Array<{ activity: typeof days[0]['activities'][0]; dayId: string; dayDate: string | null }>
+      spanningStarts: ActivityWithSpan[]
+      continuingSpans: ActivityWithSpan[]
+    }> = []
+
+    for (const day of days) {
+      // Get non-spanning activities for this day
+      const nonSpanning = dayActivities.get(day.id) || []
+
+      // Get spanning activities that START on this day
+      const spanningStarts = spanningActivities.filter(
+        (s) => s.spannedDayIds[0] === day.id
+      )
+
+      // Get spanning activities that are CONTINUING through this day
+      const continuingSpans = continuingSpansByDay.get(day.id) || []
+
+      result.push({
+        dayId: day.id,
+        day,
+        activities: nonSpanning.map((a) => ({
+          activity: a,
+          dayId: day.id,
+          dayDate: day.date,
+        })),
+        spanningStarts,
+        continuingSpans,
+      })
+    }
+
+    return result
+  }, [days, dayActivities, spanningActivities, continuingSpansByDay])
 
   return (
     <div className={cn(SUMMARY_COLUMN_WIDTH, ITINERARY_CARD_STYLES, 'p-0 bg-tern-gray-50/50')}>
@@ -89,7 +140,7 @@ export function TripSummaryColumn({ days, tripId, tripStartDate, tripEndDate, it
           isOver ? DROP_ZONE_ACTIVE : DROP_ZONE_INACTIVE
         )}
       >
-        {allActivities.length === 0 ? (
+        {activitiesByDay.every(d => d.activities.length === 0 && d.spanningStarts.length === 0) ? (
           <div className="text-center py-8">
             <FileText className="h-8 w-8 text-tern-gray-300 mx-auto mb-2" />
             <p className="text-xs text-tern-gray-500">No activities yet</p>
@@ -99,25 +150,68 @@ export function TripSummaryColumn({ days, tripId, tripStartDate, tripEndDate, it
           </div>
         ) : (
           <div className="space-y-2">
-            {/* Flat list of all activities with subtle day indicators */}
-            {allActivities.map((activity, index) => {
-              // Show day label only when day changes
-              const prevActivity = allActivities[index - 1]
-              const showDayLabel = index === 0 || prevActivity?.dayId !== activity.dayId
-              const day = days.find(d => d.id === activity.dayId)
+            {activitiesByDay.map(({ dayId, day, activities, spanningStarts, continuingSpans }) => {
+              const hasContent = activities.length > 0 || spanningStarts.length > 0 || continuingSpans.length > 0
+
+              if (!hasContent) return null
 
               return (
-                <div key={activity.id}>
-                  {showDayLabel && day && (
-                    <p className="text-[10px] font-medium text-tern-gray-400 uppercase tracking-wide mb-1 mt-2 first:mt-0">
-                      {day.title || `Day ${day.dayNumber}`}
-                    </p>
-                  )}
-                  <ActivitySummaryItem
-                    itineraryId={itinerary.id}
-                    activity={activity}
-                    dayId={activity.dayId}
-                  />
+                <div key={dayId}>
+                  {/* Day label */}
+                  <p className="text-[10px] font-medium text-tern-gray-400 uppercase tracking-wide mb-1 mt-2 first:mt-0">
+                    {day.title || `Day ${day.dayNumber}`}
+                  </p>
+
+                  {/* Spanning activities that START on this day */}
+                  {spanningStarts.map((spanning) => (
+                    <div key={spanning.id} className="relative">
+                      <ActivitySummaryItem
+                        itineraryId={itinerary.id}
+                        activity={spanning}
+                        dayId={dayId}
+                      />
+                      {/* Vertical line indicator extending down */}
+                      <div
+                        className="absolute left-3 top-full w-0.5 bg-tern-teal-300"
+                        style={{ height: '8px' }}
+                        aria-hidden="true"
+                      />
+                    </div>
+                  ))}
+
+                  {/* Continuation lines for spanning activities that continue through this day */}
+                  {continuingSpans.map((spanning) => {
+                    const isLastDay = spanning.spannedDayIds[spanning.spannedDayIds.length - 1] === dayId
+                    return (
+                      <div
+                        key={`continuing-${spanning.id}`}
+                        className="relative flex items-center gap-2 py-1 px-2"
+                      >
+                        {/* Vertical continuation line */}
+                        <div
+                          className={cn(
+                            'w-0.5 bg-tern-teal-300 flex-shrink-0',
+                            isLastDay ? 'h-2 rounded-b' : 'h-full min-h-[16px]'
+                          )}
+                          aria-hidden="true"
+                        />
+                        {/* Dotted continuation indicator */}
+                        <span className="text-[10px] text-tern-gray-400 italic truncate">
+                          {spanning.name} {isLastDay ? '(ends)' : '(continues)'}
+                        </span>
+                      </div>
+                    )
+                  })}
+
+                  {/* Regular non-spanning activities */}
+                  {activities.map(({ activity }) => (
+                    <ActivitySummaryItem
+                      key={activity.id}
+                      itineraryId={itinerary.id}
+                      activity={activity}
+                      dayId={dayId}
+                    />
+                  ))}
                 </div>
               )
             })}
