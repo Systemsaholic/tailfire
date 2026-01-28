@@ -36,6 +36,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useDeleteActivity } from '@/hooks/use-activities'
 import { ActivityIconBadge } from '@/components/ui/activity-icon-badge'
 import { useActivityNavigation } from '@/hooks/use-activity-navigation'
+import type { CruiseColorSet } from '@/lib/cruise-color-utils'
 
 interface SpanningActivityBarProps {
   activity: ActivityWithSpan
@@ -44,6 +45,8 @@ interface SpanningActivityBarProps {
   gridColumnStart: number
   /** Number of columns to span */
   gridColumnSpan: number
+  /** Optional cruise color override (replaces default teal) */
+  cruiseColor?: CruiseColorSet
 }
 
 /**
@@ -62,6 +65,7 @@ export function SpanningActivityBar({
   itineraryId,
   gridColumnStart,
   gridColumnSpan,
+  cruiseColor,
 }: SpanningActivityBarProps) {
   const router = useRouter()
   const params = useParams<{ id: string }>()
@@ -128,13 +132,16 @@ export function SpanningActivityBar({
         aria-label={`Spanning activity: ${activity.name}${durationLabel ? `, ${durationLabel}` : ''}`}
         className={cn(
           'group relative flex items-center gap-2 px-3 py-2',
-          'bg-gradient-to-r from-tern-teal-50 to-tern-teal-25 border border-tern-teal-200 rounded-lg',
-          'hover:border-tern-teal-300 hover:shadow-sm transition-all',
+          'bg-gradient-to-r border rounded-lg',
+          cruiseColor
+            ? `${cruiseColor.bgGradient} ${cruiseColor.border} ${cruiseColor.borderHover}`
+            : 'from-tern-teal-50 to-tern-teal-25 border-tern-teal-200 hover:border-tern-teal-300',
+          'hover:shadow-sm transition-all',
           FOCUS_VISIBLE_RING
         )}
       >
         {/* Sticky container for image, name, badges, and actions - visible when scrolling */}
-        <div className="sticky left-3 flex items-center gap-2 bg-gradient-to-r from-tern-teal-50 via-tern-teal-50/95 to-tern-teal-50/0 pr-6 z-10 rounded-l-md">
+        <div className={cn("sticky left-3 flex items-center gap-2 bg-gradient-to-r pr-6 z-10 rounded-l-md", cruiseColor ? cruiseColor.stickyGradient : 'from-tern-teal-50 via-tern-teal-50/95 to-tern-teal-50/0')}>
           {/* Activity Thumbnail or Icon */}
           {activity.thumbnail ? (
             <div className="relative w-8 h-8 rounded-md overflow-hidden flex-shrink-0 border border-tern-teal-200">
@@ -163,7 +170,7 @@ export function SpanningActivityBar({
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-tern-teal-100 text-tern-teal-800 flex-shrink-0">
+                  <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium flex-shrink-0", cruiseColor ? cruiseColor.badge : 'bg-tern-teal-100 text-tern-teal-800')}>
                     {durationLabel}
                   </span>
                 </TooltipTrigger>

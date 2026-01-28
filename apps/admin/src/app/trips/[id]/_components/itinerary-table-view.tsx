@@ -51,6 +51,7 @@ import { formatCurrency } from '@/lib/pricing/currency-helpers'
 import { useActivityNavigation } from '@/hooks/use-activity-navigation'
 import { useSpanningActivities } from '@/hooks/use-spanning-activities'
 import { isSpanningActivity, getActivityNights } from '@/lib/spanning-activity-utils'
+import { buildCruiseColorMap, getCruiseColor } from '@/lib/cruise-color-utils'
 
 interface ItineraryTableViewProps {
   trip: TripResponseDto
@@ -199,6 +200,13 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
   // Process spanning activities
   const { spanningActivities } = useSpanningActivities(daysWithActivities || [])
 
+  // Build cruise color map from full activity list
+  const cruiseColorMap = useMemo(() => {
+    if (!daysWithActivities) return new Map<string, never>()
+    const allActivities = daysWithActivities.flatMap((d) => d.activities)
+    return buildCruiseColorMap(allActivities)
+  }, [daysWithActivities])
+
   // Build a map of activity IDs to their spanning info
   const spanningActivityMap = useMemo(() => {
     const map = new Map<string, {
@@ -218,8 +226,78 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
   const tableRows = useMemo(() => {
     if (!daysWithActivities) return []
 
-    return daysWithActivities.flatMap((day) =>
-      filterItineraryActivities(day.activities).map((activity) => {
+    return daysWithActivities.flatMap((day) => {
+      // Group parent activities with their children.
+      // Children whose parent is on an earlier day appear before later parents.
+      const filtered = filterItineraryActivities(day.activities)
+
+      // Identify which parent activities are present in this day
+      const parentsInDay = new Set(
+        filtered
+          .filter((a) => !a.parentActivityId)
+          .map((a) => a.id)
+      )
+
+      // Collect children grouped by parentActivityId
+      const childrenByParent = new Map<string, typeof filtered>()
+      for (const a of filtered) {
+        if (a.parentActivityId) {
+          const list = childrenByParent.get(a.parentActivityId) || []
+          list.push(a)
+          childrenByParent.set(a.parentActivityId, list)
+        }
+      }
+
+      // Build sorted list: parent → its children, with orphaned children placed before next parent
+      const sorted: typeof filtered = []
+      const placed = new Set<string>()
+
+      for (const a of filtered) {
+        if (placed.has(a.id)) continue
+
+        const isParent = !a.parentActivityId
+
+        if (isParent) {
+          // Before placing this parent, flush any children from earlier parents
+          // whose parent is not in this day (continuing from previous days)
+          for (const a2 of filtered) {
+            if (placed.has(a2.id)) continue
+            if (a2.parentActivityId && !parentsInDay.has(a2.parentActivityId)) {
+              sorted.push(a2)
+              placed.add(a2.id)
+            }
+          }
+
+          sorted.push(a)
+          placed.add(a.id)
+          // Pull in all children for this parent
+          const children = childrenByParent.get(a.id) || []
+          for (const child of children) {
+            if (!placed.has(child.id)) {
+              sorted.push(child)
+              placed.add(child.id)
+            }
+          }
+        } else if (a.parentActivityId && parentsInDay.has(a.parentActivityId)) {
+          // Skip — will be placed after its parent
+          continue
+        } else if (a.parentActivityId && !parentsInDay.has(a.parentActivityId)) {
+          // Child whose parent is on a different day — placed before next parent above
+          continue
+        } else {
+          sorted.push(a)
+          placed.add(a.id)
+        }
+      }
+
+      // Any remaining unplaced activities (orphans, edge cases)
+      for (const a of filtered) {
+        if (!placed.has(a.id)) {
+          sorted.push(a)
+        }
+      }
+
+      return sorted.map((activity) => {
         const spanningInfo = spanningActivityMap.get(activity.id)
         const isActivitySpanning = isSpanningActivity(activity)
 
@@ -247,7 +325,7 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
           spanningInfo,
         }
       })
-    )
+    })
   }, [daysWithActivities, spanningActivityMap])
 
   if (isLoading) {
@@ -333,6 +411,7 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
           {tableRows.map((row, index) => {
             const metadata = getActivityTypeMetadata(row.activity.activityType)
             const statusVariant = statusVariants[row.activity.status] || 'default'
+            const cruiseColor = getCruiseColor(row.activity, cruiseColorMap)
 
             // Show day info only for first activity of each day
             const showDayInfo =
@@ -347,15 +426,22 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
                   'hover:bg-tern-gray-50 cursor-pointer transition-colors',
                   FOCUS_VISIBLE_RING,
                   showDayInfo && index > 0 && 'border-t-2 border-tern-gray-200',
-                  row.isSpanning && 'bg-tern-teal-25/50'
+                  cruiseColor ? cruiseColor.bg : row.isSpanning && 'bg-tern-teal-25/50'
                 )}
                 onClick={() => handleRowClick(row.activity.id, row.dayId)}
                 onKeyDown={(e) => e.key === 'Enter' && handleRowClick(row.activity.id, row.dayId)}
               >
-                {/* Day Column with Spanning Indicator */}
+                {/* Day Column with Spanning/Cruise Indicator */}
                 <TableCell className="py-2 relative">
-                  {/* Spanning activity connector line */}
-                  {row.isSpanning && row.spanPosition && (
+                  {/* Cruise color continuous bar — full height for all cruise-related rows */}
+                  {cruiseColor && (
+                    <div
+                      className={cn('absolute left-0 top-0 bottom-0 w-1', cruiseColor.bar)}
+                      aria-hidden="true"
+                    />
+                  )}
+                  {/* Spanning activity connector line (non-cruise spanning only) */}
+                  {!cruiseColor && row.isSpanning && row.spanPosition && (
                     <div
                       className={cn(
                         'absolute left-0 w-1 bg-tern-teal-400',
@@ -436,7 +522,7 @@ export function ItineraryTableView({ trip, itinerary }: ItineraryTableViewProps)
                     )}
                     {/* Show duration badge for spanning activities */}
                     {row.isSpanning && row.spanPosition === 'first' && row.spanningInfo?.totalNights && (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-tern-teal-100 text-tern-teal-800 w-fit">
+                      <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium w-fit", cruiseColor ? cruiseColor.badge : 'bg-tern-teal-100 text-tern-teal-800')}>
                         {row.spanningInfo.totalNights} Night{row.spanningInfo.totalNights > 1 ? 's' : ''}
                       </span>
                     )}

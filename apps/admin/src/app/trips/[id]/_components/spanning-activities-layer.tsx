@@ -3,11 +3,13 @@
 import type { ItineraryDayWithActivitiesDto } from '@tailfire/shared-types/api'
 import type { ActivityWithSpan } from '@/lib/spanning-activity-utils'
 import { SpanningActivityBar } from './spanning-activity-bar'
+import type { CruiseColorSet } from '@/lib/cruise-color-utils'
 
 interface SpanningActivitiesLayerProps {
   spanningActivities: ActivityWithSpan[]
   days: ItineraryDayWithActivitiesDto[]
   itineraryId: string
+  cruiseColorMap?: Map<string, CruiseColorSet>
 }
 
 /**
@@ -35,6 +37,7 @@ export function SpanningActivitiesLayer({
   spanningActivities,
   days,
   itineraryId,
+  cruiseColorMap,
 }: SpanningActivitiesLayerProps) {
   // Don't render anything if no spanning activities
   if (spanningActivities.length === 0) {
@@ -63,9 +66,9 @@ export function SpanningActivitiesLayer({
           key={activity.id}
           activity={activity}
           itineraryId={itineraryId}
-          // CSS Grid columns are 1-based, spanStartIndex is 0-based
           gridColumnStart={activity.spanStartIndex + 1}
           gridColumnSpan={activity.spanWidth}
+          cruiseColor={cruiseColorMap?.get(activity.id)}
         />
       ))}
     </div>

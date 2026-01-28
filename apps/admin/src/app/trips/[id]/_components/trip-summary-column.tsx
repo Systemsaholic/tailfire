@@ -19,6 +19,7 @@ import { ActivitySummaryItem } from './activity-summary-item'
 import { EditItineraryDialog } from './edit-itinerary-dialog'
 import { useSpanningActivities } from '@/hooks/use-spanning-activities'
 import type { ActivityWithSpan } from '@/lib/spanning-activity-utils'
+import { buildCruiseColorMap, getCruiseColor } from '@/lib/cruise-color-utils'
 
 interface TripSummaryColumnProps {
   days: ItineraryDayWithActivitiesDto[]
@@ -41,6 +42,12 @@ export function TripSummaryColumn({ days, tripId, tripStartDate, tripEndDate, it
 
   // Process spanning activities
   const { spanningActivities, dayActivities } = useSpanningActivities(days)
+
+  // Build cruise color map from full activity list
+  const cruiseColorMap = useMemo(() => {
+    const allActivities = days.flatMap((d) => d.activities)
+    return buildCruiseColorMap(allActivities)
+  }, [days])
 
   // Build a map of dayId -> spanning activities that are continuing through this day
   // (not starting, just continuing from a previous day)
@@ -163,25 +170,30 @@ export function TripSummaryColumn({ days, tripId, tripStartDate, tripEndDate, it
                   </p>
 
                   {/* Spanning activities that START on this day */}
-                  {spanningStarts.map((spanning) => (
-                    <div key={spanning.id} className="relative">
-                      <ActivitySummaryItem
-                        itineraryId={itinerary.id}
-                        activity={spanning}
-                        dayId={dayId}
-                      />
-                      {/* Vertical line indicator extending down */}
-                      <div
-                        className="absolute left-3 top-full w-0.5 bg-tern-teal-300"
-                        style={{ height: '8px' }}
-                        aria-hidden="true"
-                      />
-                    </div>
-                  ))}
+                  {spanningStarts.map((spanning) => {
+                    const color = getCruiseColor(spanning, cruiseColorMap)
+                    return (
+                      <div key={spanning.id} className="relative">
+                        <ActivitySummaryItem
+                          itineraryId={itinerary.id}
+                          activity={spanning}
+                          dayId={dayId}
+                          cruiseColor={color}
+                        />
+                        {/* Vertical line indicator extending down */}
+                        <div
+                          className={cn("absolute left-3 top-full w-0.5", color ? color.line : 'bg-tern-teal-300')}
+                          style={{ height: '8px' }}
+                          aria-hidden="true"
+                        />
+                      </div>
+                    )
+                  })}
 
                   {/* Continuation lines for spanning activities that continue through this day */}
                   {continuingSpans.map((spanning) => {
                     const isLastDay = spanning.spannedDayIds[spanning.spannedDayIds.length - 1] === dayId
+                    const color = getCruiseColor(spanning, cruiseColorMap)
                     return (
                       <div
                         key={`continuing-${spanning.id}`}
@@ -190,7 +202,8 @@ export function TripSummaryColumn({ days, tripId, tripStartDate, tripEndDate, it
                         {/* Vertical continuation line */}
                         <div
                           className={cn(
-                            'w-0.5 bg-tern-teal-300 flex-shrink-0',
+                            'w-0.5 flex-shrink-0',
+                            color ? color.line : 'bg-tern-teal-300',
                             isLastDay ? 'h-2 rounded-b' : 'h-full min-h-[16px]'
                           )}
                           aria-hidden="true"
@@ -210,6 +223,7 @@ export function TripSummaryColumn({ days, tripId, tripStartDate, tripEndDate, it
                       itineraryId={itinerary.id}
                       activity={activity}
                       dayId={dayId}
+                      cruiseColor={getCruiseColor(activity, cruiseColorMap)}
                     />
                   ))}
                 </div>

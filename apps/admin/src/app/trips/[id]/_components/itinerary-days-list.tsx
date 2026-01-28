@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Calendar, Plus } from 'lucide-react'
 import type { TripResponseDto, ItineraryResponseDto } from '@tailfire/shared-types/api'
 import { cn } from '@/lib/utils'
@@ -17,6 +17,7 @@ import { DayColumn } from './day-column'
 import { TripSummaryColumn } from './trip-summary-column'
 import { DayHeadersRow } from './day-headers-row'
 import { SpanningActivitiesLayer } from './spanning-activities-layer'
+import { buildCruiseColorMap } from '@/lib/cruise-color-utils'
 
 interface ItineraryDaysListProps {
   trip: TripResponseDto
@@ -31,6 +32,13 @@ export function ItineraryDaysList({ trip, itinerary }: ItineraryDaysListProps) {
 
   // Process activities into spanning and non-spanning categories
   const { spanningActivities, dayActivities } = useSpanningActivities(days || [])
+
+  // Build cruise color map from full activity list (not filtered dayActivities)
+  const cruiseColorMap = useMemo(() => {
+    if (!days) return new Map()
+    const allActivities = days.flatMap((d) => d.activities)
+    return buildCruiseColorMap(allActivities)
+  }, [days])
 
   const handleGenerateDays = async () => {
     if (!trip.startDate || !trip.endDate) {
@@ -142,6 +150,7 @@ export function ItineraryDaysList({ trip, itinerary }: ItineraryDaysListProps) {
                         spanningActivities={spanningActivities}
                         days={days}
                         itineraryId={itinerary.id}
+                        cruiseColorMap={cruiseColorMap}
                       />
                     </div>
                   )}
@@ -155,6 +164,7 @@ export function ItineraryDaysList({ trip, itinerary }: ItineraryDaysListProps) {
                         itineraryId={itinerary.id}
                         filteredActivities={dayActivities.get(day.id)}
                         hideHeader
+                        cruiseColorMap={cruiseColorMap}
                       />
                     ))}
                   </div>

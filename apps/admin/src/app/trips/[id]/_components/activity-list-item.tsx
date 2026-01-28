@@ -38,15 +38,17 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ActivityIconBadge } from '@/components/ui/activity-icon-badge'
 import { useActivityNavigation } from '@/hooks/use-activity-navigation'
+import type { CruiseColorSet } from '@/lib/cruise-color-utils'
 
 interface ActivityListItemProps {
   itineraryId: string
   activity: ActivityResponseDto
   dayId: string
   dayDate?: string | null
+  cruiseColor?: CruiseColorSet
 }
 
-export function ActivityListItem({ itineraryId, activity, dayId, dayDate: _dayDate }: ActivityListItemProps) {
+export function ActivityListItem({ itineraryId, activity, dayId, dayDate: _dayDate, cruiseColor }: ActivityListItemProps) {
   const router = useRouter()
   const params = useParams<{ id: string }>()
   const { toast } = useToast()
@@ -134,7 +136,8 @@ export function ActivityListItem({ itineraryId, activity, dayId, dayDate: _dayDa
           "group flex items-start gap-1.5 p-2 border border-tern-gray-200 rounded-lg transition-all",
           "hover:border-tern-gray-300 hover:bg-tern-gray-50 hover:shadow-sm hover:-translate-y-px",
           FOCUS_VISIBLE_RING,
-          isDragging && "border-tern-teal-500 shadow-md scale-[1.02]"
+          isDragging && "border-tern-teal-500 shadow-md scale-[1.02]",
+          cruiseColor && `border-l-4 ${cruiseColor.borderLeft}`
         )}
       >
         {/* Drag Handle */}
