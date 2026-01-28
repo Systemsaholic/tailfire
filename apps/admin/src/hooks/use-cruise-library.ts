@@ -552,11 +552,13 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
     mutationFn: async ({
       sailing,
       itineraryId: dynamicItineraryId,
+      autoExtendItinerary = false,
     }: {
       sailing: SailingDetailResponse
       itineraryId?: string  // Dynamic itineraryId - overrides hook-level default
       tripId?: string       // Trip ID for navigation after success
       dayId?: string        // Deprecated: no longer used - day is determined by sailing.sailDate
+      autoExtendItinerary?: boolean // If true, extend itinerary dates to fit cruise; otherwise throw error
     }) => {
       // Use dynamic itineraryId if provided, otherwise fall back to hook-level default
       const itineraryId = dynamicItineraryId || defaultItineraryId
@@ -578,7 +580,7 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
       // 3. Generate port schedule (creates port_info activities)
       // Pass cruise data to avoid re-fetching from DB (~1500ms+ savings)
       // skipDelete=true because this is a newly created cruise with no existing ports
-      // autoExtendItinerary=true to automatically extend the itinerary if cruise dates are outside
+      // autoExtendItinerary: if cruise dates extend beyond itinerary, either extend dates or throw error
       const portSchedule = await api.post<{ created: PortInfoActivityDto[]; deleted: number }>(
         `/activities/custom-cruise/${cruise.id}/generate-port-schedule`,
         {
@@ -592,7 +594,7 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
             arrivalPort: cruiseData.customCruiseDetails?.arrivalPort,
           },
           skipDelete: true, // New cruise has no existing port activities
-          autoExtendItinerary: true, // Extend itinerary dates to fit the cruise
+          autoExtendItinerary, // If true, extend itinerary dates; otherwise throw error for user confirmation
         }
       )
 

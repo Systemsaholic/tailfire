@@ -20,6 +20,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -90,6 +100,14 @@ export function AddToTripDialog({
   const [newItineraryName, setNewItineraryName] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
 
+  // Confirmation dialog state for extending itinerary dates
+  const [showExtendConfirm, setShowExtendConfirm] = useState(false)
+  const [pendingExtendParams, setPendingExtendParams] = useState<{
+    itineraryId: string
+    cruiseDates: { start: string; end: string }
+    itineraryDates: { start: string; end: string }
+  } | null>(null)
+
   // Fetch trips (excluding archived)
   const { data: tripsData, isLoading: isLoadingTrips } = useTrips({
     limit: 50,
@@ -140,15 +158,65 @@ export function AddToTripDialog({
 
     if (!itineraryId) return
 
-    // Add cruise to the itinerary - pass itineraryId and tripId dynamically
-    await addCruiseMutation.mutateAsync({
-      sailing,
-      itineraryId,
-      tripId: selectedTripId,
-    })
+    try {
+      // Add cruise to the itinerary - first attempt without auto-extend
+      await addCruiseMutation.mutateAsync({
+        sailing,
+        itineraryId,
+        tripId: selectedTripId,
+        autoExtendItinerary: false,
+      })
 
-    onSuccess?.()
-    handleClose()
+      onSuccess?.()
+      handleClose()
+    } catch (error) {
+      // Check if it's a date mismatch error
+      if (error instanceof Error && error.message.includes('do not fit within itinerary dates')) {
+        // Show confirmation dialog to extend itinerary dates
+        const selectedItin = itineraries?.find((i) => i.id === itineraryId)
+        setPendingExtendParams({
+          itineraryId,
+          cruiseDates: { start: sailing.sailDate, end: sailing.endDate },
+          itineraryDates: {
+            start: selectedItin?.startDate || '',
+            end: selectedItin?.endDate || '',
+          },
+        })
+        setShowExtendConfirm(true)
+      } else {
+        // Re-throw other errors to be handled by mutation error state
+        throw error
+      }
+    }
+  }
+
+  // Confirm extension and retry with autoExtendItinerary=true
+  const handleConfirmExtend = async () => {
+    if (!pendingExtendParams || !selectedTripId) return
+
+    try {
+      await addCruiseMutation.mutateAsync({
+        sailing,
+        itineraryId: pendingExtendParams.itineraryId,
+        tripId: selectedTripId,
+        autoExtendItinerary: true,
+      })
+
+      setShowExtendConfirm(false)
+      setPendingExtendParams(null)
+      onSuccess?.()
+      handleClose()
+    } catch (error) {
+      // Close confirm dialog and let mutation error state handle it
+      setShowExtendConfirm(false)
+      setPendingExtendParams(null)
+      throw error
+    }
+  }
+
+  const handleCancelExtend = () => {
+    setShowExtendConfirm(false)
+    setPendingExtendParams(null)
   }
 
   const handleClose = () => {
@@ -163,7 +231,7 @@ export function AddToTripDialog({
 
   const isAddingCruise = createItineraryMutation.isPending || addCruiseMutation.isPending
 
-  // Check if selected itinerary is date-compatible
+  // Check if selected itinerary is date-compatible (for warning display only)
   const selectedItinerary = itineraries?.find((i) => i.id === selectedItineraryId)
   const selectedItineraryDateCheck = selectedItinerary
     ? checkDatesCompatible(
@@ -174,11 +242,13 @@ export function AddToTripDialog({
       )
     : { compatible: true }
 
+  // Allow selecting incompatible itineraries - user will be prompted to extend dates
   const canProceed = createNewItinerary
     ? newItineraryName.trim().length > 0
-    : !!selectedItineraryId && selectedItineraryDateCheck.compatible
+    : !!selectedItineraryId
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
@@ -308,39 +378,36 @@ export function AddToTripDialog({
                         itinerary.startDate,
                         itinerary.endDate
                       )
-                      const isIncompatible = !dateCheck.compatible
+                      const needsExtension = !dateCheck.compatible
+                      const isSelected = selectedItineraryId === itinerary.id
 
                       return (
                         <div
                           key={itinerary.id}
                           className={cn(
-                            'flex items-start space-x-3 p-3 rounded-lg border transition-colors',
-                            isIncompatible
-                              ? 'opacity-60 border-amber-300 bg-amber-50 cursor-not-allowed'
-                              : selectedItineraryId === itinerary.id
-                              ? 'border-tern-teal-500 bg-tern-teal-50 cursor-pointer'
-                              : 'hover:bg-tern-gray-50 cursor-pointer'
+                            'flex items-start space-x-3 p-3 rounded-lg border transition-colors cursor-pointer',
+                            isSelected
+                              ? needsExtension
+                                ? 'border-amber-500 bg-amber-50'
+                                : 'border-tern-teal-500 bg-tern-teal-50'
+                              : needsExtension
+                              ? 'border-amber-200 hover:bg-amber-50'
+                              : 'hover:bg-tern-gray-50'
                           )}
                           onClick={() => {
-                            if (!isIncompatible) {
-                              setCreateNewItinerary(false)
-                              setSelectedItineraryId(itinerary.id)
-                            }
+                            setCreateNewItinerary(false)
+                            setSelectedItineraryId(itinerary.id)
                           }}
                         >
                           <RadioGroupItem
                             value={itinerary.id}
                             id={itinerary.id}
-                            disabled={isIncompatible}
                             className="mt-0.5"
                           />
                           <div className="flex-1 min-w-0">
                             <Label
                               htmlFor={itinerary.id}
-                              className={cn(
-                                'font-medium text-sm',
-                                isIncompatible ? 'cursor-not-allowed' : 'cursor-pointer'
-                              )}
+                              className="font-medium text-sm cursor-pointer"
                             >
                               {itinerary.name}
                             </Label>
@@ -355,14 +422,14 @@ export function AddToTripDialog({
                               )}
                               {itinerary.status}
                             </p>
-                            {isIncompatible && (
+                            {needsExtension && (
                               <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
                                 <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-                                <span>{dateCheck.reason}</span>
+                                <span>{dateCheck.reason} - dates will be extended</span>
                               </p>
                             )}
                           </div>
-                          {!isIncompatible && itinerary.isSelected && (
+                          {!needsExtension && itinerary.isSelected && (
                             <Check className="h-4 w-4 text-tern-teal-600 flex-shrink-0" />
                           )}
                         </div>
@@ -441,5 +508,69 @@ export function AddToTripDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+      {/* Confirmation dialog for extending itinerary dates */}
+      <AlertDialog open={showExtendConfirm} onOpenChange={setShowExtendConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Extend Itinerary Dates?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  The cruise dates extend beyond the current itinerary dates.
+                </p>
+                {pendingExtendParams && (
+                  <div className="bg-amber-50 rounded-lg p-3 space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-tern-gray-600">Cruise dates:</span>
+                      <span className="font-medium">
+                        {format(parseISO(pendingExtendParams.cruiseDates.start), 'MMM d')} -{' '}
+                        {format(parseISO(pendingExtendParams.cruiseDates.end), 'MMM d, yyyy')}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-tern-gray-600">Itinerary dates:</span>
+                      <span className="font-medium">
+                        {pendingExtendParams.itineraryDates.start && pendingExtendParams.itineraryDates.end ? (
+                          <>
+                            {format(parseISO(pendingExtendParams.itineraryDates.start), 'MMM d')} -{' '}
+                            {format(parseISO(pendingExtendParams.itineraryDates.end), 'MMM d, yyyy')}
+                          </>
+                        ) : (
+                          'Not set'
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                <p>
+                  Would you like to extend the itinerary dates to accommodate this cruise?
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelExtend}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmExtend}
+              className="bg-tern-teal-600 hover:bg-tern-teal-700"
+              disabled={addCruiseMutation.isPending}
+            >
+              {addCruiseMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Extending...
+                </>
+              ) : (
+                'Extend Dates & Add Cruise'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
