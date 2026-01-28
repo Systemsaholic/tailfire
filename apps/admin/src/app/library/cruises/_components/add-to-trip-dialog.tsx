@@ -231,17 +231,6 @@ export function AddToTripDialog({
 
   const isAddingCruise = createItineraryMutation.isPending || addCruiseMutation.isPending
 
-  // Check if selected itinerary is date-compatible (for warning display only)
-  const selectedItinerary = itineraries?.find((i) => i.id === selectedItineraryId)
-  const selectedItineraryDateCheck = selectedItinerary
-    ? checkDatesCompatible(
-        sailing.sailDate,
-        sailing.endDate,
-        selectedItinerary.startDate,
-        selectedItinerary.endDate
-      )
-    : { compatible: true }
-
   // Allow selecting incompatible itineraries - user will be prompted to extend dates
   const canProceed = createNewItinerary
     ? newItineraryName.trim().length > 0

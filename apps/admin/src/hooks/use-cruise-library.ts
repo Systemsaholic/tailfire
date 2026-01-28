@@ -806,6 +806,12 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
           context.previousDaysWithActivities
         )
       }
+
+      // Don't show toast for date mismatch errors - handled by confirmation dialog
+      if (error instanceof Error && error.message.includes('do not fit within itinerary dates')) {
+        return
+      }
+
       console.error('Failed to add cruise to itinerary:', error)
       toast({
         title: 'Error',
