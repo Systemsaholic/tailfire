@@ -63,6 +63,10 @@ export class ImportOrchestratorService {
   private lastProgressUpdate = 0
   private readonly PROGRESS_UPDATE_INTERVAL = 50 // Update history every 50 files
 
+  // Retry configuration for scheduled sync
+  private readonly SCHEDULED_SYNC_MAX_RETRIES = 3
+  private readonly SCHEDULED_SYNC_INITIAL_DELAY_MS = 5 * 60 * 1000 // 5 minutes
+
   constructor(
     private readonly ftpService: TraveltekFtpService,
     private readonly sailingImporter: SailingImportService,
@@ -833,9 +837,33 @@ export class ImportOrchestratorService {
   // ============================================================================
 
   /**
+   * Sleep helper for retry delays
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  /**
+   * Check if an error is retryable (connection/network issues)
+   */
+  private isRetryableError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+    return (
+      message.includes('connect') ||
+      message.includes('timeout') ||
+      message.includes('econnrefused') ||
+      message.includes('enotfound') ||
+      message.includes('network') ||
+      message.includes('ftp') ||
+      message.includes('socket')
+    )
+  }
+
+  /**
    * Scheduled daily sync at 2 AM Toronto time.
    * Controlled by ENABLE_SCHEDULED_CRUISE_SYNC env var.
    * Uses PostgreSQL advisory lock to prevent concurrent execution across replicas.
+   * Implements retry logic with exponential backoff for transient FTP failures.
    */
   @Cron(CronExpression.EVERY_DAY_AT_2AM, { timeZone: 'America/Toronto' })
   async scheduledSync(): Promise<void> {
@@ -858,10 +886,48 @@ export class ImportOrchestratorService {
         return
       }
 
-      this.logger.log('Starting scheduled Traveltek cruise sync')
-      await this.runSync({ concurrency: 4 })
-    } catch (error) {
-      this.logger.error(`Scheduled sync failed: ${error instanceof Error ? error.message : error}`)
+      // Retry loop with exponential backoff
+      let lastError: unknown
+      for (let attempt = 1; attempt <= this.SCHEDULED_SYNC_MAX_RETRIES; attempt++) {
+        try {
+          this.logger.log(
+            `Starting scheduled Traveltek cruise sync (attempt ${attempt}/${this.SCHEDULED_SYNC_MAX_RETRIES})`
+          )
+          await this.runSync({ concurrency: 4 })
+          this.logger.log('Scheduled sync completed successfully')
+          return // Success - exit the retry loop
+        } catch (error) {
+          lastError = error
+          const errorMessage = error instanceof Error ? error.message : String(error)
+
+          if (attempt < this.SCHEDULED_SYNC_MAX_RETRIES && this.isRetryableError(error)) {
+            // Calculate delay with exponential backoff: 5min, 10min, 20min
+            const delayMs = this.SCHEDULED_SYNC_INITIAL_DELAY_MS * Math.pow(2, attempt - 1)
+            const delayMinutes = Math.round(delayMs / 60000)
+
+            this.logger.warn(
+              `Scheduled sync attempt ${attempt}/${this.SCHEDULED_SYNC_MAX_RETRIES} failed: ${errorMessage}. ` +
+                `Retrying in ${delayMinutes} minutes...`
+            )
+
+            await this.sleep(delayMs)
+          } else {
+            // Non-retryable error or final attempt
+            this.logger.error(
+              `Scheduled sync failed (attempt ${attempt}/${this.SCHEDULED_SYNC_MAX_RETRIES}): ${errorMessage}`
+            )
+            break
+          }
+        }
+      }
+
+      // All retries exhausted
+      if (lastError) {
+        this.logger.error(
+          `Scheduled sync failed after ${this.SCHEDULED_SYNC_MAX_RETRIES} attempts. ` +
+            `Will retry at next scheduled time (2 AM tomorrow).`
+        )
+      }
     } finally {
       await this.releaseSyncLock()
     }
