@@ -144,8 +144,10 @@ export function CustomCruiseForm({
   // In edit mode (dayId provided), we lock to existing day; only auto-compute for new cruises
   const effectiveDayId = dayId || computedDayId
   const matchedDay = days.find((d) => d.id === computedDayId)
+  // effectiveDayDate handles async loading: if dayDate prop is undefined (days query hadn't loaded
+  // when page.tsx rendered), derive date from days array using dayId
   const effectiveDayDate = dayId
-    ? dayDate
+    ? (dayDate || days.find((d) => d.id === dayId)?.date || null)
     : matchedDay?.date || null
 
   // Track if we're in edit mode (has existing activity)
@@ -443,6 +445,28 @@ export function CustomCruiseForm({
   const bookingNumberValue = useWatch({ control, name: 'customCruiseDetails.bookingNumber' })
   const fareCodeValue = useWatch({ control, name: 'customCruiseDetails.fareCode' })
   const bookingDeadlineValue = useWatch({ control, name: 'customCruiseDetails.bookingDeadline' })
+
+  // Track if dayDate has been auto-applied (prevents duplicate application)
+  const dayDateAppliedRef = useRef(false)
+
+  // Reset the ref when dayId changes (handles navigation between different days)
+  useEffect(() => {
+    dayDateAppliedRef.current = false
+  }, [dayId])
+
+  // Auto-populate departure date from day context (only for new activities)
+  // Uses watched departureDateValue to ensure effect reruns when form initializes
+  // effectiveDayDate handles async loading: derives date from days prop if dayDate is undefined
+  useEffect(() => {
+    if (isEditMode) return
+    if (dayDateAppliedRef.current) return
+    if (!effectiveDayDate) return
+    // Only set if date field is empty
+    if (!departureDateValue) {
+      dayDateAppliedRef.current = true
+      setValue('customCruiseDetails.departureDate', effectiveDayDate, { shouldDirty: false })
+    }
+  }, [effectiveDayDate, isEditMode, departureDateValue, setValue])
 
   useEffect(() => {
     // Guard: cleanup flag to prevent microtask running after unmount

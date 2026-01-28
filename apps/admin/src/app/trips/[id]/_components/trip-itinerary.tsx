@@ -302,6 +302,7 @@ export function TripItinerary({ trip }: TripItineraryProps) {
       const metadata = getActivityTypeMetadata(componentType)
       const params = new URLSearchParams({
         dayId: targetDayId,
+        itineraryId: selectedItinerary?.id || '',
         type: componentType,
         name: componentLabel || metadata.defaultName,
       })

@@ -311,9 +311,10 @@ export function processSpanningActivities(
         }
       }
 
-      // Not spanning - add to day activities (unless it's a child of a spanning activity)
-      // Children are shown in their respective days, even if parent spans
-      if (!activity.parentActivityId || !processedSpanningIds.has(activity.parentActivityId)) {
+      // Not spanning - add to day activities
+      // Child activities (e.g., port_info) ARE shown in their respective days, even when parent spans
+      // Only skip the parent activity itself if it's spanning (it's rendered in the spanning layer)
+      if (!processedSpanningIds.has(activity.id)) {
         const existing = dayActivities.get(day.id) || []
         existing.push(activity)
         dayActivities.set(day.id, existing)
