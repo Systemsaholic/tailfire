@@ -123,38 +123,8 @@ export class ImportOrchestratorService {
       // This fixes the "0 files found" bug caused by reusing stale persistent connections
       await this.ftpService.forceReconnect()
 
-      // 1. List files from FTP (with cancellation support)
-      this.logger.log('Listing files from FTP...')
-      const optionsWithCancel: FtpSyncOptions = {
-        ...options,
-        shouldCancel: () => this.cancelRequested,
-      }
-      const files = await this.ftpService.listSailingFiles(optionsWithCancel)
-
-      // Check if cancelled during file listing
-      if (this.cancelRequested) {
-        this.logger.warn('SYNC_CANCELLED: User requested cancellation during file listing')
-        metrics.cancelled = true
-        metrics.completedAt = new Date()
-        metrics.durationMs = metrics.completedAt.getTime() - metrics.startedAt.getTime()
-        return metrics
-      }
-
-      this.logger.log(`Found ${files.length} files to process`)
-      metrics.filesFound = files.length
-
-      if (options.dryRun) {
-        this.logger.log('[DRY RUN] Would process the following files:')
-        files.slice(0, 20).forEach((f) => this.logger.log(`  - ${f.path} (${f.size} bytes)`))
-        if (files.length > 20) {
-          this.logger.log(`  ... and ${files.length - 20} more`)
-        }
-        metrics.completedAt = new Date()
-        metrics.durationMs = metrics.completedAt.getTime() - metrics.startedAt.getTime()
-        return metrics
-      }
-
-      // 2. Load file sync tracking for delta sync (unless forceFullSync)
+      // 1. Load file sync tracking for delta sync (unless forceFullSync)
+      // Load BEFORE file listing so we can skip unchanged files during streaming
       const enableDeltaSync = options.deltaSync !== false && !options.forceFullSync
       if (enableDeltaSync) {
         await this.loadFileSyncMap()
@@ -164,9 +134,35 @@ export class ImportOrchestratorService {
         this.logger.log(options.forceFullSync ? 'Force full sync: delta check disabled' : 'Delta sync disabled')
       }
 
-      // 3. Process files with controlled concurrency
+      // 2. Set up options with cancellation support
+      const optionsWithCancel: FtpSyncOptions = {
+        ...options,
+        shouldCancel: () => this.cancelRequested,
+      }
+
+      // Dry run mode: collect files and display without processing
+      if (options.dryRun) {
+        this.logger.log('[DRY RUN] Listing files from FTP...')
+        const files: FtpFileInfo[] = []
+        for await (const file of this.ftpService.listSailingFilesStream(optionsWithCancel)) {
+          files.push(file)
+          if (files.length >= 100) break // Limit dry run preview
+        }
+        this.logger.log('[DRY RUN] Would process the following files:')
+        files.slice(0, 20).forEach((f) => this.logger.log(`  - ${f.path} (${f.size} bytes)`))
+        if (files.length > 20) {
+          this.logger.log(`  ... and ${files.length - 20} more`)
+        }
+        metrics.filesFound = files.length
+        metrics.completedAt = new Date()
+        metrics.durationMs = metrics.completedAt.getTime() - metrics.startedAt.getTime()
+        return metrics
+      }
+
+      // 3. Process files with controlled concurrency using STREAMING
+      // Files are processed as they're discovered (no wait for complete file list)
       const concurrency = Math.min(options.concurrency ?? this.DEFAULT_CONCURRENCY, this.MAX_CONCURRENCY)
-      this.logger.log(`Processing ${files.length} files with concurrency=${concurrency}`)
+      this.logger.log(`Starting streaming sync with concurrency=${concurrency}`)
 
       // Initialize FTP connection pool for parallel downloads
       if (concurrency > 1) {
@@ -175,20 +171,8 @@ export class ImportOrchestratorService {
         await this.ftpService.initializePool(poolSize)
       }
 
-      if (concurrency <= 1) {
-        // Sequential processing (safer, no DB connection pool exhaustion)
-        for (const file of files) {
-          // Check for cancellation before each file
-          if (this.cancelRequested) {
-            this.logger.warn('SYNC_CANCELLED: User requested cancellation during file processing')
-            break
-          }
-          await this.processSingleFile(file, options, metrics, enableDeltaSync)
-        }
-      } else {
-        // Parallel processing with bounded concurrency
-        await this.processFilesWithConcurrency(files, options, metrics, concurrency, enableDeltaSync)
-      }
+      // Stream files and process with bounded concurrency
+      await this.processFilesStreaming(optionsWithCancel, metrics, concurrency, enableDeltaSync)
 
       // 3. Log summary
       metrics.completedAt = new Date()
@@ -224,39 +208,116 @@ export class ImportOrchestratorService {
   }
 
   // ============================================================================
-  // CONCURRENT PROCESSING
+  // STREAMING CONCURRENT PROCESSING
   // ============================================================================
 
   /**
-   * Process files with bounded concurrency using a simple pool approach.
-   * This prevents overwhelming the DB connection pool.
+   * Process files from an async generator with bounded concurrency.
+   * Uses producer-consumer pattern for natural backpressure:
+   * - Producer (FTP file discovery) yields files as found
+   * - Consumer (worker pool) processes files in parallel
+   * - Backpressure naturally occurs when workers are busy
    */
-  private async processFilesWithConcurrency(
-    files: FtpFileInfo[],
+  private async processFilesStreaming(
     options: FtpSyncOptions,
     metrics: ImportMetrics,
     concurrency: number,
     enableDeltaSync: boolean
   ): Promise<void> {
-    let index = 0
-    const total = files.length
+    // Create async iterator from stream
+    const fileStream = this.ftpService.listSailingFilesStream(options)
+    const iterator = fileStream[Symbol.asyncIterator]()
 
-    const workers = Array.from({ length: concurrency }, async () => {
-      while (index < total && !this.cancelRequested) {
-        const currentIndex = index++
-        const file = files[currentIndex]
-        if (file) {
-          await this.processSingleFile(file, options, metrics, enableDeltaSync)
+    // Track completion
+    let iteratorDone = false
+    const errors: Error[] = []
+
+    // Mutex for thread-safe iterator access
+    let iteratorLock = Promise.resolve()
+
+    /**
+     * Get next file from iterator (thread-safe)
+     */
+    const getNextFile = async (): Promise<FtpFileInfo | null> => {
+      // Wait for any pending getNext call to complete
+      const currentLock = iteratorLock
+      let resolveLock: () => void
+      iteratorLock = new Promise((resolve) => {
+        resolveLock = resolve
+      })
+
+      await currentLock
+
+      try {
+        if (iteratorDone || this.cancelRequested) {
+          return null
         }
+
+        const result = await iterator.next()
+        if (result.done) {
+          iteratorDone = true
+          return null
+        }
+
+        metrics.filesFound++
+        return result.value
+      } catch (error) {
+        this.logger.error(`Error getting next file from stream: ${error}`)
+        iteratorDone = true
+        return null
+      } finally {
+        resolveLock!()
       }
-    })
-
-    await Promise.all(workers)
-
-    if (this.cancelRequested) {
-      this.logger.warn('SYNC_CANCELLED: User requested cancellation during concurrent file processing')
     }
+
+    /**
+     * Worker function that pulls files from stream and processes them
+     */
+    const worker = async (workerId: number): Promise<void> => {
+      this.logger.debug(`Worker ${workerId} started`)
+
+      try {
+        while (!this.cancelRequested) {
+          const file = await getNextFile()
+          if (!file) {
+            break // No more files
+          }
+
+          try {
+            await this.processSingleFile(file, options, metrics, enableDeltaSync)
+          } catch (error) {
+            // Don't stop the worker on individual file errors
+            this.logger.error(`Worker ${workerId} error processing ${file.path}: ${error}`)
+          }
+        }
+      } catch (error) {
+        this.logger.error(`Worker ${workerId} fatal error: ${error}`)
+        errors.push(error instanceof Error ? error : new Error(String(error)))
+      } finally {
+        this.logger.debug(`Worker ${workerId} finished`)
+      }
+    }
+
+    // Start worker pool
+    this.logger.log(`Starting ${concurrency} workers for streaming file processing...`)
+    const workerPromises = Array.from({ length: concurrency }, (_, i) => worker(i + 1))
+
+    // Wait for all workers to complete
+    await Promise.all(workerPromises)
+
+    // Check for cancellation
+    if (this.cancelRequested) {
+      this.logger.warn('SYNC_CANCELLED: User requested cancellation during streaming file processing')
+    }
+
+    // Check for fatal errors
+    if (errors.length > 0) {
+      this.logger.error(`${errors.length} workers encountered fatal errors`)
+    }
+
+    this.logger.log(`Streaming processing complete: ${metrics.filesFound} files discovered, ${metrics.filesProcessed} processed`)
   }
+
 
   // ============================================================================
   // PER-FILE PROCESSING (with error handling)
