@@ -703,7 +703,13 @@ export function FlightForm({
   }
 
   const addFlightLeg = () => {
-    append(createDefaultSegment(dayDate))
+    const newIndex = segmentFields.length
+    // Pre-populate new segment's departure date from previous segment's arrival date
+    const prevArrivalDate = newIndex > 0
+      ? getValues(`flightSegments.${newIndex - 1}.arrivalDate`)
+      : undefined
+    append(createDefaultSegment(prevArrivalDate || dayDate))
+    setExpandedSegmentIndex(newIndex)
   }
 
   const toggleManualEntry = (index: number) => {
