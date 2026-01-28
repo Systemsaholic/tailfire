@@ -36,7 +36,7 @@ class FtpConnectionPool {
 
   constructor(
     config: { host: string; user: string; password: string; secure: boolean },
-    maxSize: number = 4
+    maxSize: number = 2 // Reduced from 4 to avoid overwhelming Traveltek FTP
   ) {
     this.host = config.host
     this.user = config.user
@@ -178,7 +178,7 @@ export class TraveltekFtpService implements OnModuleDestroy {
 
   // Connection pool for parallel file downloads
   private connectionPool: FtpConnectionPool | null = null
-  private readonly DEFAULT_POOL_SIZE = 4
+  private readonly DEFAULT_POOL_SIZE = 2 // Reduced from 4 to avoid overwhelming Traveltek FTP
 
   // FTP Configuration - read from ConfigService (loaded after .env parsing)
   private readonly ftpHost: string
@@ -198,6 +198,10 @@ export class TraveltekFtpService implements OnModuleDestroy {
   private readonly DEFAULT_RETRY_ATTEMPTS = 3
   private readonly DEFAULT_RETRY_DELAY_MS = 1000
   private readonly DEFAULT_MAX_FILE_SIZE_BYTES = 500000 // 500KB
+
+  // Throttling to avoid overwhelming Traveltek FTP server
+  private readonly DIRECTORY_LIST_TIMEOUT_MS = 30000 // 30 second timeout for directory listings
+  private readonly THROTTLE_DELAY_MS = 100 // 100ms delay between directory operations
 
   async onModuleDestroy() {
     await this.disconnect()
@@ -349,7 +353,8 @@ export class TraveltekFtpService implements OnModuleDestroy {
       const yearPath = `/${year}`
 
       try {
-        const months = await client.list(yearPath)
+        const months = await this.listWithTimeout(client, yearPath)
+        await this.sleep(this.THROTTLE_DELAY_MS) // Throttle between directory operations
 
         for (const monthDir of months) {
           // Check for cancellation at month level
@@ -376,7 +381,8 @@ export class TraveltekFtpService implements OnModuleDestroy {
           const monthPath = `${yearPath}/${monthDir.name}`
 
           try {
-            const lines = await client.list(monthPath)
+            const lines = await this.listWithTimeout(client, monthPath)
+            await this.sleep(this.THROTTLE_DELAY_MS) // Throttle between directory operations
 
             for (const lineDir of lines) {
               // Check for cancellation at line level
@@ -397,7 +403,8 @@ export class TraveltekFtpService implements OnModuleDestroy {
                   await this.connect()
                 }
 
-                const ships = await client.list(linePath)
+                const ships = await this.listWithTimeout(client, linePath)
+                await this.sleep(this.THROTTLE_DELAY_MS) // Throttle between directory operations
 
                 for (const shipDir of ships) {
                   if (!shipDir.isDirectory) continue
@@ -406,7 +413,8 @@ export class TraveltekFtpService implements OnModuleDestroy {
                   const shipPath = `${linePath}/${shipDir.name}`
 
                   try {
-                    const sailingFiles = await client.list(shipPath)
+                    const sailingFiles = await this.listWithTimeout(client, shipPath)
+                    await this.sleep(this.THROTTLE_DELAY_MS) // Throttle between directory operations
 
                     for (const file of sailingFiles) {
                       if (!file.name.endsWith('.json')) continue
@@ -656,7 +664,7 @@ export class TraveltekFtpService implements OnModuleDestroy {
    */
   private async discoverAvailableYears(client: ftp.Client, currentYear: number): Promise<number[]> {
     try {
-      const rootContents = await client.list('/')
+      const rootContents = await this.listWithTimeout(client, '/')
       const years: number[] = []
 
       for (const entry of rootContents) {
@@ -688,6 +696,29 @@ export class TraveltekFtpService implements OnModuleDestroy {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  /**
+   * List directory contents with timeout protection.
+   * Prevents hanging on unresponsive FTP server.
+   */
+  private async listWithTimeout(client: ftp.Client, path: string): Promise<ftp.FileInfo[]> {
+    return new Promise<ftp.FileInfo[]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Directory listing timeout after ${this.DIRECTORY_LIST_TIMEOUT_MS}ms for ${path}`))
+      }, this.DIRECTORY_LIST_TIMEOUT_MS)
+
+      client
+        .list(path)
+        .then((result) => {
+          clearTimeout(timer)
+          resolve(result)
+        })
+        .catch((err) => {
+          clearTimeout(timer)
+          reject(err)
+        })
+    })
   }
 
   /**

@@ -11,20 +11,27 @@
  */
 
 import { Test, TestingModule } from '@nestjs/testing'
+import { ConfigService } from '@nestjs/config'
 import { ImportOrchestratorService } from '../services/import-orchestrator.service'
 import { TraveltekFtpService } from '../services/traveltek-ftp.service'
 import { SailingImportService } from '../services/sailing-import.service'
 import { ReferenceDataCacheService } from '../services/reference-data-cache.service'
+import { DatabaseService } from '../../db/database.service'
 import { FtpFileInfo } from '../cruise-import.types'
 
 // Mock FTP Service
 const mockFtpService = {
   listSailingFiles: jest.fn(),
   downloadFile: jest.fn(),
+  downloadFilePooled: jest.fn(),
   disconnect: jest.fn(),
   testConnection: jest.fn(),
   getConnectionInfo: jest.fn(),
   extractSailingIdFromPath: jest.fn((path: string) => path.split('/').pop()?.replace('.json', '') || ''),
+  extractIdsFromPath: jest.fn(() => ({ codetocruiseid: 'SAIL-001', cruiselineid: 'TCL', shipid: 'TS' })),
+  forceReconnect: jest.fn(),
+  initializePool: jest.fn(),
+  isPoolInitialized: jest.fn().mockReturnValue(false),
 }
 
 // Mock Sailing Import Service
@@ -41,11 +48,45 @@ const mockCacheService = {
   logStats: jest.fn(),
 }
 
+// Mock Database Service
+const mockDbService = {
+  db: {
+    select: jest.fn().mockReturnValue({
+      from: jest.fn().mockReturnValue(Promise.resolve([])),
+    }),
+    insert: jest.fn().mockReturnValue({
+      values: jest.fn().mockReturnValue({
+        returning: jest.fn().mockResolvedValue([{ id: 'test-sync-id' }]),
+        onConflictDoUpdate: jest.fn().mockResolvedValue(undefined),
+      }),
+    }),
+    update: jest.fn().mockReturnValue({
+      set: jest.fn().mockReturnValue({
+        where: jest.fn().mockResolvedValue(undefined),
+      }),
+    }),
+    execute: jest.fn().mockResolvedValue([{ acquired: true }]),
+  },
+}
+
+// Mock Config Service
+const mockConfigService = {
+  get: jest.fn(),
+}
+
 describe('ImportOrchestratorService', () => {
   let service: ImportOrchestratorService
 
   beforeEach(async () => {
     jest.clearAllMocks()
+
+    // Default config mock to simulate production environment (passes environment guard)
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === 'API_URL') return 'https://api.tailfire.ca'
+      if (key === 'BYPASS_SYNC_ENVIRONMENT_GUARD') return 'false'
+      if (key === 'ENABLE_SCHEDULED_CRUISE_SYNC') return 'false' // Disabled by default
+      return undefined
+    })
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -53,6 +94,8 @@ describe('ImportOrchestratorService', () => {
         { provide: TraveltekFtpService, useValue: mockFtpService },
         { provide: SailingImportService, useValue: mockSailingImporter },
         { provide: ReferenceDataCacheService, useValue: mockCacheService },
+        { provide: DatabaseService, useValue: mockDbService },
+        { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile()
 
@@ -285,6 +328,131 @@ describe('ImportOrchestratorService', () => {
 
       expect(result.success).toBe(false)
       expect(result.info.error).toContain('Connection refused')
+    })
+  })
+
+  describe('scheduledSync retry behavior', () => {
+    beforeEach(() => {
+      // Enable scheduled sync
+      mockConfigService.get.mockImplementation((key: string) => {
+        if (key === 'ENABLE_SCHEDULED_CRUISE_SYNC') return 'true'
+        if (key === 'API_URL') return 'https://api.tailfire.ca' // Production URL
+        if (key === 'BYPASS_SYNC_ENVIRONMENT_GUARD') return 'false'
+        return undefined
+      })
+
+      // Reset mocks
+      mockDbService.db.execute.mockResolvedValue([{ acquired: true }])
+    })
+
+    it('should identify retryable connection errors', () => {
+      // Access private method via type assertion for testing
+      const service_any = service as any
+
+      // Retryable errors (connection/network issues)
+      expect(service_any.isRetryableError(new Error('ECONNREFUSED'))).toBe(true)
+      expect(service_any.isRetryableError(new Error('Connection timeout'))).toBe(true)
+      expect(service_any.isRetryableError(new Error('FTP server unavailable'))).toBe(true)
+      expect(service_any.isRetryableError(new Error('Network unreachable'))).toBe(true)
+      expect(service_any.isRetryableError(new Error('Socket closed'))).toBe(true)
+      expect(service_any.isRetryableError(new Error('ENOTFOUND'))).toBe(true)
+
+      // Non-retryable errors
+      expect(service_any.isRetryableError(new Error('Invalid JSON'))).toBe(false)
+      expect(service_any.isRetryableError(new Error('Missing required field'))).toBe(false)
+      expect(service_any.isRetryableError(new Error('Authentication failed'))).toBe(false)
+    })
+
+    it('should not run if scheduled sync is disabled', async () => {
+      mockConfigService.get.mockImplementation((key: string) => {
+        if (key === 'ENABLE_SCHEDULED_CRUISE_SYNC') return 'false'
+        return undefined
+      })
+
+      await service.scheduledSync()
+
+      expect(mockFtpService.listSailingFiles).not.toHaveBeenCalled()
+    })
+
+    it('should skip if another instance holds the lock', async () => {
+      mockDbService.db.execute.mockResolvedValue([{ acquired: false }])
+
+      await service.scheduledSync()
+
+      expect(mockFtpService.listSailingFiles).not.toHaveBeenCalled()
+    })
+
+    it('should succeed on first attempt without retrying', async () => {
+      mockFtpService.listSailingFiles.mockResolvedValue([])
+
+      await service.scheduledSync()
+
+      expect(mockFtpService.listSailingFiles).toHaveBeenCalledTimes(1)
+    })
+
+    it('should retry on retryable error and succeed on second attempt', async () => {
+      // Mock sleep to avoid waiting in tests
+      const originalSleep = (service as any).sleep
+      ;(service as any).sleep = jest.fn().mockResolvedValue(undefined)
+
+      // First call fails with connection error, second succeeds
+      mockFtpService.listSailingFiles
+        .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+        .mockResolvedValueOnce([])
+      mockFtpService.forceReconnect.mockResolvedValue(undefined)
+
+      await service.scheduledSync()
+
+      expect(mockFtpService.forceReconnect).toHaveBeenCalledTimes(2)
+      expect((service as any).sleep).toHaveBeenCalledTimes(1)
+      // First delay should be 5 minutes (300000ms)
+      expect((service as any).sleep).toHaveBeenCalledWith(300000)
+
+      // Restore original sleep
+      ;(service as any).sleep = originalSleep
+    })
+
+    it('should not retry on non-retryable error', async () => {
+      // Mock sleep to ensure it's not called
+      const sleepMock = jest.fn().mockResolvedValue(undefined)
+      ;(service as any).sleep = sleepMock
+
+      // Fail with a non-retryable error (environment guard)
+      mockConfigService.get.mockImplementation((key: string) => {
+        if (key === 'ENABLE_SCHEDULED_CRUISE_SYNC') return 'true'
+        if (key === 'API_URL') return 'https://api.tailfire.ca'
+        if (key === 'BYPASS_SYNC_ENVIRONMENT_GUARD') return 'false'
+        return undefined
+      })
+
+      mockFtpService.forceReconnect.mockResolvedValue(undefined)
+      mockFtpService.listSailingFiles.mockRejectedValue(new Error('Invalid authentication'))
+
+      await service.scheduledSync()
+
+      // Should not retry for auth errors
+      expect(sleepMock).not.toHaveBeenCalled()
+      expect(mockFtpService.forceReconnect).toHaveBeenCalledTimes(1)
+    })
+
+    it('should give up after max retries', async () => {
+      // Mock sleep to avoid waiting
+      const sleepMock = jest.fn().mockResolvedValue(undefined)
+      ;(service as any).sleep = sleepMock
+
+      // All attempts fail with retryable error
+      mockFtpService.forceReconnect.mockResolvedValue(undefined)
+      mockFtpService.listSailingFiles.mockRejectedValue(new Error('Connection timeout'))
+
+      await service.scheduledSync()
+
+      // Should try 3 times total (initial + 2 retries)
+      expect(mockFtpService.forceReconnect).toHaveBeenCalledTimes(3)
+      // Should have 2 sleep calls (between attempts 1-2 and 2-3)
+      expect(sleepMock).toHaveBeenCalledTimes(2)
+      // Verify exponential backoff: 5min, 10min
+      expect(sleepMock).toHaveBeenNthCalledWith(1, 300000) // 5 minutes
+      expect(sleepMock).toHaveBeenNthCalledWith(2, 600000) // 10 minutes
     })
   })
 })

@@ -13,6 +13,7 @@ This module handles importing cruise catalogue data from the Traveltek FTP serve
 - **Cancellation Support**: Sync jobs can be cancelled mid-operation
 - **Comprehensive Metrics**: Detailed tracking of processed files, skipped files, and errors
 - **Dynamic Year Discovery**: Automatically discovers all year folders on FTP (no hardcoded years)
+- **Automatic Retry with Backoff**: Scheduled syncs retry on transient FTP failures
 
 ## Year Handling
 
@@ -142,6 +143,56 @@ To verify delta sync is working:
 
 4. **Verify skipping**: Check `skipReasons.unchanged` in the response - it should match the count from step 2
 
+## Scheduled Sync
+
+The cruise catalog automatically syncs daily at **2 AM Toronto time** via a cron job. This is controlled by the `ENABLE_SCHEDULED_CRUISE_SYNC` environment variable.
+
+### Retry Logic
+
+The scheduled sync includes automatic retry with exponential backoff for transient FTP failures (connection refused, timeout, network errors):
+
+| Attempt | Delay Before | Time (if 2 AM start) |
+|---------|--------------|----------------------|
+| 1 | - | 2:00 AM |
+| 2 | 5 min | 2:05 AM |
+| 3 | 10 min | 2:15 AM |
+| (fail) | - | Next day 2 AM |
+
+**Retryable errors** (will retry):
+- Connection refused (`ECONNREFUSED`)
+- Connection timeout
+- Network unreachable (`ENOTFOUND`)
+- FTP server errors
+- Socket errors
+
+**Non-retryable errors** (fail immediately):
+- Authentication failures
+- Environment guard failures (non-production)
+- Data validation errors
+
+### Distributed Locking
+
+The scheduled sync uses PostgreSQL advisory locks to prevent concurrent execution across multiple API replicas. Only one instance will run the sync; others will skip if they cannot acquire the lock.
+
+### Monitoring
+
+Watch for these log messages to monitor retry behavior:
+
+```
+# Success on first attempt
+Starting scheduled Traveltek cruise sync (attempt 1/3)
+Scheduled sync completed successfully
+
+# Retry scenario
+Starting scheduled Traveltek cruise sync (attempt 1/3)
+Scheduled sync attempt 1/3 failed: ECONNREFUSED. Retrying in 5 minutes...
+Starting scheduled Traveltek cruise sync (attempt 2/3)
+Scheduled sync completed successfully
+
+# All retries exhausted
+Scheduled sync failed after 3 attempts. Will retry at next scheduled time (2 AM tomorrow).
+```
+
 ## Performance Optimizations
 
 | Optimization | Improvement | Status |
@@ -150,6 +201,7 @@ To verify delta sync is working:
 | Delta Sync | Varies (skip unchanged files) | Implemented |
 | Entity Cache | Reduces DB lookups | Implemented |
 | Concurrent Processing | Parallel downloads | Implemented |
+| Scheduled Sync Retry | Handles transient FTP outages | Implemented |
 
 ## Architecture
 
