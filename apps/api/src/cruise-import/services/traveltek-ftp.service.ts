@@ -314,8 +314,30 @@ export class TraveltekFtpService implements OnModuleDestroy {
   // ============================================================================
 
   /**
-   * List all JSON files matching the filter criteria.
+   * List all JSON files matching the filter criteria (array-based).
    * FTP structure: /year/month/lineid/shipid/codetocruiseid.json
+   *
+   * NOTE: For large syncs (2027+), use listSailingFilesStream() instead
+   * which yields files as discovered for immediate processing.
+   *
+   * By default, only returns current month + future sailings.
+   * Set includeHistorical=true to include past months.
+   */
+  async listSailingFiles(options: FtpSyncOptions = {}): Promise<FtpFileInfo[]> {
+    const files: FtpFileInfo[] = []
+    for await (const file of this.listSailingFilesStream(options)) {
+      files.push(file)
+    }
+    return files
+  }
+
+  /**
+   * Stream sailing files as they are discovered (async generator).
+   * FTP structure: /year/month/lineid/shipid/codetocruiseid.json
+   *
+   * This is the preferred method for large syncs - it yields files immediately
+   * as they're discovered, allowing processing to start without waiting for
+   * complete directory traversal.
    *
    * By default, only returns current month + future sailings.
    * Set includeHistorical=true to include past months.
@@ -325,9 +347,9 @@ export class TraveltekFtpService implements OnModuleDestroy {
    * - Otherwise, dynamically discovers all year folders from FTP root
    *   and scans current year + all future years
    */
-  async listSailingFiles(options: FtpSyncOptions = {}): Promise<FtpFileInfo[]> {
+  async *listSailingFilesStream(options: FtpSyncOptions = {}): AsyncGenerator<FtpFileInfo> {
     const client = await this.ensureConnected()
-    const files: FtpFileInfo[] = []
+    let fileCount = 0
 
     const now = new Date()
     const currentYear = now.getFullYear()
@@ -347,10 +369,11 @@ export class TraveltekFtpService implements OnModuleDestroy {
       // Check for cancellation at year level
       if (options.shouldCancel?.()) {
         this.logger.log('File listing cancelled by user')
-        return files
+        return
       }
 
       const yearPath = `/${year}`
+      this.logger.log(`Scanning year ${year}...`)
 
       try {
         const months = await this.listWithTimeout(client, yearPath)
@@ -360,7 +383,7 @@ export class TraveltekFtpService implements OnModuleDestroy {
           // Check for cancellation at month level
           if (options.shouldCancel?.()) {
             this.logger.log('File listing cancelled by user')
-            return files
+            return
           }
 
           if (!monthDir.isDirectory) continue
@@ -388,7 +411,7 @@ export class TraveltekFtpService implements OnModuleDestroy {
               // Check for cancellation at line level
               if (options.shouldCancel?.()) {
                 this.logger.log('File listing cancelled by user')
-                return files
+                return
               }
 
               if (!lineDir.isDirectory) continue
@@ -419,17 +442,18 @@ export class TraveltekFtpService implements OnModuleDestroy {
                     for (const file of sailingFiles) {
                       if (!file.name.endsWith('.json')) continue
 
-                      files.push({
+                      fileCount++
+                      yield {
                         path: `${shipPath}/${file.name}`,
                         name: file.name,
                         size: file.size,
                         modifiedAt: file.modifiedAt,
-                      })
+                      }
 
                       // Check max files limit
-                      if (options.maxFiles && files.length >= options.maxFiles) {
+                      if (options.maxFiles && fileCount >= options.maxFiles) {
                         this.logger.log(`Reached maxFiles limit: ${options.maxFiles}`)
-                        return files
+                        return
                       }
                     }
                   } catch (err) {
@@ -449,8 +473,7 @@ export class TraveltekFtpService implements OnModuleDestroy {
       }
     }
 
-    this.logger.log(`Found ${files.length} sailing files`)
-    return files
+    this.logger.log(`Streaming complete: ${fileCount} sailing files discovered`)
   }
 
   // ============================================================================
