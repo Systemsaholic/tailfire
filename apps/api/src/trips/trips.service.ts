@@ -4,7 +4,7 @@
  * Business logic for managing trips.
  */
 
-import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common'
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common'
 import { EventEmitter2 } from '@nestjs/event-emitter'
 import * as crypto from 'crypto'
 import { eq, and, or, gte, lte, ilike, sql, desc, asc, inArray } from 'drizzle-orm'
@@ -37,7 +37,6 @@ import {
 
 @Injectable()
 export class TripsService {
-  private readonly logger = new Logger(TripsService.name)
 
   constructor(
     private readonly db: DatabaseService,
@@ -1241,7 +1240,7 @@ export class TripsService {
         const [newItin] = await tx
           .insert(this.db.schema.itineraries)
           .values({
-            tripId: newTrip.id,
+            tripId: newTrip!.id,
             name: itin.name,
             description: itin.description,
             coverPhoto: itin.coverPhoto,
@@ -1253,7 +1252,7 @@ export class TripsService {
             sequenceOrder: itin.sequenceOrder,
           })
           .returning()
-        itineraryIdMap.set(itin.id, newItin.id)
+        itineraryIdMap.set(itin.id, newItin!.id)
       }
 
       // 4. Copy itinerary days
@@ -1269,6 +1268,7 @@ export class TripsService {
           const [newDay] = await tx
             .insert(this.db.schema.itineraryDays)
             .values({
+              agencyId: original.agencyId,
               itineraryId: newItinId,
               dayNumber: day.dayNumber,
               date: day.date,
@@ -1277,7 +1277,7 @@ export class TripsService {
               sequenceOrder: day.sequenceOrder,
             })
             .returning()
-          dayIdMap.set(day.id, newDay.id)
+          dayIdMap.set(day.id, newDay!.id)
         }
       }
 
@@ -1295,6 +1295,7 @@ export class TripsService {
           const [newActivity] = await tx
             .insert(this.db.schema.itineraryActivities)
             .values({
+              agencyId: original.agencyId,
               itineraryDayId: newDayId,
               name: activity.name,
               activityType: activity.activityType,
