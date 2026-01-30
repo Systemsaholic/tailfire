@@ -1,14 +1,16 @@
 -- Fix missing ON DELETE CASCADE for denormalized trip_id FKs
 -- These RLS denormalization columns should cascade when the parent trip is deleted
 
--- package_details.trip_id
+-- package_details.trip_id — drop both old and drizzle-named constraints, re-add with CASCADE
 ALTER TABLE package_details
+  DROP CONSTRAINT IF EXISTS fk_package_details_trip,
   DROP CONSTRAINT IF EXISTS package_details_trip_id_trips_id_fk,
   ADD CONSTRAINT package_details_trip_id_trips_id_fk
     FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE;
 
--- activity_travelers.trip_id
+-- activity_travelers.trip_id — drop both old and drizzle-named constraints, re-add with CASCADE
 ALTER TABLE activity_travelers
+  DROP CONSTRAINT IF EXISTS fk_activity_travelers_trip,
   DROP CONSTRAINT IF EXISTS activity_travelers_trip_id_trips_id_fk,
   ADD CONSTRAINT activity_travelers_trip_id_trips_id_fk
     FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE;
