@@ -187,6 +187,7 @@ export interface UpdateTripDto {
   isArchived?: boolean
   isPublished?: boolean
   timezone?: string // IANA timezone identifier (e.g., 'America/Toronto')
+  tripGroupId?: string | null
 }
 
 export interface UpdateTripCollaboratorDto {
@@ -251,6 +252,7 @@ export interface TripFilterDto {
   isArchived?: boolean
   isPublished?: boolean
   tags?: string[] // Match any of these tags
+  tripGroupId?: string // Filter by trip group
 
   // Date filters
   startDateFrom?: string
@@ -322,6 +324,8 @@ export interface TripResponseDto {
   allowPdfDownloads: boolean
   itineraryStyle: 'side_by_side' | 'stacked' | 'compact'
   coverPhotoUrl: string | null // URL of the trip's cover photo
+  shareToken: string | null
+  tripGroupId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -499,4 +503,55 @@ export interface TripFilterOptionsResponseDto {
   tripTypes: string[]
   /** Distinct tags from user's trips */
   tags: string[]
+  /** Available trip groups for the agency */
+  groups: { id: string; name: string }[]
+}
+
+// ============================================================================
+// SHARE / GROUP DTOs
+// ============================================================================
+
+/** Public-safe trip data for shared links (no travelers, payments, notes) */
+export interface TripShareDto {
+  id: string
+  name: string
+  description: string | null
+  tripType: string | null
+  startDate: string | null
+  endDate: string | null
+  coverPhotoUrl: string | null
+  itineraries: Array<{
+    id: string
+    name: string
+    description: string | null
+    coverPhoto: string | null
+    overview: string | null
+    startDate: string | null
+    endDate: string | null
+  }>
+}
+
+/** Trip group (collection/folder) */
+export interface TripGroupDto {
+  id: string
+  agencyId: string
+  name: string
+  description: string | null
+  tripCount?: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** Update trip group */
+export interface UpdateTripGroupApiDto {
+  name?: string
+  description?: string
+}
+
+/** Minimal trip data for group member listing */
+export interface TripGroupTripDto {
+  id: string
+  name: string
+  status: string
+  startDate: string | null
 }

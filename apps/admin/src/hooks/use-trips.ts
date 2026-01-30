@@ -11,6 +11,9 @@ import type {
   PaginatedTripsResponseDto,
   BulkTripOperationResult,
   TripFilterOptionsResponseDto,
+  TripGroupDto,
+  UpdateTripGroupApiDto,
+  TripGroupTripDto,
 } from '@tailfire/shared-types/api'
 import type { TripStatus } from '@tailfire/shared-types'
 
@@ -38,6 +41,7 @@ export function useTrips(filters: TripFilterDto = {}) {
         search: filters.search,
         status: filters.status,
         tripType: filters.tripType,
+        tripGroupId: filters.tripGroupId,
         startDateFrom: filters.startDateFrom,
         startDateTo: filters.startDateTo,
         endDateFrom: filters.endDateFrom,
@@ -159,6 +163,10 @@ export function useUpdateTrip() {
         queryKey: tripKeys.detail(variables.id),
       })
       queryClient.invalidateQueries({ queryKey: tripKeys.lists() })
+      // Refresh activity feed to show new audit entries
+      queryClient.invalidateQueries({
+        queryKey: ['trips', variables.id, 'activity'],
+      })
     },
 
     // Retry failed mutations
@@ -280,5 +288,100 @@ export function useBulkChangeStatus() {
       // Invalidate all trip queries to refresh
       queryClient.invalidateQueries({ queryKey: tripKeys.all })
     },
+  })
+}
+
+// ============================================================================
+// PUBLISH / UNPUBLISH / DUPLICATE
+// ============================================================================
+
+export function usePublishTrip() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (tripId: string) =>
+      api.patch<TripResponseDto>(`/trips/${tripId}/publish`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: tripKeys.all })
+    },
+  })
+}
+
+export function useUnpublishTrip() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (tripId: string) =>
+      api.patch<TripResponseDto>(`/trips/${tripId}/unpublish`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: tripKeys.all })
+    },
+  })
+}
+
+export function useDuplicateTrip() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (tripId: string) =>
+      api.post<TripResponseDto>(`/trips/${tripId}/duplicate`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: tripKeys.all })
+    },
+  })
+}
+
+// ============================================================================
+// TRIP GROUPS
+// ============================================================================
+
+const tripGroupKeys = {
+  all: ['tripGroups'] as const,
+  list: () => [...tripGroupKeys.all, 'list'] as const,
+}
+
+export function useTripGroups() {
+  return useQuery({
+    queryKey: tripGroupKeys.list(),
+    queryFn: () => api.get<TripGroupDto[]>('/trips/groups'),
+  })
+}
+
+export function useCreateTripGroup() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.post<TripGroupDto>('/trips/groups', { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: tripGroupKeys.all })
+    },
+  })
+}
+
+export function useUpdateTripGroup() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ groupId, data }: { groupId: string; data: UpdateTripGroupApiDto }) =>
+      api.patch<TripGroupDto>(`/trips/groups/${groupId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: tripGroupKeys.all })
+    },
+  })
+}
+
+export function useDeleteTripGroup() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (groupId: string) =>
+      api.delete(`/trips/groups/${groupId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: tripGroupKeys.all })
+      queryClient.invalidateQueries({ queryKey: tripKeys.lists() })
+    },
+  })
+}
+
+export function useTripsByGroup(groupId: string | null) {
+  return useQuery({
+    queryKey: [...tripGroupKeys.all, 'trips', groupId] as const,
+    queryFn: () => api.get<TripGroupTripDto[]>(`/trips/groups/${groupId}/trips`),
+    enabled: !!groupId,
   })
 }
