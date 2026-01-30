@@ -28,7 +28,7 @@ export const activityTravelers = pgTable(
     // Auto-populated by trigger on INSERT
     tripId: uuid('trip_id')
       .notNull()
-      .references(() => trips.id),
+      .references(() => trips.id, { onDelete: 'cascade' }),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

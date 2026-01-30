@@ -533,6 +533,34 @@
       "when": 1769306280000,
       "tag": "20260124031800_add_fusion_booking_to_cruise_details",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1769731200000,
+      "tag": "20260129000000_add_trip_share_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1769731260000,
+      "tag": "20260129000100_add_trip_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1769803539000,
+      "tag": "20260129190539_add_trip_group_audit_enums",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1769857496000,
+      "tag": "20260130132456_fix_trip_cascade_deletes",
+      "breakpoints": true
     }
   ]
 }

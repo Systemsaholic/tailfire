@@ -36,7 +36,7 @@ export const packageDetails = pgTable('package_details', {
   // Auto-populated by trigger on INSERT
   tripId: uuid('trip_id')
     .notNull()
-    .references(() => trips.id),
+    .references(() => trips.id, { onDelete: 'cascade' }),
 
   // Supplier info
   supplierId: uuid('supplier_id').references(() => suppliers.id, { onDelete: 'set null' }),
