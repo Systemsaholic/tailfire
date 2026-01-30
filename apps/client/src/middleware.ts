@@ -12,7 +12,7 @@ import { updateSession } from '@/lib/supabase/middleware'
 const authRoutes = ['/login', '/forgot-password', '/reset-password']
 
 // Routes that are always public (no auth checks)
-const publicRoutes = ['/auth/callback']
+const publicRoutes = ['/auth/callback', '/shared']
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl

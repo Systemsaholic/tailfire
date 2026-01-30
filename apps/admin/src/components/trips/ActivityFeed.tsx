@@ -23,6 +23,8 @@ import {
   FileText,
   Image as ImageIcon,
   HelpCircle,
+  FolderInput,
+  FolderMinus,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { useTripActivity, type ActivityLog } from '@/hooks/use-trip-activity'
@@ -48,6 +50,8 @@ function getActivityIcon(log: ActivityLog) {
     if (log.action === 'deleted') return <Trash2 className={iconClass} />
     if (log.action === 'published') return <Eye className={iconClass} />
     if (log.action === 'unpublished') return <EyeOff className={iconClass} />
+    if (log.action === 'moved_to_group') return <FolderInput className={iconClass} />
+    if (log.action === 'removed_from_group') return <FolderMinus className={iconClass} />
   }
 
   // Traveler activity
@@ -131,6 +135,8 @@ function getIconBgColor(log: ActivityLog): string {
   if (log.action === 'updated') return 'bg-blue-100 text-blue-600'
   if (log.action === 'published') return 'bg-purple-100 text-purple-600'
   if (log.action === 'unpublished') return 'bg-gray-100 text-gray-600'
+  if (log.action === 'moved_to_group') return 'bg-indigo-100 text-indigo-600'
+  if (log.action === 'removed_from_group') return 'bg-orange-100 text-orange-600'
   return 'bg-gray-100 text-gray-600'
 }
 

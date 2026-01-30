@@ -16,8 +16,9 @@ export interface ActivityLog {
     | 'booking_document'
     | 'activity_media'
     | 'trip_media'
+    | 'trip_group'
   entityId: string
-  action: 'created' | 'updated' | 'deleted' | 'status_changed' | 'published' | 'unpublished'
+  action: 'created' | 'updated' | 'deleted' | 'status_changed' | 'published' | 'unpublished' | 'moved_to_group' | 'removed_from_group'
   actorId: string | null
   actorType: 'user' | 'system' | 'api'
   description: string
