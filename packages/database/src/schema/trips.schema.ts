@@ -73,6 +73,7 @@ export const activityEntityTypeEnum = pgEnum('activity_entity_type', [
   'booking_document',
   'activity_media',
   'trip_media',
+  'trip_group',
 ])
 
 export const activityActionEnum = pgEnum('activity_action', [
@@ -81,7 +82,9 @@ export const activityActionEnum = pgEnum('activity_action', [
   'deleted',
   'status_changed',
   'published',
-  'unpublished'
+  'unpublished',
+  'moved_to_group',
+  'removed_from_group',
 ])
 
 export const pricingVisibilityEnum = pgEnum('pricing_visibility', [
@@ -150,6 +153,8 @@ export const trips = pgTable('trips', {
   // Settings
   isArchived: boolean('is_archived').default(false).notNull(),
   isPublished: boolean('is_published').default(false).notNull(),
+  shareToken: varchar('share_token', { length: 64 }),
+  tripGroupId: uuid('trip_group_id'),
 
   // Cover Photo (denormalized for quick access - synced from trip_media)
   coverPhotoUrl: text('cover_photo_url'),
@@ -159,6 +164,20 @@ export const trips = pgTable('trips', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   createdBy: uuid('created_by'), // FK to users
   updatedBy: uuid('updated_by'), // FK to users
+})
+
+// ============================================================================
+// TABLE: trip_groups (trip collections/folders)
+// ============================================================================
+
+export const tripGroups = pgTable('trip_groups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  agencyId: uuid('agency_id').notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  createdBy: uuid('created_by'),
 })
 
 // ============================================================================
@@ -370,7 +389,16 @@ export const tripsRelations = relations(trips, ({ one, many }) => ({
   travelerGroups: many(travelerGroups),
   // Itineraries
   itineraries: many(itineraries),
+  // Trip Group
+  tripGroup: one(tripGroups, {
+    fields: [trips.tripGroupId],
+    references: [tripGroups.id]
+  }),
   // Media relation defined in trip-media.schema.ts to avoid circular imports
+}))
+
+export const tripGroupsRelations = relations(tripGroups, ({ many }) => ({
+  trips: many(trips),
 }))
 
 export const tripCollaboratorsRelations = relations(tripCollaborators, ({ one }) => ({

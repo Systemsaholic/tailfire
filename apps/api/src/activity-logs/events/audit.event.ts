@@ -41,7 +41,7 @@ export interface AuditMetadata {
 /**
  * Audit actions that can be logged
  */
-export type AuditAction = 'created' | 'updated' | 'deleted' | 'status_changed'
+export type AuditAction = 'created' | 'updated' | 'deleted' | 'status_changed' | 'moved_to_group' | 'removed_from_group'
 
 /**
  * Entity types that can be audited
@@ -59,6 +59,7 @@ export type AuditEntityType =
   | 'booking_document'
   | 'activity_media'
   | 'trip_media'
+  | 'trip_group'
 
 /**
  * Generic audit event for all entity changes
