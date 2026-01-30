@@ -1940,6 +1940,8 @@ export class ComponentOrchestrationService {
       }
       /** Skip deleting existing port activities (for newly created cruises) */
       skipDelete?: boolean
+      /** Auto-extend itinerary dates to fit the cruise (instead of throwing an error) */
+      autoExtendItinerary?: boolean
     }
   ): Promise<{
     created: PortInfoComponentDto[]
@@ -2051,6 +2053,56 @@ export class ComponentOrchestrationService {
     // Validate cruise has required dates (use cruise details dates, not base activity dates)
     if (!cruiseDetails.departureDate || !cruiseDetails.arrivalDate) {
       throw new BadRequestException('Cruise must have departure and arrival dates to generate port schedule')
+    }
+
+    // Validate cruise dates fall within itinerary dates
+    // Fetch the itinerary to get its date bounds
+    stepStart = Date.now()
+    const [itinerary] = await this.db.client
+      .select({
+        startDate: this.db.schema.itineraries.startDate,
+        endDate: this.db.schema.itineraries.endDate,
+      })
+      .from(this.db.schema.itineraries)
+      .where(eq(this.db.schema.itineraries.id, itineraryId))
+      .limit(1)
+    timings['getItineraryDates'] = Date.now() - stepStart
+
+    if (itinerary?.startDate && itinerary?.endDate) {
+      const itineraryStart = new Date(itinerary.startDate + 'T00:00:00')
+      const itineraryEnd = new Date(itinerary.endDate + 'T00:00:00')
+      const cruiseDeparture = new Date(cruiseDetails.departureDate + 'T00:00:00')
+      const cruiseArrival = new Date(cruiseDetails.arrivalDate + 'T00:00:00')
+
+      if (cruiseDeparture < itineraryStart || cruiseArrival > itineraryEnd) {
+        if (cruiseData?.autoExtendItinerary) {
+          // Auto-extend itinerary dates to accommodate the cruise
+          const newStartDate = cruiseDeparture < itineraryStart ? cruiseDetails.departureDate : itinerary.startDate
+          const newEndDate = cruiseArrival > itineraryEnd ? cruiseDetails.arrivalDate : itinerary.endDate
+
+          stepStart = Date.now()
+          await this.db.client
+            .update(this.db.schema.itineraries)
+            .set({ startDate: newStartDate, endDate: newEndDate })
+            .where(eq(this.db.schema.itineraries.id, itineraryId))
+          timings['extendItineraryDates'] = Date.now() - stepStart
+
+          this.logger.log({
+            message: 'Auto-extended itinerary dates to accommodate cruise',
+            itineraryId,
+            originalDates: { start: itinerary.startDate, end: itinerary.endDate },
+            newDates: { start: newStartDate, end: newEndDate },
+            cruiseDates: { departure: cruiseDetails.departureDate, arrival: cruiseDetails.arrivalDate },
+          })
+        } else {
+          throw new BadRequestException(
+            `Cruise dates (${cruiseDetails.departureDate} to ${cruiseDetails.arrivalDate}) ` +
+            `do not fit within itinerary dates (${itinerary.startDate} to ${itinerary.endDate}). ` +
+            `Please select a cruise that departs on or after ${itinerary.startDate} and returns by ${itinerary.endDate}, ` +
+            `or adjust the itinerary dates to accommodate this cruise.`
+          )
+        }
+      }
     }
 
     // Delete any existing port_info activities linked to this cruise

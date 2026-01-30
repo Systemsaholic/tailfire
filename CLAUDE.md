@@ -25,7 +25,19 @@
 3. Verify changes work on preview environment
 4. Create PR and merge to `main` for production deployment
 
-### 3. NEVER Run Cruise Sync on Non-Production Environments
+### 3. ALWAYS Use tmux Pane 2 and Full Turbo Dev
+
+**ALWAYS:**
+- Use **tmux pane 2** for all terminal interactions (dev server, builds, etc.)
+- Restart the **full turbo repo** (`turbo dev`), never just a single app (`turbo dev --filter=@tailfire/admin`)
+- To restart: `tmux send-keys -t 2 C-c && sleep 2 && tmux send-keys -t 2 'turbo dev' Enter`
+
+**Pane layout:**
+- Pane 0: Claude Code
+- Pane 1: Codex
+- Pane 2: Dev server / terminal
+
+### 4. NEVER Run Cruise Sync on Non-Production Environments
 
 **DO NOT:**
 - Run `cruise-import/sync` endpoint against localhost or dev API
@@ -205,6 +217,90 @@ Start all services: `turbo dev` from project root
 | `stg` | Tailfire-Preview | CI/CD preview deployments |
 | `prd` | Tailfire-Prod | Production |
 
+### Railway Environments
+
+Railway has TWO environments with separate `api-dev` services:
+
+| Railway Environment | Railway Service | Supabase Project | Doppler Config |
+|---------------------|-----------------|------------------|----------------|
+| `production` | `api-prod` | Tailfire-Prod | `prd` |
+| `production` | `api-dev` | ⚠️ Legacy - do not use | - |
+| `preview` | `api-dev` | Tailfire-Preview | `stg` |
+
+> **IMPORTANT:** The `api-dev` service in Railway's `production` environment is legacy and should not be used. TF-Demo uses the `api-dev` service in Railway's `preview` environment.
+
+### ⚠️ CRITICAL: Doppler and Railway Are NOT Automatically Synced
+
+**There is NO automatic sync between Doppler and Railway.** When you update a secret in Doppler, you MUST also update it in Railway manually.
+
+This has caused multiple production issues where:
+1. Doppler has correct Preview project credentials (`gaqacfstpnmwphekjzae`)
+2. Railway still has old Dev project credentials (`hplioumsywqgtnhwcivw`)
+3. Result: 401 Unauthorized errors, wrong database data, auth failures
+
+**Variables That MUST Match Between Doppler `stg` and Railway `preview` → `api-dev`:**
+
+| Variable | Must Point To | Project Ref |
+|----------|---------------|-------------|
+| `DATABASE_URL` | Tailfire-Preview pooler | `postgres.gaqacfstpnmwphekjzae` |
+| `SUPABASE_URL` | Tailfire-Preview | `https://gaqacfstpnmwphekjzae.supabase.co` |
+| `SUPABASE_JWT_SECRET` | Tailfire-Preview JWT | Retrieved from Supabase API |
+| `SUPABASE_ANON_KEY` | Tailfire-Preview anon key | From Supabase Dashboard |
+| `SUPABASE_SERVICE_ROLE_KEY` | Tailfire-Preview service key | From Supabase Dashboard |
+
+**Verification Workflow (Run After Any Doppler Changes):**
+```bash
+# 1. Switch to correct Railway environment
+railway environment preview
+railway service api-dev
+
+# 2. Compare Doppler vs Railway
+echo "=== Doppler stg ===" && doppler secrets -p tailfire -c stg | grep -E "DATABASE_URL|SUPABASE_URL"
+echo "=== Railway preview ===" && railway variables --kv | grep -E "DATABASE_URL|SUPABASE_URL"
+
+# 3. If mismatch, sync from Doppler to Railway
+railway variables --set "DATABASE_URL=$(doppler secrets get DATABASE_URL -p tailfire -c stg --plain)"
+railway variables --set "SUPABASE_URL=$(doppler secrets get SUPABASE_URL -p tailfire -c stg --plain)"
+railway variables --set "SUPABASE_JWT_SECRET=$(doppler secrets get SUPABASE_JWT_SECRET -p tailfire -c stg --plain)"
+
+# 4. Verify service redeployed with new variables
+railway service status
+```
+
+**Future Fix:** Set up native Doppler-Railway integration (see `docs/DEPLOYMENT_API.md` for instructions).
+
+### Critical Supabase Secrets
+
+Each Supabase project has unique secrets that MUST match in the corresponding Doppler/Railway config:
+
+| Secret | Description | How to Retrieve |
+|--------|-------------|-----------------|
+| `SUPABASE_JWT_SECRET` | Signs/verifies auth tokens | Supabase Management API: `GET /v1/projects/{ref}/postgrest` → `jwt_secret` |
+| `SUPABASE_ANON_KEY` | Public API key | Supabase Dashboard → Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | Admin API key | Supabase Dashboard → Settings → API |
+| `SUPABASE_URL` | Project URL | `https://{project_ref}.supabase.co` |
+
+**Common Misconfigurations:**
+- Using dev project's `SUPABASE_JWT_SECRET` in preview/prod → 401 Unauthorized errors
+- JWT tokens signed by one Supabase project cannot be verified by another project's secret
+
+**Verification Commands:**
+```bash
+# Check Railway environment and service
+railway environment preview
+railway service api-dev
+railway variables | grep SUPABASE
+
+# Check Doppler config
+doppler secrets -p tailfire -c stg | grep SUPABASE
+
+# Get correct JWT secret from Supabase
+ACCESS_TOKEN=$(doppler secrets get SUPABASE_ACCESS_TOKEN -p tailfire -c stg --plain)
+PROJECT_REF="gaqacfstpnmwphekjzae"  # Preview project
+curl -s "https://api.supabase.com/v1/projects/${PROJECT_REF}/postgrest" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq '.jwt_secret'
+```
+
 ### Running Migrations
 
 ```bash
@@ -284,6 +380,7 @@ The cruise catalog data is synchronized from Traveltek FTP and uses Foreign Data
 
 ### Key Points
 - **ONLY Production runs cruise sync** - scheduled CRON at 2 AM Toronto time
+- **Automatic retry on FTP failures** - 3 attempts with exponential backoff (5min, 10min delays)
 - **Dev and Preview use FDW** - foreign tables that read directly from Production
 - **DO NOT run sync locally** - it will create local tables that break FDW architecture
 - The FDW migration (`20260104205000_setup_catalog_fdw.sql`) auto-detects environment

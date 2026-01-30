@@ -39,11 +39,13 @@ const TRIP_TYPE_LABELS: Record<string, string> = {
 export function TripsFilterPanel({ filters, onFiltersChange }: TripsFilterPanelProps) {
   const [statusOpen, setStatusOpen] = useState(false)
   const [tripTypeOpen, setTripTypeOpen] = useState(false)
+  const [groupOpen, setGroupOpen] = useState(false)
   const { data: filterOptions } = useTripFilterOptions()
 
   const activeFilterCount = [
     filters.status,
     filters.tripType,
+    filters.tripGroupId,
     filters.isArchived !== undefined,
   ].filter(Boolean).length
 
@@ -63,6 +65,15 @@ export function TripsFilterPanel({ filters, onFiltersChange }: TripsFilterPanelP
       page: 1,
     })
     setTripTypeOpen(false)
+  }
+
+  const handleGroupSelect = (groupId: string) => {
+    onFiltersChange({
+      ...filters,
+      tripGroupId: filters.tripGroupId === groupId ? undefined : groupId,
+      page: 1,
+    })
+    setGroupOpen(false)
   }
 
   const handleClearFilters = () => {
@@ -162,6 +173,51 @@ export function TripsFilterPanel({ filters, onFiltersChange }: TripsFilterPanelP
           </Command>
         </PopoverContent>
       </Popover>
+
+      {/* Group Filter */}
+      {(filterOptions?.groups?.length ?? 0) > 0 && (
+        <Popover open={groupOpen} onOpenChange={setGroupOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(filters.tripGroupId && 'border-tern-teal-500 bg-tern-teal-50')}
+            >
+              Group
+              {filters.tripGroupId && (
+                <Badge variant="secondary" className="ml-2 px-1.5">
+                  {filterOptions?.groups?.find((g) => g.id === filters.tripGroupId)?.name || 'Selected'}
+                </Badge>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[200px] p-0" align="start">
+            <Command>
+              <CommandInput placeholder="Search group..." />
+              <CommandList>
+                <CommandEmpty>No group found.</CommandEmpty>
+                <CommandGroup>
+                  {(filterOptions?.groups || []).map((group) => (
+                    <CommandItem
+                      key={group.id}
+                      value={group.name}
+                      onSelect={() => handleGroupSelect(group.id)}
+                    >
+                      <Check
+                        className={cn(
+                          'mr-2 h-4 w-4',
+                          filters.tripGroupId === group.id ? 'opacity-100' : 'opacity-0'
+                        )}
+                      />
+                      {group.name}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      )}
 
       {/* Clear Filters */}
       {activeFilterCount > 0 && (

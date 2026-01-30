@@ -245,12 +245,20 @@ export function toCustomCruiseDefaults(
  * Maps form data to API payload with proper type conversions.
  */
 export function toCustomCruiseApiPayload(data: CustomCruiseFormData): CreateCustomCruiseActivityDto {
+  // Derive startDatetime/endDatetime from cruise departure/arrival dates
+  // These are required for spanning activity detection (multi-day cruises)
+  const startDatetime = data.customCruiseDetails.departureDate || undefined
+  const endDatetime = data.customCruiseDetails.arrivalDate || undefined
+
   return {
     itineraryDayId: data.itineraryDayId,
     componentType: 'custom_cruise',
     name: data.name || generateCruiseName(data),
     description: data.description || undefined,
     status: data.status,
+    // Timing - critical for spanning activity detection
+    startDatetime,
+    endDatetime,
     totalPriceCents: data.totalPriceCents ?? undefined,
     taxesAndFeesCents: data.taxesAndFeesCents ?? undefined,
     currency: data.currency,

@@ -30,6 +30,7 @@ import { GooglePlacesHotelsProvider } from '../google-places/google-places-hotel
 import { AmadeusHotelsProvider } from '../amadeus/amadeus-hotels.provider'
 import { BookingComHotelsProvider } from '../booking-com/booking-com-hotels.provider'
 import { ApiCredentialsService } from '../../../api-credentials/api-credentials.service'
+import { CredentialResolverService } from '../../../api-credentials/credential-resolver.service'
 import { ActivityMediaService, ExternalUrlAttribution } from '../../../trips/activity-media.service'
 import { StorageService } from '../../../trips/storage.service'
 import { ApiProvider } from '@tailfire/shared-types'
@@ -64,6 +65,7 @@ export class HotelsController {
     private readonly amadeus: AmadeusHotelsProvider,
     private readonly bookingCom: BookingComHotelsProvider,
     private readonly credentialsService: ApiCredentialsService,
+    private readonly credentialResolver: CredentialResolverService,
     private readonly httpService: HttpService,
     private readonly mediaService: ActivityMediaService,
     private readonly storageService: StorageService
@@ -372,9 +374,9 @@ export class HotelsController {
       )
     }
 
-    // Get Google Places API key
+    // Get Google Places API key from env (Doppler)
     await this.initializeProviderCredentials()
-    const googleCreds = await this.credentialsService.getDecryptedCredentials(ApiProvider.GOOGLE_PLACES)
+    const googleCreds = await this.credentialResolver.resolve(ApiProvider.GOOGLE_PLACES).catch(() => null)
     if (!googleCreds?.apiKey) {
       throw new BadRequestException('Google Places API credentials not configured')
     }
@@ -490,10 +492,8 @@ export class HotelsController {
    */
   private async initializeProviderCredentials(): Promise<void> {
     try {
-      // Get Google Places credentials
-      const googleCreds = await this.credentialsService.getDecryptedCredentials(
-        ApiProvider.GOOGLE_PLACES
-      )
+      // Get Google Places credentials from env (Doppler)
+      const googleCreds = await this.credentialResolver.resolve(ApiProvider.GOOGLE_PLACES)
       if (googleCreds) {
         await this.googlePlaces.setCredentials(googleCreds)
       }
@@ -502,10 +502,8 @@ export class HotelsController {
     }
 
     try {
-      // Get Amadeus credentials
-      const amadeusCreds = await this.credentialsService.getDecryptedCredentials(
-        ApiProvider.AMADEUS
-      )
+      // Get Amadeus credentials from env (Doppler)
+      const amadeusCreds = await this.credentialResolver.resolve(ApiProvider.AMADEUS)
       if (amadeusCreds) {
         await this.amadeus.setCredentials(amadeusCreds)
       }

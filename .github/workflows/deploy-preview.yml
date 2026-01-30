@@ -1,4 +1,4 @@
-name: Deploy to Dev
+name: Deploy to Preview
 
 on:
   push:
@@ -15,7 +15,7 @@ jobs:
       - name: Fetch secrets from Doppler
         uses: dopplerhq/secrets-fetch-action@v1.3.1
         with:
-          doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
+          doppler-token: ${{ secrets.DOPPLER_TOKEN_PREVIEW }}
           inject-env-vars: true
 
       - name: Verify DB connection mode
@@ -80,7 +80,7 @@ jobs:
       - name: Fetch secrets from Doppler
         uses: dopplerhq/secrets-fetch-action@v1.3.1
         with:
-          doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
+          doppler-token: ${{ secrets.DOPPLER_TOKEN_PREVIEW }}
           inject-env-vars: true
 
       - name: Install Railway CLI
@@ -116,7 +116,7 @@ jobs:
       - name: Fetch secrets from Doppler
         uses: dopplerhq/secrets-fetch-action@v1.3.1
         with:
-          doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
+          doppler-token: ${{ secrets.DOPPLER_TOKEN_PREVIEW }}
           inject-env-vars: true
 
       - name: Install Vercel CLI
@@ -151,7 +151,7 @@ jobs:
       - name: Fetch secrets from Doppler
         uses: dopplerhq/secrets-fetch-action@v1.3.1
         with:
-          doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
+          doppler-token: ${{ secrets.DOPPLER_TOKEN_PREVIEW }}
           inject-env-vars: true
 
       - name: Install Vercel CLI
@@ -177,7 +177,7 @@ jobs:
       - name: Fetch secrets from Doppler
         uses: dopplerhq/secrets-fetch-action@v1.3.1
         with:
-          doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
+          doppler-token: ${{ secrets.DOPPLER_TOKEN_PREVIEW }}
           inject-env-vars: true
 
       - name: Install Vercel CLI

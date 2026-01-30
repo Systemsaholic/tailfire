@@ -74,6 +74,10 @@ export class TripFilterDto {
   })
   tags?: string[]
 
+  @IsOptional()
+  @IsUUID()
+  tripGroupId?: string
+
   // Date filters
   @IsOptional()
   @IsDateString()

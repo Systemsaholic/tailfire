@@ -160,6 +160,18 @@ export function LodgingForm({
   const searchParams = useSearchParams()
   const isEditing = !!activity
 
+  // Derive effective dayDate from props or days array
+  // This handles the case where dayDate prop is undefined because days hadn't loaded
+  // when page.tsx rendered, but days is now available via the prop
+  const effectiveDayDate = useMemo(() => {
+    if (dayDate) return dayDate
+    if (dayId && days.length > 0) {
+      const matchingDay = days.find((d) => d.id === dayId)
+      return matchingDay?.date ?? null
+    }
+    return null
+  }, [dayDate, dayId, days])
+
   // The effective dayId: derived from check-in date in pendingDay mode, otherwise use prop
   // Note: checkInDateValue is watched below at line ~242, day resolution happens after that
 
@@ -295,6 +307,36 @@ export function LodgingForm({
       setValue('itineraryDayId', computedDayId, { shouldDirty: false })
     }
   }, [pendingDay, computedDayId, setValue])
+
+  // Auto-populate check-in date from day context (handles async loading)
+  // Lodging uses Date objects; convert dayDate string to Date
+  // Use ref to track if we've already auto-populated (avoid overwriting user changes)
+  const dayDateAppliedRef = useRef(false)
+
+  // Reset the ref when dayId changes (handles navigation between different days)
+  useEffect(() => {
+    dayDateAppliedRef.current = false
+  }, [dayId])
+
+  // Auto-populate check-in/check-out dates from day context
+  // Uses watched checkInDateValue to ensure effect reruns when form initializes
+  // effectiveDayDate handles async loading: derives date from days prop if dayDate is undefined
+  useEffect(() => {
+    if (isEditing) return
+    if (dayDateAppliedRef.current) return
+    if (!effectiveDayDate) return
+    // Only set if date field is empty
+    if (!checkInDateValue) {
+      dayDateAppliedRef.current = true
+      // Parse effectiveDayDate at noon to avoid timezone edge cases
+      const dateObj = new Date(effectiveDayDate + 'T12:00:00')
+      setValue('lodgingDetails.checkInDate', dateObj, { shouldDirty: false })
+      // Also set checkout to day after
+      const checkoutDate = new Date(dateObj)
+      checkoutDate.setDate(checkoutDate.getDate() + 1)
+      setValue('lodgingDetails.checkOutDate', checkoutDate, { shouldDirty: false })
+    }
+  }, [effectiveDayDate, isEditing, checkInDateValue, setValue])
 
   // Fetch lodging data (for edit mode)
   const { data: lodgingData } = useLodging(activityId || '')

@@ -29,13 +29,15 @@ import { useRouter, useParams } from 'next/navigation'
 import { parseISODate } from '@/lib/date-utils'
 import { getActivityTypeMetadata, filterItineraryActivities, type UIActivityType } from '@/lib/activity-constants'
 import { useActivityNavigation } from '@/hooks/use-activity-navigation'
+import type { CruiseColorSet } from '@/lib/cruise-color-utils'
 
 interface DaySectionProps {
   day: ItineraryDayWithActivitiesDto
   itineraryId: string
+  cruiseColorMap?: Map<string, CruiseColorSet>
 }
 
-export function DaySection({ day, itineraryId }: DaySectionProps) {
+export function DaySection({ day, itineraryId, cruiseColorMap }: DaySectionProps) {
   const router = useRouter()
   const params = useParams<{ id: string }>()
   const { toast } = useToast()
@@ -175,6 +177,7 @@ export function DaySection({ day, itineraryId }: DaySectionProps) {
                       activity={activity}
                       dayId={day.id}
                       dayDate={day.date}
+                      cruiseColor={cruiseColorMap?.get(activity.id)}
                     />
                   ))}
                 </div>

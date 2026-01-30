@@ -750,6 +750,8 @@ export class TypedActivitiesController {
       }
       /** Skip deleting existing port activities (for newly created cruises) */
       skipDelete?: boolean
+      /** Auto-extend itinerary dates to fit the cruise (instead of throwing an error) */
+      autoExtendItinerary?: boolean
     }
   ): Promise<{ created: PortInfoComponentDto[]; deleted: number }> {
     // Validate input when cruiseData is provided
@@ -792,6 +794,7 @@ export class TypedActivitiesController {
           itineraryId: body.itineraryId,
           customCruiseDetails: body.customCruiseDetails,
           skipDelete: body.skipDelete,
+          autoExtendItinerary: body.autoExtendItinerary,
         }
       : undefined
     return this.orchestrationService.generateCruisePortSchedule(id, cruiseData)

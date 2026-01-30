@@ -54,6 +54,7 @@ const ALLOWED_FIELDS: Record<string, string[]> = {
   itinerary: ['name', 'status', 'startDate', 'endDate', 'isSelected'],
   contact: ['firstName', 'lastName', 'displayName'],
   user: ['firstName', 'lastName', 'displayName', 'role'],
+  trip_group: ['name', 'description'],
 }
 
 /**
@@ -187,7 +188,7 @@ export function computeAuditDiff(
  * @returns Description string for the activity log
  */
 export function buildAuditDescription(
-  action: 'created' | 'updated' | 'deleted' | 'status_changed',
+  action: 'created' | 'updated' | 'deleted' | 'status_changed' | 'moved_to_group' | 'removed_from_group',
   entityType: string,
   displayName: string
 ): string {
@@ -196,10 +197,17 @@ export function buildAuditDescription(
     updated: 'Updated',
     deleted: 'Deleted',
     status_changed: 'Changed status of',
+    moved_to_group: 'Moved to group',
+    removed_from_group: 'Removed from group',
   }
 
   // Format entity type for display (e.g., 'activity_document' -> 'activity document')
   const formattedType = entityType.replace(/_/g, ' ')
+
+  // Special formatting for group move actions — description reads better without entity type
+  if (action === 'moved_to_group' || action === 'removed_from_group') {
+    return `${actionVerb[action]} — ${displayName}`
+  }
 
   return `${actionVerb[action] || 'Modified'} ${formattedType}: ${displayName}`
 }

@@ -58,11 +58,18 @@ GET https://fusionapi.traveltek.net/2.1/json/cruiseresults.pl?sid={SID}&requesti
 
 ## Session Management
 
-The FusionAPI is **stateful** and uses a `sessionkey` (UUID) to maintain context across requests.
+The FusionAPI is **stateful** and uses a `sessionkey` (string, up to 100 chars) to maintain context across requests.
 
-- Sessions are valid for **2+ hours** of inactivity
+### Two Expiry Times
+
+| Expiry | Duration | Purpose |
+|--------|----------|---------|
+| **Session** | 2+ hours | FusionAPI stateful context |
+| **Cabin Hold** | 15-30 min | Inventory reservation when added to basket |
+
 - The `sessionkey` links search results to basket operations
 - Always pass the same `sessionkey` throughout a booking flow
+- **Note:** Cabin holds expire faster than sessions. Display countdown to client.
 
 ## Booking Flow
 
@@ -126,7 +133,7 @@ GET /cruiseresults.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&adults=2&sta
 |-----------|------|-------------|
 | `sid` | String | **Required.** Site ID from `TRAVELTEK_SID` |
 | `requestid` | String | **Required.** OAuth access token |
-| `sessionkey` | UUID | Session identifier (create new or reuse) |
+| `sessionkey` | String | Session identifier (create new or reuse) |
 | `startdate` | Date | Departure date (YYYY-MM-DD) |
 | `enddate` | Date | Latest departure date |
 | `destinations` | String | Destination codes (comma-separated) |
@@ -155,7 +162,7 @@ GET /cruiseratecodes.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocrui
 |-----------|------|-------------|
 | `sid` | String | **Required.** Site ID |
 | `requestid` | String | **Required.** OAuth access token |
-| `sessionkey` | UUID | Session identifier |
+| `sessionkey` | String | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
 
@@ -176,7 +183,7 @@ GET /cruisecabingrades.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocr
 |-----------|------|-------------|
 | `sid` | String | **Required.** Site ID |
 | `requestid` | String | **Required.** OAuth access token |
-| `sessionkey` | UUID | Session identifier |
+| `sessionkey` | String | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
 | `farecode` | String | Rate code (optional filter) |
@@ -200,7 +207,7 @@ GET /cruisecabingradebreakdown.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&
 |-----------|------|-------------|
 | `sid` | String | **Required.** Site ID |
 | `requestid` | String | **Required.** OAuth access token |
-| `sessionkey` | UUID | Session identifier |
+| `sessionkey` | String | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
 | `gradeno` | Integer | Cabin grade number |
@@ -225,7 +232,7 @@ GET /cruisecabins.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocruisei
 |-----------|------|-------------|
 | `sid` | String | **Required.** Site ID |
 | `requestid` | String | **Required.** OAuth access token |
-| `sessionkey` | UUID | Session identifier |
+| `sessionkey` | String | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
 | `gradeno` | Integer | Cabin grade number |
@@ -248,7 +255,7 @@ GET /cruisegetpaxdata.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&cruiselin
 |-----------|------|-------------|
 | `sid` | String | **Required.** Site ID |
 | `requestid` | String | **Required.** OAuth access token |
-| `sessionkey` | UUID | Session identifier |
+| `sessionkey` | String | Session identifier |
 | `cruiseline` | String | Cruise line code |
 | `pastpaxid` | String | Past passenger ID/loyalty number |
 
@@ -265,7 +272,7 @@ GET /basketadd.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}&codetocruiseid={
 |-----------|------|-------------|
 | `sid` | String | **Required.** Site ID |
 | `requestid` | String | **Required.** OAuth access token |
-| `sessionkey` | UUID | Session identifier |
+| `sessionkey` | String | Session identifier |
 | `codetocruiseid` | String | From search results |
 | `resultno` | Integer | From search results |
 | `gradeno` | Integer | Selected cabin grade |
@@ -290,7 +297,7 @@ GET /basket.pl?sid={SID}&requestid={TOKEN}&sessionkey={UUID}
 |-----------|------|-------------|
 | `sid` | String | **Required.** Site ID |
 | `requestid` | String | **Required.** OAuth access token |
-| `sessionkey` | UUID | Session identifier |
+| `sessionkey` | String | Session identifier |
 
 **Response includes:**
 - All items in basket
@@ -436,29 +443,64 @@ curl "${TRAVELTEK_API_URL}/cruiseresults.pl?sid=${TRAVELTEK_SID}&requestid=${TOK
 
 > **Note:** To run these commands locally, first load credentials with: `eval $(doppler secrets download --no-file --format=env -p tailfire -c dev)`
 
-## Proposed Architecture
+## Implementation Status
 
-> **Status:** This module is **not yet implemented**. The structure below is the proposed implementation plan.
+> **Status:** ✅ **IMPLEMENTED** (January 2026)
 > See [CRUISE_ARCHITECTURE.md](../../../docs/CRUISE_ARCHITECTURE.md) for complete system documentation.
 
+### Module Structure
+
 ```
-cruise-booking/                         # TO BE IMPLEMENTED
-├── cruise-booking.module.ts            # NestJS module
-├── cruise-booking.controller.ts        # HTTP endpoints
+cruise-booking/
+├── cruise-booking.module.ts            # NestJS module with HttpModule
+├── cruise-booking.controller.ts        # 10 endpoints with role-based guards
+├── index.ts                            # Public exports
 ├── services/
-│   ├── traveltek-auth.service.ts       # OAuth token management with caching
-│   ├── fusion-api.service.ts           # FusionAPI client wrapper
-│   ├── session.service.ts              # Session state management
-│   ├── basket.service.ts               # Basket operations
-│   └── booking.service.ts              # Booking creation
+│   ├── traveltek-auth.service.ts       # OAuth token caching (uses expires_in from response)
+│   ├── fusion-api.service.ts           # Low-level HTTP client with retry logic
+│   ├── booking-session.service.ts      # Session CRUD, handoff authorization, idempotency
+│   └── booking.service.ts              # High-level orchestration
 ├── dto/
 │   ├── search.dto.ts                   # Search request/response
-│   ├── cabin-grade.dto.ts              # Cabin pricing DTOs
-│   ├── basket.dto.ts                   # Basket DTOs
-│   └── booking.dto.ts                  # Booking DTOs
+│   ├── rate-code.dto.ts                # Rate code selection
+│   ├── cabin-grade.dto.ts              # Cabin categories/grades
+│   ├── cabin.dto.ts                    # Specific cabins + deck plans
+│   ├── basket.dto.ts                   # Basket operations
+│   └── booking.dto.ts                  # Passengers + preferences
 └── types/
-    └── fusion-api.types.ts             # TypeScript interfaces
+    └── fusion-api.types.ts             # FusionAPI type definitions
 ```
+
+### API Endpoints (10 total)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/cruise-booking/search` | POST | Search cruises |
+| `/cruise-booking/rates` | GET | Get rate codes |
+| `/cruise-booking/cabin-grades` | GET | Get cabin grades |
+| `/cruise-booking/cabins` | GET | Get cabins with deck plans |
+| `/cruise-booking/basket` | POST | Add to basket (holds cabin) |
+| `/cruise-booking/basket/:sessionId` | GET | Get basket contents |
+| `/cruise-booking/basket/:sessionId/:itemkey` | DELETE | Remove from basket |
+| `/cruise-booking/book` | POST | Complete booking |
+| `/cruise-booking/proposal/:activityId` | GET | Get proposal (handoff flow) |
+| `/cruise-booking/session/:sessionId` | DELETE | Cancel session |
+
+### Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `cruise_booking_sessions` | Ephemeral FusionAPI session state |
+| `cruise_booking_idempotency` | Prevents double-bookings on retry (24h TTL) |
+| `custom_cruise_details.fusion_booking_*` | Durable booking confirmation data |
+
+### Booking Flows
+
+| Flow | Description | Session Owner |
+|------|-------------|---------------|
+| **Agent** | Agent searches → proposes → books | Agent throughout |
+| **Client Handoff** | Agent searches → proposes → Client books | Agent starts, Client continues |
+| **OTA** | Client searches on OTA → books | Client throughout |
 
 ## Related Documentation
 

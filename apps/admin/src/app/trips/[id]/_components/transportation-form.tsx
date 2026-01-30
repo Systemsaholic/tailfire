@@ -199,6 +199,18 @@ export function TransportationForm({
   const searchParams = useSearchParams()
   const isEditing = !!activity
 
+  // Derive effective dayDate from props or days array
+  // This handles the case where dayDate prop is undefined because days hadn't loaded
+  // when page.tsx rendered, but days is now available via the prop
+  const effectiveDayDate = useMemo(() => {
+    if (dayDate) return dayDate
+    if (dayId && days.length > 0) {
+      const matchingDay = days.find((d) => d.id === dayId)
+      return matchingDay?.date ?? null
+    }
+    return null
+  }, [dayDate, dayId, days])
+
   const [activeTab, setActiveTab] = useState(() => {
     const tabParam = searchParams.get('tab')
     return tabParam === 'booking' ? 'pricing' : 'general'
@@ -310,6 +322,28 @@ export function TransportationForm({
       setValue('itineraryDayId', computedDayId, { shouldDirty: false })
     }
   }, [pendingDay, computedDayId, setValue])
+
+  // Track if dayDate has been auto-applied (prevents duplicate application)
+  const dayDateAppliedRef = useRef(false)
+
+  // Reset the ref when dayId changes (handles navigation between different days)
+  useEffect(() => {
+    dayDateAppliedRef.current = false
+  }, [dayId])
+
+  // Auto-populate pickup date from day context (only for new activities)
+  // Uses watched pickupDateValue to ensure effect reruns when form initializes
+  // effectiveDayDate handles async loading: derives date from days prop if dayDate is undefined
+  useEffect(() => {
+    if (isEditing) return
+    if (dayDateAppliedRef.current) return
+    if (!effectiveDayDate) return
+    // Only set if date field is empty
+    if (!pickupDateValue) {
+      dayDateAppliedRef.current = true
+      setValue('transportationDetails.pickupDate', effectiveDayDate, { shouldDirty: false })
+    }
+  }, [effectiveDayDate, isEditing, pickupDateValue, setValue])
 
   // Mutations - use effectiveDayId to support pendingDay mode
   const createMutation = useCreateTransportation(itineraryId, effectiveDayId)

@@ -29,18 +29,20 @@ import { useDeleteActivity } from '@/hooks/use-activities'
 import { useDeleteFlight } from '@/hooks/use-flights'
 import { ActivityIconBadge } from '@/components/ui/activity-icon-badge'
 import { useActivityNavigation } from '@/hooks/use-activity-navigation'
+import type { CruiseColorSet } from '@/lib/cruise-color-utils'
 
 interface ActivitySummaryItemProps {
   itineraryId: string
   activity: ActivityResponseDto
   dayId: string
+  cruiseColor?: CruiseColorSet
 }
 
 /**
  * Compact activity item for the Trip Summary column.
  * Uses dropdown menu for actions to fit the narrow width.
  */
-export function ActivitySummaryItem({ itineraryId, activity, dayId }: ActivitySummaryItemProps) {
+export function ActivitySummaryItem({ itineraryId, activity, dayId, cruiseColor }: ActivitySummaryItemProps) {
   const router = useRouter()
   const params = useParams<{ id: string }>()
   const { toast } = useToast()
@@ -95,7 +97,8 @@ export function ActivitySummaryItem({ itineraryId, activity, dayId }: ActivitySu
         className={cn(
           "group flex items-center gap-2 p-2 border border-tern-gray-200 rounded-lg transition-all",
           "hover:border-tern-gray-300 hover:bg-tern-gray-50",
-          FOCUS_VISIBLE_RING
+          FOCUS_VISIBLE_RING,
+          cruiseColor && `border-l-4 ${cruiseColor.borderLeft}`
         )}
       >
         {/* Icon */}

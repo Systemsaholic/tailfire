@@ -29,12 +29,14 @@ import {
   Image,
   Calendar,
   User,
+  Link as LinkIcon,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { TernDetailLayout } from '@/components/tern/layout'
 import { TernBadge } from '@/components/tern/core'
 import { Button } from '@/components/ui/button'
-import { useTrip, useDeleteTrip } from '@/hooks/use-trips'
+import { useTrip, useDeleteTrip, usePublishTrip, useUnpublishTrip, useDuplicateTrip } from '@/hooks/use-trips'
+import { MoveToGroupDialog } from '@/components/trips/MoveToGroupDialog'
 import { TripOverview } from './_components/trip-overview'
 import { TripItinerary } from './_components/trip-itinerary'
 import { TripMediaTab } from './_components/trip-media-tab'
@@ -393,6 +395,10 @@ export default function TripDetailPage() {
   }, [searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const deleteTrip = useDeleteTrip()
+  const publishTrip = usePublishTrip()
+  const unpublishTrip = useUnpublishTrip()
+  const duplicateTrip = useDuplicateTrip()
+  const [showMoveToGroupDialog, setShowMoveToGroupDialog] = useState(false)
   const isDeleting = deleteTrip.isPending
 
   // Disable queries when deletion is in progress to prevent 404s
@@ -423,6 +429,46 @@ export default function TripDetailPage() {
       title: 'Coming Soon',
       description: 'Cancel functionality will be available in a future update.',
     })
+  }
+
+  const handlePublish = async () => {
+    if (!trip) return
+    try {
+      const updated = await publishTrip.mutateAsync(trip.id)
+      const shareUrl = `${window.location.origin.replace('admin', 'client')}/shared/trips/${updated.shareToken}`
+      await navigator.clipboard.writeText(shareUrl)
+      toast({ title: 'Trip published', description: 'Share link copied to clipboard.' })
+    } catch (error) {
+      toast({ title: 'Error', description: 'Failed to publish trip.', variant: 'destructive' })
+    }
+  }
+
+  const handleUnpublish = async () => {
+    if (!trip) return
+    try {
+      await unpublishTrip.mutateAsync(trip.id)
+      toast({ title: 'Trip unpublished' })
+    } catch (error) {
+      toast({ title: 'Error', description: 'Failed to unpublish trip.', variant: 'destructive' })
+    }
+  }
+
+  const handleCopyShareLink = () => {
+    if (!trip?.shareToken) return
+    const shareUrl = `${window.location.origin.replace('admin', 'client')}/shared/trips/${trip.shareToken}`
+    navigator.clipboard.writeText(shareUrl)
+    toast({ title: 'Share link copied to clipboard' })
+  }
+
+  const handleDuplicate = async () => {
+    if (!trip) return
+    try {
+      const newTrip = await duplicateTrip.mutateAsync(trip.id)
+      toast({ title: 'Trip duplicated', description: `Created "${newTrip.name}"` })
+      router.push(`/trips/${newTrip.id}`)
+    } catch (error) {
+      toast({ title: 'Error', description: 'Failed to duplicate trip.', variant: 'destructive' })
+    }
   }
 
   // Stop any navigation loading overlay when trip data loads
@@ -617,50 +663,36 @@ export default function TripDetailPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem
-                  onClick={() => {
-                    toast({
-                      title: 'Coming Soon',
-                      description: 'Publish Trip Updates will be available in a future update.',
-                    })
-                  }}
-                >
-                  <Send className="h-4 w-4 mr-2" />
-                  Publish Trip Updates
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    toast({
-                      title: 'Coming Soon',
-                      description: 'Unpublish Trip will be available in a future update.',
-                    })
-                  }}
-                >
-                  <EyeOff className="h-4 w-4 mr-2" />
-                  Unpublish Trip
+                <DropdownMenuItem onClick={() => setShowEditTripDialog(true)}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Edit Trip
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => {
-                    toast({
-                      title: 'Coming Soon',
-                      description: 'Move to Group will be available in a future update.',
-                    })
-                  }}
-                >
+                {!trip?.isPublished ? (
+                  <DropdownMenuItem onClick={handlePublish} disabled={publishTrip.isPending}>
+                    <Send className="h-4 w-4 mr-2" />
+                    {publishTrip.isPending ? 'Publishing...' : 'Publish Trip'}
+                  </DropdownMenuItem>
+                ) : (
+                  <>
+                    <DropdownMenuItem onClick={handleCopyShareLink}>
+                      <LinkIcon className="h-4 w-4 mr-2" />
+                      Copy Share Link
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleUnpublish} disabled={unpublishTrip.isPending}>
+                      <EyeOff className="h-4 w-4 mr-2" />
+                      {unpublishTrip.isPending ? 'Unpublishing...' : 'Unpublish Trip'}
+                    </DropdownMenuItem>
+                  </>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setShowMoveToGroupDialog(true)}>
                   <FolderInput className="h-4 w-4 mr-2" />
                   Move to Group
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    toast({
-                      title: 'Coming Soon',
-                      description: 'Duplicate Trip will be available in a future update.',
-                    })
-                  }}
-                >
+                <DropdownMenuItem onClick={handleDuplicate} disabled={duplicateTrip.isPending}>
                   <Copy className="h-4 w-4 mr-2" />
-                  Duplicate Trip
+                  {duplicateTrip.isPending ? 'Duplicating...' : 'Duplicate Trip'}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 {isDeletable ? (
@@ -736,6 +768,16 @@ export default function TripDetailPage() {
         mode="edit"
         trip={trip}
       />
+
+      {/* Move to Group Dialog */}
+      {trip && (
+        <MoveToGroupDialog
+          open={showMoveToGroupDialog}
+          onOpenChange={setShowMoveToGroupDialog}
+          tripId={trip.id}
+          currentGroupId={trip.tripGroupId}
+        />
+      )}
     </TernDetailLayout>
   )
 }

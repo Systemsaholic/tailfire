@@ -17,6 +17,7 @@ import {
   HttpStatus,
   ForbiddenException,
 } from '@nestjs/common'
+import { Public } from '../auth/decorators/public.decorator'
 import { ApiTags } from '@nestjs/swagger'
 import { TripsService } from './trips.service'
 import { GetAuthContext } from '../auth/decorators/auth-context.decorator'
@@ -88,10 +89,8 @@ export class TripsController {
    * Returns available options for filter dropdowns (statuses, trip types, tags).
    */
   @Get('filter-options')
-  async getFilterOptions(): Promise<TripFilterOptionsResponseDto> {
-    // Phase 4 TODO: Extract from JWT when auth is implemented
-    const ownerId = '00000000-0000-0000-0000-000000000001'
-    return this.tripsService.getFilterOptions(ownerId)
+  async getFilterOptions(@GetAuthContext() auth: AuthContext): Promise<TripFilterOptionsResponseDto> {
+    return this.tripsService.getFilterOptions(auth.userId, auth.agencyId)
   }
 
   /**
@@ -140,6 +139,127 @@ export class TripsController {
     // Phase 4 TODO: Extract from JWT when auth is implemented
     const ownerId = '00000000-0000-0000-0000-000000000001'
     return this.tripsService.bulkChangeStatus(dto.tripIds, dto.status, ownerId)
+  }
+
+  // ============================================================================
+  // SHARE / GROUP / DUPLICATE - Must come before :id catch-all
+  // ============================================================================
+
+  /**
+   * Get shared trip by token (public, no auth)
+   * GET /trips/share/:token
+   */
+  @Public()
+  @Get('share/:token')
+  async getSharedTrip(@Param('token') token: string) {
+    return this.tripsService.findByShareToken(token)
+  }
+
+  /**
+   * List trip groups for the agency
+   * GET /trips/groups
+   */
+  @Get('groups')
+  async listTripGroups(@GetAuthContext() auth: AuthContext) {
+    return this.tripsService.listTripGroups(auth.agencyId)
+  }
+
+  /**
+   * Create a trip group
+   * POST /trips/groups
+   */
+  @Post('groups')
+  async createTripGroup(
+    @GetAuthContext() auth: AuthContext,
+    @Body() body: { name: string },
+  ) {
+    return this.tripsService.createTripGroup(body.name, auth.agencyId, auth.userId)
+  }
+
+  /**
+   * Update a trip group
+   * PATCH /trips/groups/:groupId
+   */
+  @Patch('groups/:groupId')
+  async updateTripGroup(
+    @GetAuthContext() auth: AuthContext,
+    @Param('groupId') groupId: string,
+    @Body() body: { name?: string; description?: string },
+  ) {
+    return this.tripsService.updateTripGroup(groupId, body, auth.agencyId, auth.userId)
+  }
+
+  /**
+   * Delete a trip group
+   * DELETE /trips/groups/:groupId
+   */
+  @Delete('groups/:groupId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteTripGroup(
+    @GetAuthContext() auth: AuthContext,
+    @Param('groupId') groupId: string,
+  ) {
+    return this.tripsService.deleteTripGroup(groupId, auth.agencyId, auth.userId)
+  }
+
+  /**
+   * List trips in a group
+   * GET /trips/groups/:groupId/trips
+   */
+  @Get('groups/:groupId/trips')
+  async getTripsByGroup(
+    @GetAuthContext() auth: AuthContext,
+    @Param('groupId') groupId: string,
+  ) {
+    return this.tripsService.getTripsByGroup(groupId, auth.agencyId)
+  }
+
+  /**
+   * Publish a trip (generate share token)
+   * PATCH /trips/:id/publish
+   */
+  @Patch(':id/publish')
+  async publishTrip(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ) {
+    if (auth.role !== 'admin') {
+      const existing = await this.tripsService.findOne(id)
+      if (existing.ownerId !== auth.userId) {
+        throw new ForbiddenException('You can only publish trips you own')
+      }
+    }
+    return this.tripsService.publishTrip(id, auth.userId)
+  }
+
+  /**
+   * Unpublish a trip (clear share token)
+   * PATCH /trips/:id/unpublish
+   */
+  @Patch(':id/unpublish')
+  async unpublishTrip(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ) {
+    if (auth.role !== 'admin') {
+      const existing = await this.tripsService.findOne(id)
+      if (existing.ownerId !== auth.userId) {
+        throw new ForbiddenException('You can only unpublish trips you own')
+      }
+    }
+    return this.tripsService.unpublishTrip(id, auth.userId)
+  }
+
+  /**
+   * Duplicate a trip
+   * POST /trips/:id/duplicate
+   */
+  @Post(':id/duplicate')
+  async duplicateTrip(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ) {
+    return this.tripsService.duplicateTrip(id, auth.userId)
   }
 
   /**

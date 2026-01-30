@@ -14,17 +14,20 @@ Tailfire uses PostgreSQL with two schemas:
 | Cloud Preview (Tailfire-Preview) | 75+ tables | Full schema (catalog via FDW or local) |
 | Production (Tailfire-Prod) | 75+ tables | Full schema including catalog |
 
-> **Note:** Table counts include ~59 public schema tables and 16 catalog schema tables (cruise data).
+> **Note:** Table counts include ~61 public schema tables (including cruise booking session tables) and 16 catalog schema tables (cruise data).
 
 ---
 
-## Catalog Schema (Local Dev Only)
+## Catalog Schema
 
 **Location**: `packages/database/src/schema/cruise-*.schema.ts`
 
-> **Current Status:** These tables exist only in Local Dev (tailfire-Dev) for development purposes. They are not yet deployed to Cloud Preview or Production.
+> **Architecture:** The catalog schema contains cruise reference data from Traveltek.
+> - **Production**: Local tables populated by daily FTP sync (source of truth)
+> - **Preview/Dev**: Foreign tables via FDW reading from Production
+> - **Local Dev**: Local tables for offline development (may drift from Prod)
 
-The catalog schema will contain read-only cruise reference data from Traveltek:
+The catalog schema contains read-only cruise reference data from Traveltek:
 
 ### Reference Tables
 
@@ -188,6 +191,74 @@ The public schema contains all application data:
 | `activity_traveller_splits` | Per-traveler cost breakdown |
 | `service_fees` | Service fees via Stripe Connect |
 | `trip_orders` | Versioned trip order JSON snapshots |
+
+### Cruise Booking Sessions (FusionAPI Integration)
+
+| Table | Purpose |
+|-------|---------|
+| `cruise_booking_sessions` | Ephemeral FusionAPI session state for booking flow |
+| `cruise_booking_idempotency` | Idempotency tracking for booking retries (24h TTL) |
+
+#### cruise_booking_sessions
+
+Stores ephemeral session state for the FusionAPI booking flow. Separate from durable booking data in `custom_cruise_details`.
+
+```typescript
+// packages/database/src/schema/cruise-booking-sessions.schema.ts
+export const cruiseBookingSessions = pgTable('cruise_booking_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  activityId: uuid('activity_id').notNull(),  // Links to itinerary_activities
+  userId: uuid('user_id'),                     // User who owns the session
+  tripId: uuid('trip_id'),                     // For handoff validation
+  tripTravelerId: uuid('trip_traveler_id'),    // For handoff validation
+
+  status: varchar('status', { length: 20 }),   // active, expired, completed, cancelled
+  flowType: varchar('flow_type', { length: 20 }), // agent, client_handoff, ota
+
+  // FusionAPI session state
+  sessionKey: varchar('session_key', { length: 100 }),
+  sessionExpiresAt: timestamp('session_expires_at'),
+
+  // Search context (for replay/re-booking)
+  codetocruiseid: varchar('codetocruiseid', { length: 100 }),
+  resultNo: varchar('result_no', { length: 100 }),
+
+  // Selection state
+  fareCode: varchar('fare_code', { length: 50 }),
+  gradeNo: integer('grade_no'),
+  cabinNo: varchar('cabin_no', { length: 20 }),
+
+  // Basket state
+  basketItemKey: varchar('basket_item_key', { length: 100 }),
+  cabinResult: varchar('cabin_result', { length: 100 }),
+  holdExpiresAt: timestamp('hold_expires_at'),
+})
+```
+
+**Session Lifecycle:**
+- `active` → Session is in use for booking flow
+- `completed` → Booking finalized successfully
+- `expired` → TTL cleanup (2+ hours inactive)
+- `cancelled` → User abandoned session
+
+**Partial Unique Index:** Only one ACTIVE session per activity allowed.
+
+#### cruise_booking_idempotency
+
+Prevents double-booking on retry. Client sends UUID idempotency key with booking request.
+
+```typescript
+export const cruiseBookingIdempotency = pgTable('cruise_booking_idempotency', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  idempotencyKey: uuid('idempotency_key').notNull().unique(),
+  activityId: uuid('activity_id').notNull(),
+  userId: uuid('user_id').notNull(),
+  bookingRef: varchar('booking_ref', { length: 100 }),
+  bookingResponse: jsonb('booking_response'),
+  status: varchar('status', { length: 20 }),  // pending, success, failed
+  expiresAt: timestamp('expires_at'),  // 24 hour TTL
+})
+```
 
 ---
 

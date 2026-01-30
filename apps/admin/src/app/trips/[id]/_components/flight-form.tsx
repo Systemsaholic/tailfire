@@ -192,6 +192,18 @@ export function FlightForm({
   const searchParams = useSearchParams()
   const isEditing = !!activity
 
+  // Derive effective dayDate from props or days array
+  // This handles the case where dayDate prop is undefined because days hadn't loaded
+  // when page.tsx rendered, but days is now available via the prop
+  const effectiveDayDate = useMemo(() => {
+    if (dayDate) return dayDate
+    if (dayId && days.length > 0) {
+      const matchingDay = days.find((d) => d.id === dayId)
+      return matchingDay?.date ?? null
+    }
+    return null
+  }, [dayDate, dayId, days])
+
   // UI state
   const [isAiAssistOpen, setIsAiAssistOpen] = useState(false)
   const [aiInput, setAiInput] = useState('')
@@ -427,16 +439,33 @@ export function FlightForm({
     [trip?.startDate]
   )
 
-  // Auto-populate flight date from day context
+  // Auto-populate flight date from day context (only for new activities)
   // Handles async loading: dayDate may be undefined on first render, then becomes available
+  // Use ref to track if we've already auto-populated (avoid overwriting user changes)
+  const dayDateAppliedRef = useRef(false)
+
+  // Reset the ref when dayId changes (handles navigation between different days)
   useEffect(() => {
-    const segments = getValues('flightSegments')
-    // Only set if dayDate is available and first segment has no date set
-    if (dayDate && segments?.[0] && !segments[0].date) {
-      setValue('flightSegments.0.date', dayDate, { shouldDirty: false })
-      setValue('flightSegments.0.departureDate', dayDate, { shouldDirty: false })
+    dayDateAppliedRef.current = false
+  }, [dayId])
+
+  useEffect(() => {
+    // Only apply once, only for new activities, only if effectiveDayDate now available
+    // effectiveDayDate handles async loading: derives date from days prop if dayDate is undefined
+    if (isEditing) return
+    if (dayDateAppliedRef.current) return
+    if (!effectiveDayDate) return
+
+    // Use watched segments instead of getValues - ensures we have current form state
+    // and reruns effect when field array initializes (previously missed timing window)
+    const segments = flightSegmentsWatch
+    // Only set if first segment exists and has no date set
+    if (segments?.[0] && !segments[0].date) {
+      dayDateAppliedRef.current = true
+      setValue('flightSegments.0.date', effectiveDayDate, { shouldDirty: false })
+      setValue('flightSegments.0.departureDate', effectiveDayDate, { shouldDirty: false })
     }
-  }, [dayDate, getValues, setValue])
+  }, [effectiveDayDate, isEditing, flightSegmentsWatch, setValue])
 
   // Ref to track loaded flight ID (prevents re-seeding on every render)
   const flightIdRef = useRef<string | null>(null)
@@ -674,7 +703,13 @@ export function FlightForm({
   }
 
   const addFlightLeg = () => {
-    append(createDefaultSegment(dayDate))
+    const newIndex = segmentFields.length
+    // Pre-populate new segment's departure date from previous segment's arrival date
+    const prevArrivalDate = newIndex > 0
+      ? getValues(`flightSegments.${newIndex - 1}.arrivalDate`)
+      : undefined
+    append(createDefaultSegment(prevArrivalDate || dayDate))
+    setExpandedSegmentIndex(newIndex)
   }
 
   const toggleManualEntry = (index: number) => {

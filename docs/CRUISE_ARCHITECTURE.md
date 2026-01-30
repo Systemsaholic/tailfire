@@ -28,7 +28,7 @@ The Tailfire platform uses two complementary Traveltek systems for cruise functi
 │   ┌─────────────────┐                    ┌─────────────────┐            │
 │   │  Cruise Import  │                    │  Cruise Booking │            │
 │   │  Module         │                    │  Module         │            │
-│   │  (IMPLEMENTED)  │                    │  (TODO)         │            │
+│   │  (IMPLEMENTED)  │                    │  (IMPLEMENTED)  │            │
 │   └────────┬────────┘                    └────────┬────────┘            │
 │            │                                      │                      │
 │            │ Stores                               │ Uses for             │
@@ -110,7 +110,8 @@ The Cruise Import module syncs static catalog data from Traveltek's FTP server.
 |----------|-------|
 | **Location** | `apps/api/src/cruise-import/` |
 | **FTP Server** | `ftpeu1prod.traveltek.net` |
-| **Schedule** | Daily at 2 AM EST |
+| **Schedule** | Daily at 2 AM Toronto time |
+| **Retry Policy** | 3 attempts with exponential backoff (5min, 10min) |
 | **Data Format** | JSON files |
 | **Status** | Fully implemented |
 
@@ -174,6 +175,21 @@ The Cruise Import module syncs static catalog data from Traveltek's FTP server.
    └── Record operation in cruise_sync_history
 ```
 
+### Scheduled Sync Resilience
+
+The daily 2 AM sync includes automatic retry with exponential backoff:
+
+| Attempt | Delay | Cumulative Time |
+|---------|-------|-----------------|
+| 1 | - | 2:00 AM |
+| 2 | 5 min | 2:05 AM |
+| 3 | 10 min | 2:15 AM |
+
+**Retryable errors**: Connection refused, timeout, network errors, FTP errors
+**Non-retryable errors**: Auth failures, environment guard, data validation
+
+If all retries fail, the sync will attempt again at the next scheduled time (2 AM tomorrow).
+
 ### API Endpoints
 
 Protected by internal API key (`x-internal-api-key` header):
@@ -199,7 +215,7 @@ Protected by internal API key (`x-internal-api-key` header):
 
 ---
 
-## System 2: FusionAPI (Live Booking) - TO BE IMPLEMENTED
+## System 2: FusionAPI (Live Booking) - IMPLEMENTED
 
 ### Overview
 
@@ -207,10 +223,53 @@ The FusionAPI provides real-time cruise availability, pricing, and booking capab
 
 | Property | Value |
 |----------|-------|
-| **Location** | `apps/api/src/cruise-booking/` (README only) |
+| **Location** | `apps/api/src/cruise-booking/` |
 | **Base URL** | `https://fusionapi.traveltek.net/2.1/json/` |
 | **Protocol** | HTTPS with OAuth 2.0 |
-| **Status** | Documentation exists, no implementation |
+| **Status** | ✅ Fully implemented (January 2026) |
+
+### Module Structure
+
+```
+cruise-booking/
+├── cruise-booking.module.ts            # NestJS module with HttpModule
+├── cruise-booking.controller.ts        # 10 endpoints with role-based guards
+├── services/
+│   ├── traveltek-auth.service.ts       # OAuth token caching
+│   ├── fusion-api.service.ts           # Low-level HTTP client with retry
+│   ├── booking-session.service.ts      # Session CRUD, handoff, idempotency
+│   └── booking.service.ts              # High-level orchestration
+├── dto/                                # 6 DTOs with class-validator
+└── types/
+    └── fusion-api.types.ts             # FusionAPI type definitions
+```
+
+### API Endpoints
+
+> **Authentication:** All cruise-booking endpoints require JWT authentication (Bearer token). Role-based guards control access:
+> - `admin` role: Full access to all endpoints
+> - `user` role: Access to own trips and handoff flows
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/cruise-booking/search` | POST | Search cruises |
+| `/cruise-booking/rates` | GET | Get agency-tailored rate codes |
+| `/cruise-booking/cabin-grades` | GET | Get cabin categories with pricing |
+| `/cruise-booking/cabins` | GET | Get specific cabins with deck plans |
+| `/cruise-booking/basket` | POST | Add to basket (holds cabin) |
+| `/cruise-booking/basket/:sessionId` | GET | Get basket contents |
+| `/cruise-booking/basket/:sessionId/:itemkey` | DELETE | Remove from basket |
+| `/cruise-booking/book` | POST | Complete booking with idempotency |
+| `/cruise-booking/proposal/:activityId` | GET | Get proposal for client handoff |
+| `/cruise-booking/session/:sessionId` | DELETE | Cancel session |
+
+### Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `cruise_booking_sessions` | Ephemeral FusionAPI session/hold state |
+| `cruise_booking_idempotency` | Booking retry safety (24h TTL) |
+| `custom_cruise_details.fusion_booking_*` | Durable booking confirmations |
 
 ### Authentication Flow
 
@@ -363,150 +422,91 @@ FusionAPI:   actualPrice = $549 (real-time)
 
 ---
 
-## Proposed Implementation: cruise-booking Module
+## Booking Session Management
 
-### Architecture
+### Session Lifecycle
+
+The cruise booking module maintains session state in the `cruise_booking_sessions` table:
 
 ```
-apps/api/src/cruise-booking/
-├── cruise-booking.module.ts           # NestJS module
-├── cruise-booking.controller.ts       # HTTP endpoints
-├── dto/
-│   ├── search.dto.ts                  # Search request/response
-│   ├── cabin-grade.dto.ts             # Cabin pricing DTOs
-│   ├── basket.dto.ts                  # Basket DTOs
-│   └── booking.dto.ts                 # Booking DTOs
-├── services/
-│   ├── traveltek-auth.service.ts      # OAuth token management
-│   ├── fusion-api.service.ts          # API client wrapper
-│   ├── session.service.ts             # Session state management
-│   ├── basket.service.ts              # Basket operations
-│   └── booking.service.ts             # Booking creation
-└── types/
-    └── fusion-api.types.ts            # TypeScript interfaces
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SESSION LIFECYCLE                                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  CREATE: When agent/client adds to basket                                    │
+│     └── status = 'active', flow_type = 'agent'|'client_handoff'|'ota'       │
+│     └── session_key = UUID passed to FusionAPI                              │
+│     └── session_expires_at = now + 2 hours                                  │
+│                                                                              │
+│  UPDATE: On every FusionAPI call                                             │
+│     └── Extend session_expires_at = now + 2 hours                           │
+│     └── Update hold_expires_at, basket_item_key if basket changes           │
+│                                                                              │
+│  HANDOFF: When client accesses agent's basket                                │
+│     └── Verify trip_traveler linked to requesting user                      │
+│     └── Update flow_type = 'client_handoff'                                 │
+│                                                                              │
+│  COMPLETE: After successful booking                                          │
+│     └── status = 'completed'                                                │
+│     └── Copy booking_ref to custom_cruise_details                           │
+│                                                                              │
+│  EXPIRE: TTL cleanup job                                                     │
+│     └── UPDATE status = 'expired' WHERE session_expires_at < now            │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Status Transitions:
+  active → completed (successful booking)
+  active → cancelled (user abandons)
+  active → expired   (TTL cleanup)
 ```
 
-### Service Responsibilities
+### Cabin Hold Timing
 
-#### TraveltekAuthService
+Two distinct expiry times are tracked:
+
+| Expiry Type | Duration | Storage | Purpose |
+|-------------|----------|---------|---------|
+| **Session** | 2+ hours | `session_expires_at` | FusionAPI stateful context |
+| **Cabin Hold** | 15-30 min | `hold_expires_at` | Inventory reservation |
+
+The cabin hold is the critical deadline for checkout. UI displays countdown timer.
+
+### Idempotency Pattern
+
+Prevents double-bookings on retry:
+
 ```typescript
-// Token management with caching
-class TraveltekAuthService {
-  getAccessToken(): Promise<string>    // Get token (from cache or fresh)
-  refreshToken(): Promise<string>      // Force refresh
-  isTokenValid(): boolean              // Check expiry
-}
+// 1. Check for existing booking with idempotency key
+const existing = await findByIdempotencyKey(key)
+if (existing.bookingRef) return cached result
 
-// Token caching options:
-// - In-memory: Simple, loses token on restart
-// - Redis: Multi-instance safe, recommended for prod
+// 2. Create pending idempotency record
+await createIdempotencyRecord(key, activityId, userId)
+
+// 3. Submit to FusionAPI
+const result = await fusionApi.createBooking(...)
+
+// 4. Update record with result
+await updateIdempotencyRecord(key, result)
 ```
 
-#### FusionApiService
-```typescript
-// Low-level API client
-class FusionApiService {
-  search(params: SearchParams, sessionkey?: string): Promise<SearchResult>
-  getRateCodes(codetocruiseid: string, resultno: number, sessionkey: string)
-  getCabinGrades(codetocruiseid: string, resultno: number, sessionkey: string)
-  getCabinBreakdown(codetocruiseid: string, gradeno: number, sessionkey: string)
-  getCabins(codetocruiseid: string, gradeno: number, sessionkey: string)
-}
-```
+### Booking Flows
 
-#### SessionService
-```typescript
-// Session state management
-class SessionService {
-  createSession(userId: string): Promise<SessionState>
-  getSession(sessionkey: string): Promise<SessionState>
-  updateSession(sessionkey: string, data: Partial<SessionState>): Promise<void>
+| Flow | Description | Session Owner |
+|------|-------------|---------------|
+| **Agent** | Agent searches → proposes → books | Agent throughout |
+| **Client Handoff** | Agent proposes → Client books | Agent starts, Client continues |
+| **OTA** | Client self-service booking | Client throughout |
 
-  // Option: Store sessions in database for persistence across restarts
-}
-```
+### Error Handling
 
-#### BasketService
-```typescript
-// Basket operations
-class BasketService {
-  addToBasket(sessionkey: string, selection: CabinSelection): Promise<BasketItem>
-  getBasket(sessionkey: string): Promise<Basket>
-  removeFromBasket(sessionkey: string, itemkey: string): Promise<void>
-}
-```
-
-#### BookingService
-```typescript
-// Booking creation
-class BookingService {
-  createBooking(sessionkey: string, passengers: Passenger[], payment: Payment): Promise<BookingConfirmation>
-
-  // Store confirmation in local database for records
-  saveConfirmation(booking: BookingConfirmation): Promise<void>
-}
-```
-
-### API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/cruise-booking/search` | POST | Search cruises with live availability |
-| `/cruise-booking/rates/:codetocruiseid` | GET | Get rate codes for sailing |
-| `/cruise-booking/cabins/:codetocruiseid` | GET | Get cabin grades + pricing |
-| `/cruise-booking/cabin-breakdown` | GET | Detailed price breakdown |
-| `/cruise-booking/basket` | GET | Get current basket |
-| `/cruise-booking/basket/add` | POST | Add to basket |
-| `/cruise-booking/basket/remove` | DELETE | Remove from basket |
-| `/cruise-booking/book` | POST | Create booking |
-
-### Integration Flow
-
-```
-1. User browses catalog (FTP data)
-   └── Database: catalog.cruise_sailings
-
-2. User selects cruise
-   └── Get provider_identifier (codetocruiseid)
-
-3. Show live availability
-   └── FusionAPI: cruiseresults.pl?codetocruiseid=XXX
-
-4. User selects cabin
-   └── FusionAPI: cruisecabingrades.pl → cruisecabingradebreakdown.pl
-
-5. Add to basket
-   └── FusionAPI: basketadd.pl
-
-6. Complete booking
-   └── FusionAPI: book.pl
-   └── Store confirmation in local DB
-```
-
----
-
-## Implementation Priorities
-
-### Phase 1: Authentication & Search
-1. Implement `TraveltekAuthService` with token caching
-2. Implement `FusionApiService.search()`
-3. Create search endpoint that validates `codetocruiseid` against catalog
-
-### Phase 2: Pricing & Cabins
-1. Implement rate codes and cabin grades endpoints
-2. Add session management
-3. Show live pricing alongside FTP base prices
-
-### Phase 3: Basket & Booking
-1. Implement basket operations
-2. Implement booking creation
-3. Store confirmations in database
-
-### Phase 4: Error Handling & Edge Cases
-1. Handle FusionAPI downtime (fallback to quote request?)
-2. Handle price discrepancies
-3. Handle sold-out cabins
-4. Rate limiting protection
+| Error Type | Handling | Retry |
+|------------|----------|-------|
+| TIMEOUT | Exponential backoff | Max 3, 1s→2s→4s |
+| RATE_LIMIT | Backoff with jitter | Max 3, 5s + random |
+| INVALID_SESSION | Non-retryable, force new session | No |
+| CABIN_NOT_AVAILABLE | Return to selection, suggest alternatives | No |
 
 ---
 

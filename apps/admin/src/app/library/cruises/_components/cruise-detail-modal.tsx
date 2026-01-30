@@ -11,6 +11,7 @@ import {
   Anchor,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   Users,
@@ -26,6 +27,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -64,6 +75,10 @@ export function CruiseDetailModal({
 
   // Add to trip dialog state (when no tripContext)
   const [showAddToTripDialog, setShowAddToTripDialog] = useState(false)
+
+  // Confirmation dialog state for extending itinerary dates
+  const [showExtendConfirm, setShowExtendConfirm] = useState(false)
+
   const images = sailing?.ship.images ?? []
   const hasMultipleImages = images.length > 1
 
@@ -77,13 +92,42 @@ export function CruiseDetailModal({
   const handleAddToItinerary = async () => {
     if (!sailing || !tripContext) return
 
-    // The mutation will automatically place the cruise on the day matching the departure date
-    await addCruiseMutation.mutateAsync({
-      sailing,
-      tripId: tripContext.tripId,
-    })
+    try {
+      // The mutation will automatically place the cruise on the day matching the departure date
+      await addCruiseMutation.mutateAsync({
+        sailing,
+        tripId: tripContext.tripId,
+        autoExtendItinerary: false,
+      })
 
-    onAddedToItinerary?.()
+      onAddedToItinerary?.()
+    } catch (error) {
+      // Check if it's a date mismatch error
+      if (error instanceof Error && error.message.includes('do not fit within itinerary dates')) {
+        setShowExtendConfirm(true)
+      } else {
+        throw error
+      }
+    }
+  }
+
+  // Confirm extension and retry with autoExtendItinerary=true
+  const handleConfirmExtend = async () => {
+    if (!sailing || !tripContext) return
+
+    try {
+      await addCruiseMutation.mutateAsync({
+        sailing,
+        tripId: tripContext.tripId,
+        autoExtendItinerary: true,
+      })
+
+      setShowExtendConfirm(false)
+      onAddedToItinerary?.()
+    } catch (error) {
+      setShowExtendConfirm(false)
+      throw error
+    }
   }
 
   const handlePrevImage = () => {
@@ -377,6 +421,58 @@ export function CruiseDetailModal({
             onClose()
           }}
         />
+      )}
+
+      {/* Confirmation dialog for extending itinerary dates */}
+      {sailing && (
+        <AlertDialog open={showExtendConfirm} onOpenChange={setShowExtendConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                Extend Itinerary Dates?
+              </AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3">
+                  <p>
+                    The cruise dates extend beyond the current itinerary dates.
+                  </p>
+                  <div className="bg-amber-50 rounded-lg p-3 space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-tern-gray-600">Cruise dates:</span>
+                      <span className="font-medium">
+                        {format(parseISO(sailing.sailDate), 'MMM d')} -{' '}
+                        {format(parseISO(sailing.endDate), 'MMM d, yyyy')}
+                      </span>
+                    </div>
+                  </div>
+                  <p>
+                    Would you like to extend the itinerary dates to accommodate this cruise?
+                  </p>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setShowExtendConfirm(false)}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleConfirmExtend}
+                className="bg-tern-teal-600 hover:bg-tern-teal-700"
+                disabled={addCruiseMutation.isPending}
+              >
+                {addCruiseMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Extending...
+                  </>
+                ) : (
+                  'Extend Dates & Add Cruise'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       )}
     </Dialog>
   )

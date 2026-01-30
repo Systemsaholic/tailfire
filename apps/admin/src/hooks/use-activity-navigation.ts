@@ -70,7 +70,7 @@ export function useActivityNavigation() {
         if (Date.now() - context.timestamp < 3600000) {
           // Don't clear context yet - trip-itinerary needs it for scroll-to-day
           // It will be cleared after scroll is processed
-          router.push(`/trips/${context.tripId}`)
+          router.push(`/trips/${context.tripId}?tab=itinerary`)
           return { success: true }
         }
       }

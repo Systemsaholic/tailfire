@@ -4,8 +4,9 @@
  * Business logic for managing trips.
  */
 
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common'
 import { EventEmitter2 } from '@nestjs/event-emitter'
+import * as crypto from 'crypto'
 import { eq, and, or, gte, lte, ilike, sql, desc, asc, inArray } from 'drizzle-orm'
 import { DatabaseService } from '../db/database.service'
 import { TripBookedEvent } from './events/trip-booked.event'
@@ -13,6 +14,7 @@ import {
   TripCreatedEvent,
   TripUpdatedEvent,
   TripDeletedEvent,
+  AuditEvent,
 } from '../activity-logs/events'
 import type {
   CreateTripDto,
@@ -35,6 +37,7 @@ import {
 
 @Injectable()
 export class TripsService {
+
   constructor(
     private readonly db: DatabaseService,
     private readonly eventEmitter: EventEmitter2,
@@ -193,6 +196,11 @@ export class TripsService {
     // Tags filter (array overlap)
     if (filters.tags && filters.tags.length > 0) {
       conditions.push(sql`${this.db.schema.trips.tags} && ${filters.tags}`)
+    }
+
+    // Trip group filter
+    if (filters.tripGroupId) {
+      conditions.push(eq(this.db.schema.trips.tripGroupId, filters.tripGroupId))
     }
 
     // Sorting
@@ -389,11 +397,56 @@ export class TripsService {
       throw new NotFoundException(`Trip with ID ${id} not found`)
     }
 
-    // Emit trip updated event
-    this.eventEmitter.emit(
-      'trip.updated',
-      new TripUpdatedEvent(trip.id, trip.name, null, dto),
-    )
+    // Check if this is only a group change (no other fields updated)
+    const isGroupChange = 'tripGroupId' in dto && dto.tripGroupId !== existingTrip.tripGroupId
+    const dtoKeys = Object.keys(dto).filter((k) => k !== 'tripGroupId')
+    const isOnlyGroupField = 'tripGroupId' in dto && dtoKeys.length === 0
+
+    // Emit generic trip updated event (skip if tripGroupId is the only field — specific event below)
+    if (!isOnlyGroupField) {
+      this.eventEmitter.emit(
+        'trip.updated',
+        new TripUpdatedEvent(trip.id, trip.name, null, dto),
+      )
+    }
+
+    // Emit audit events for group changes
+    if (isGroupChange) {
+      if (dto.tripGroupId) {
+        // Trip moved to a group — resolve group name
+        const [group] = await this.db.client
+          .select({ name: this.db.schema.tripGroups.name })
+          .from(this.db.schema.tripGroups)
+          .where(eq(this.db.schema.tripGroups.id, dto.tripGroupId))
+          .limit(1)
+        const groupName = group?.name || 'Unknown group'
+        this.eventEmitter.emit(
+          'audit.moved_to_group',
+          new AuditEvent('trip', trip.id, 'moved_to_group', trip.id, null, groupName, {
+            groupId: dto.tripGroupId,
+            groupName,
+          }),
+        )
+      } else {
+        // Trip removed from a group — resolve old group name
+        let oldGroupName = 'Unknown group'
+        if (existingTrip.tripGroupId) {
+          const [oldGroup] = await this.db.client
+            .select({ name: this.db.schema.tripGroups.name })
+            .from(this.db.schema.tripGroups)
+            .where(eq(this.db.schema.tripGroups.id, existingTrip.tripGroupId))
+            .limit(1)
+          oldGroupName = oldGroup?.name || 'Unknown group'
+        }
+        this.eventEmitter.emit(
+          'audit.removed_from_group',
+          new AuditEvent('trip', trip.id, 'removed_from_group', trip.id, null, oldGroupName, {
+            previousGroupId: existingTrip.tripGroupId,
+            previousGroupName: oldGroupName,
+          }),
+        )
+      }
+    }
 
     // If trip is being marked as 'booked' for the first time, emit event
     const primaryContactId = trip.primaryContactId || existingTrip.primaryContactId
@@ -718,10 +771,11 @@ export class TripsService {
    *
    * @param ownerId - Owner ID for scoping
    */
-  async getFilterOptions(ownerId: string): Promise<{
+  async getFilterOptions(ownerId: string, agencyId: string): Promise<{
     statuses: TripStatus[]
     tripTypes: string[]
     tags: string[]
+    groups: { id: string; name: string }[]
   }> {
     // Get distinct tags from user's trips
     const tagsResult = await this.db.client
@@ -734,11 +788,21 @@ export class TripsService {
       .filter((tag): tag is string => tag !== null)
       .sort()
 
-    // Return static options + dynamic tags
+    // Get trip groups for the agency
+    const groupsResult = await this.db.client
+      .select({
+        id: this.db.schema.tripGroups.id,
+        name: this.db.schema.tripGroups.name,
+      })
+      .from(this.db.schema.tripGroups)
+      .where(eq(this.db.schema.tripGroups.agencyId, agencyId))
+
+    // Return static options + dynamic tags + groups
     return {
       statuses: ['draft', 'quoted', 'booked', 'in_progress', 'completed', 'cancelled'] as TripStatus[],
       tripTypes: ['leisure', 'business', 'group', 'honeymoon', 'corporate', 'custom'],
       tags,
+      groups: groupsResult,
     }
   }
 
@@ -1011,8 +1075,527 @@ export class TripsService {
       allowPdfDownloads: trip.allowPdfDownloads,
       itineraryStyle: trip.itineraryStyle,
       coverPhotoUrl: trip.coverPhotoUrl || null,
+      shareToken: trip.shareToken || null,
+      tripGroupId: trip.tripGroupId || null,
       createdAt: trip.createdAt.toISOString(),
       updatedAt: trip.updatedAt.toISOString(),
     }
+  }
+
+  // ============================================================================
+  // PUBLISH / UNPUBLISH
+  // ============================================================================
+
+  async publishTrip(id: string, actorId: string): Promise<TripResponseDto> {
+    const trip = await this.findOne(id)
+    if (trip.isPublished) {
+      return trip
+    }
+
+    const shareToken = crypto.randomBytes(32).toString('hex')
+    const [updated] = await this.db.client
+      .update(this.db.schema.trips)
+      .set({
+        isPublished: true,
+        shareToken,
+        updatedAt: new Date(),
+        updatedBy: actorId,
+      })
+      .where(eq(this.db.schema.trips.id, id))
+      .returning()
+
+    this.eventEmitter.emit('audit.log', {
+      entityType: 'trip',
+      entityId: id,
+      action: 'published',
+      actorId,
+      metadata: { shareToken },
+    })
+
+    return this.mapToResponseDto(updated)
+  }
+
+  async unpublishTrip(id: string, actorId: string): Promise<TripResponseDto> {
+    const [updated] = await this.db.client
+      .update(this.db.schema.trips)
+      .set({
+        isPublished: false,
+        shareToken: null,
+        updatedAt: new Date(),
+        updatedBy: actorId,
+      })
+      .where(eq(this.db.schema.trips.id, id))
+      .returning()
+
+    if (!updated) {
+      throw new NotFoundException(`Trip ${id} not found`)
+    }
+
+    this.eventEmitter.emit('audit.log', {
+      entityType: 'trip',
+      entityId: id,
+      action: 'unpublished',
+      actorId,
+    })
+
+    return this.mapToResponseDto(updated)
+  }
+
+  async findByShareToken(token: string) {
+    const [trip] = await this.db.client
+      .select()
+      .from(this.db.schema.trips)
+      .where(
+        and(
+          eq(this.db.schema.trips.shareToken, token),
+          eq(this.db.schema.trips.isPublished, true),
+        ),
+      )
+      .limit(1)
+
+    if (!trip) {
+      throw new NotFoundException('Shared trip not found')
+    }
+
+    // Fetch itineraries for public display
+    const itineraries = await this.db.client
+      .select()
+      .from(this.db.schema.itineraries)
+      .where(eq(this.db.schema.itineraries.tripId, trip.id))
+
+    // Return safe public subset only
+    return {
+      id: trip.id,
+      name: trip.name,
+      description: trip.description,
+      tripType: trip.tripType,
+      startDate: trip.startDate,
+      endDate: trip.endDate,
+      coverPhotoUrl: trip.coverPhotoUrl,
+      itineraries: itineraries.map((it) => ({
+        id: it.id,
+        name: it.name,
+        description: it.description,
+        coverPhoto: it.coverPhoto,
+        overview: it.overview,
+        startDate: it.startDate,
+        endDate: it.endDate,
+      })),
+    }
+  }
+
+  // ============================================================================
+  // DUPLICATE TRIP
+  // ============================================================================
+
+  async duplicateTrip(tripId: string, actorId: string): Promise<TripResponseDto> {
+    return this.db.client.transaction(async (tx) => {
+      // 1. Fetch original trip
+      const [original] = await tx
+        .select()
+        .from(this.db.schema.trips)
+        .where(eq(this.db.schema.trips.id, tripId))
+        .limit(1)
+
+      if (!original) {
+        throw new NotFoundException(`Trip ${tripId} not found`)
+      }
+
+      // 2. Create new trip
+      const [newTrip] = await tx
+        .insert(this.db.schema.trips)
+        .values({
+          agencyId: original.agencyId,
+          branchId: original.branchId,
+          ownerId: actorId,
+          name: `${original.name} (Copy)`,
+          description: original.description,
+          tripType: original.tripType,
+          startDate: original.startDate,
+          endDate: original.endDate,
+          status: 'draft',
+          primaryContactId: original.primaryContactId,
+          currency: original.currency,
+          estimatedTotalCost: original.estimatedTotalCost,
+          tags: original.tags,
+          customFields: original.customFields,
+          timezone: original.timezone,
+          pricingVisibility: original.pricingVisibility,
+          allowPdfDownloads: original.allowPdfDownloads,
+          itineraryStyle: original.itineraryStyle,
+          isPublished: false,
+          shareToken: null,
+        })
+        .returning()
+
+      // 3. Copy itineraries
+      const originalItineraries = await tx
+        .select()
+        .from(this.db.schema.itineraries)
+        .where(eq(this.db.schema.itineraries.tripId, tripId))
+
+      const itineraryIdMap = new Map<string, string>()
+
+      for (const itin of originalItineraries) {
+        const [newItin] = await tx
+          .insert(this.db.schema.itineraries)
+          .values({
+            tripId: newTrip!.id,
+            name: itin.name,
+            description: itin.description,
+            coverPhoto: itin.coverPhoto,
+            overview: itin.overview,
+            startDate: itin.startDate,
+            endDate: itin.endDate,
+            status: 'draft',
+            isSelected: false,
+            sequenceOrder: itin.sequenceOrder,
+          })
+          .returning()
+        itineraryIdMap.set(itin.id, newItin!.id)
+      }
+
+      // 4. Copy itinerary days
+      const dayIdMap = new Map<string, string>()
+
+      for (const [oldItinId, newItinId] of itineraryIdMap) {
+        const days = await tx
+          .select()
+          .from(this.db.schema.itineraryDays)
+          .where(eq(this.db.schema.itineraryDays.itineraryId, oldItinId))
+
+        for (const day of days) {
+          const [newDay] = await tx
+            .insert(this.db.schema.itineraryDays)
+            .values({
+              agencyId: original.agencyId,
+              itineraryId: newItinId,
+              dayNumber: day.dayNumber,
+              date: day.date,
+              title: day.title,
+              notes: day.notes,
+              sequenceOrder: day.sequenceOrder,
+            })
+            .returning()
+          dayIdMap.set(day.id, newDay!.id)
+        }
+      }
+
+      // 5. Copy activities + detail tables
+      const activityIdMap = new Map<string, string>()
+
+      // First pass: copy all activities (without parentActivityId remapping)
+      for (const [oldDayId, newDayId] of dayIdMap) {
+        const activities = await tx
+          .select()
+          .from(this.db.schema.itineraryActivities)
+          .where(eq(this.db.schema.itineraryActivities.itineraryDayId, oldDayId))
+
+        for (const activity of activities) {
+          const [newActivity] = await tx
+            .insert(this.db.schema.itineraryActivities)
+            .values({
+              agencyId: original.agencyId,
+              itineraryDayId: newDayId,
+              name: activity.name,
+              activityType: activity.activityType,
+              componentType: activity.componentType,
+              description: activity.description,
+              startDatetime: activity.startDatetime,
+              endDatetime: activity.endDatetime,
+              sequenceOrder: activity.sequenceOrder,
+              status: activity.status,
+              confirmationNumber: activity.confirmationNumber,
+              notes: activity.notes,
+              // parentActivityId remapped in second pass
+            })
+            .returning()
+          if (newActivity) {
+            activityIdMap.set(activity.id, newActivity.id)
+          }
+        }
+      }
+
+      // Second pass: remap parentActivityId
+      for (const [oldId, newId] of activityIdMap) {
+        // Find original activity's parentActivityId
+        const [orig] = await tx
+          .select({ parentActivityId: this.db.schema.itineraryActivities.parentActivityId })
+          .from(this.db.schema.itineraryActivities)
+          .where(eq(this.db.schema.itineraryActivities.id, oldId))
+          .limit(1)
+
+        if (orig?.parentActivityId && activityIdMap.has(orig.parentActivityId)) {
+          await tx
+            .update(this.db.schema.itineraryActivities)
+            .set({ parentActivityId: activityIdMap.get(orig.parentActivityId) })
+            .where(eq(this.db.schema.itineraryActivities.id, newId))
+        }
+      }
+
+      // Copy all detail tables for each activity
+      await this.copyActivityDetails(tx, activityIdMap)
+
+      if (!newTrip) {
+        throw new Error('Failed to duplicate trip')
+      }
+
+      this.eventEmitter.emit('audit.log', {
+        entityType: 'trip',
+        entityId: newTrip.id,
+        action: 'created',
+        actorId,
+        metadata: { duplicatedFrom: tripId },
+      })
+
+      return this.mapToResponseDto(newTrip)
+    })
+  }
+
+  private async copyActivityDetails(tx: any, activityIdMap: Map<string, string>) {
+    for (const [oldActivityId, newActivityId] of activityIdMap) {
+      // Flight details + segments
+      const flights = await tx
+        .select()
+        .from(this.db.schema.flightDetails)
+        .where(eq(this.db.schema.flightDetails.activityId, oldActivityId))
+
+      for (const flight of flights) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...flightData } = flight
+        await tx
+          .insert(this.db.schema.flightDetails)
+          .values({ ...flightData, activityId: newActivityId })
+      }
+
+      // Flight segments (FK to activityId, not flightDetailId)
+      const segments = await tx
+        .select()
+        .from(this.db.schema.flightSegments)
+        .where(eq(this.db.schema.flightSegments.activityId, oldActivityId))
+      for (const seg of segments) {
+        const { id: _sid, activityId: _sactId, createdAt: _sca, updatedAt: _sua, ...segData } = seg
+        await tx
+          .insert(this.db.schema.flightSegments)
+          .values({ ...segData, activityId: newActivityId })
+      }
+
+      // Lodging details
+      const lodgings = await tx
+        .select()
+        .from(this.db.schema.lodgingDetails)
+        .where(eq(this.db.schema.lodgingDetails.activityId, oldActivityId))
+      for (const lodging of lodgings) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = lodging
+        await tx.insert(this.db.schema.lodgingDetails).values({ ...data, activityId: newActivityId })
+      }
+
+      // Dining details
+      const dinings = await tx
+        .select()
+        .from(this.db.schema.diningDetails)
+        .where(eq(this.db.schema.diningDetails.activityId, oldActivityId))
+      for (const dining of dinings) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = dining
+        await tx.insert(this.db.schema.diningDetails).values({ ...data, activityId: newActivityId })
+      }
+
+      // Transportation details
+      const transports = await tx
+        .select()
+        .from(this.db.schema.transportationDetails)
+        .where(eq(this.db.schema.transportationDetails.activityId, oldActivityId))
+      for (const transport of transports) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = transport
+        await tx.insert(this.db.schema.transportationDetails).values({ ...data, activityId: newActivityId })
+      }
+
+      // Options details
+      const options = await tx
+        .select()
+        .from(this.db.schema.optionsDetails)
+        .where(eq(this.db.schema.optionsDetails.activityId, oldActivityId))
+      for (const option of options) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = option
+        await tx.insert(this.db.schema.optionsDetails).values({ ...data, activityId: newActivityId })
+      }
+
+      // Custom cruise details
+      const cruises = await tx
+        .select()
+        .from(this.db.schema.customCruiseDetails)
+        .where(eq(this.db.schema.customCruiseDetails.activityId, oldActivityId))
+      for (const cruise of cruises) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = cruise
+        await tx.insert(this.db.schema.customCruiseDetails).values({ ...data, activityId: newActivityId })
+      }
+
+      // Port info details
+      const ports = await tx
+        .select()
+        .from(this.db.schema.portInfoDetails)
+        .where(eq(this.db.schema.portInfoDetails.activityId, oldActivityId))
+      for (const port of ports) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = port
+        await tx.insert(this.db.schema.portInfoDetails).values({ ...data, activityId: newActivityId })
+      }
+
+      // Activity pricing
+      const pricings = await tx
+        .select()
+        .from(this.db.schema.activityPricing)
+        .where(eq(this.db.schema.activityPricing.activityId, oldActivityId))
+      for (const pricing of pricings) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = pricing
+        await tx.insert(this.db.schema.activityPricing).values({ ...data, activityId: newActivityId })
+      }
+
+      // Activity media
+      const medias = await tx
+        .select()
+        .from(this.db.schema.activityMedia)
+        .where(eq(this.db.schema.activityMedia.activityId, oldActivityId))
+      for (const media of medias) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = media
+        await tx.insert(this.db.schema.activityMedia).values({ ...data, activityId: newActivityId })
+      }
+
+      // Activity documents
+      const docs = await tx
+        .select()
+        .from(this.db.schema.activityDocuments)
+        .where(eq(this.db.schema.activityDocuments.activityId, oldActivityId))
+      for (const doc of docs) {
+        const { id: _id, activityId: _actId, createdAt: _ca, updatedAt: _ua, ...data } = doc
+        await tx.insert(this.db.schema.activityDocuments).values({ ...data, activityId: newActivityId })
+      }
+    }
+  }
+
+  // ============================================================================
+  // TRIP GROUPS
+  // ============================================================================
+
+  async listTripGroups(agencyId: string) {
+    const groups = await this.db.client
+      .select({
+        id: this.db.schema.tripGroups.id,
+        agencyId: this.db.schema.tripGroups.agencyId,
+        name: this.db.schema.tripGroups.name,
+        description: this.db.schema.tripGroups.description,
+        createdAt: this.db.schema.tripGroups.createdAt,
+        updatedAt: this.db.schema.tripGroups.updatedAt,
+        tripCount: sql<number>`(
+          SELECT COUNT(*)::int FROM ${this.db.schema.trips}
+          WHERE ${this.db.schema.trips.tripGroupId} = ${this.db.schema.tripGroups.id}
+        )`,
+      })
+      .from(this.db.schema.tripGroups)
+      .where(eq(this.db.schema.tripGroups.agencyId, agencyId))
+
+    return groups
+  }
+
+  async createTripGroup(name: string, agencyId: string, actorId: string) {
+    const [group] = await this.db.client
+      .insert(this.db.schema.tripGroups)
+      .values({
+        name,
+        agencyId,
+        createdBy: actorId,
+      })
+      .returning()
+
+    return group
+  }
+
+  async updateTripGroup(
+    groupId: string,
+    data: { name?: string; description?: string },
+    agencyId: string,
+    actorId: string,
+  ) {
+    try {
+      const [group] = await this.db.client
+        .update(this.db.schema.tripGroups)
+        .set({ ...data, updatedAt: new Date() })
+        .where(
+          and(
+            eq(this.db.schema.tripGroups.id, groupId),
+            eq(this.db.schema.tripGroups.agencyId, agencyId),
+          ),
+        )
+        .returning()
+
+      if (!group) {
+        throw new NotFoundException(`Trip group with ID ${groupId} not found`)
+      }
+
+      this.eventEmitter.emit(
+        'audit.updated',
+        new AuditEvent('trip_group', group.id, 'updated', group.id, actorId, group.name),
+      )
+
+      return group
+    } catch (error: any) {
+      // Handle unique constraint violation
+      if (error?.code === '23505') {
+        throw new ConflictException('A group with this name already exists')
+      }
+      throw error
+    }
+  }
+
+  async deleteTripGroup(groupId: string, agencyId: string, actorId: string) {
+    // Transactional: unlink trips then delete group
+    await this.db.client.transaction(async (tx) => {
+      // Get group first for audit
+      const [group] = await tx
+        .select()
+        .from(this.db.schema.tripGroups)
+        .where(
+          and(
+            eq(this.db.schema.tripGroups.id, groupId),
+            eq(this.db.schema.tripGroups.agencyId, agencyId),
+          ),
+        )
+        .limit(1)
+
+      if (!group) {
+        throw new NotFoundException(`Trip group with ID ${groupId} not found`)
+      }
+
+      // Unlink all trips in this group
+      await tx
+        .update(this.db.schema.trips)
+        .set({ tripGroupId: null, updatedAt: new Date() })
+        .where(eq(this.db.schema.trips.tripGroupId, groupId))
+
+      // Delete the group
+      await tx
+        .delete(this.db.schema.tripGroups)
+        .where(eq(this.db.schema.tripGroups.id, groupId))
+
+      this.eventEmitter.emit(
+        'audit.deleted',
+        new AuditEvent('trip_group', group.id, 'deleted', group.id, actorId, group.name),
+      )
+    })
+  }
+
+  async getTripsByGroup(groupId: string, agencyId: string) {
+    return this.db.client
+      .select({
+        id: this.db.schema.trips.id,
+        name: this.db.schema.trips.name,
+        status: this.db.schema.trips.status,
+        startDate: this.db.schema.trips.startDate,
+      })
+      .from(this.db.schema.trips)
+      .where(
+        and(
+          eq(this.db.schema.trips.tripGroupId, groupId),
+          eq(this.db.schema.trips.agencyId, agencyId),
+        ),
+      )
   }
 }

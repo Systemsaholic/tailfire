@@ -51,16 +51,85 @@ export class ActivityLogsService {
    */
   @OnEvent('trip.updated')
   async handleTripUpdated(event: TripUpdatedEvent) {
+    const description = this.buildTripUpdateDescription(event.tripName, event.changes)
     await this.db.client.insert(this.db.schema.activityLogs).values({
       entityType: 'trip',
       entityId: event.tripId,
       action: 'updated',
       actorId: event.actorId,
       actorType: event.actorId ? 'user' : 'system',
-      description: `Updated trip "${event.tripName}"`,
+      description,
       metadata: event.changes || {},
       tripId: event.tripId,
     })
+  }
+
+  /**
+   * Build a human-readable description for trip updates based on what changed.
+   */
+  private buildTripUpdateDescription(tripName: string, changes?: Record<string, any>): string {
+    if (!changes || Object.keys(changes).length === 0) {
+      return `Updated trip "${tripName}"`
+    }
+
+    const descriptions: string[] = []
+    const keys = Object.keys(changes)
+
+    // Status change
+    if (changes.status) {
+      descriptions.push(`Changed status to "${changes.status}"`)
+    }
+
+    // Name change
+    if (changes.name) {
+      descriptions.push(`Renamed to "${changes.name}"`)
+    }
+
+    // Trip type
+    if (changes.tripType) {
+      descriptions.push(`Changed type to "${changes.tripType}"`)
+    }
+
+    // Dates
+    if (changes.startDate) {
+      descriptions.push(`Updated start date`)
+    }
+    if (changes.endDate) {
+      descriptions.push(`Updated end date`)
+    }
+
+    // Archived
+    if ('isArchived' in changes) {
+      descriptions.push(changes.isArchived ? 'Archived trip' : 'Unarchived trip')
+    }
+
+    // Description / notes
+    if (changes.description !== undefined) {
+      descriptions.push('Updated description')
+    }
+    if (changes.internalNotes !== undefined) {
+      descriptions.push('Updated internal notes')
+    }
+
+    // Currency
+    if (changes.currency) {
+      descriptions.push(`Changed currency to ${changes.currency}`)
+    }
+
+    // Cover image
+    if (changes.coverImageUrl !== undefined) {
+      descriptions.push(changes.coverImageUrl ? 'Updated cover image' : 'Removed cover image')
+    }
+
+    // Fallback for unrecognized fields
+    if (descriptions.length === 0) {
+      const fieldNames = keys.filter(k => k !== 'tripGroupId').join(', ')
+      return fieldNames
+        ? `Updated ${fieldNames} on trip "${tripName}"`
+        : `Updated trip "${tripName}"`
+    }
+
+    return descriptions.join('; ') + ` — "${tripName}"`
   }
 
   /**

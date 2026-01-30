@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useInfiniteCruiseSailings, useCruiseFilters, type SailingSearchFilters, type SortField, type CabinCategory } from '@/hooks/use-cruise-library'
+import { useItinerary } from '@/hooks/use-itineraries'
 import { CruiseCard } from './_components/cruise-card'
 import { CruiseFilters } from './_components/cruise-filters'
 import { CruiseDetailModal } from './_components/cruise-detail-modal'
@@ -31,6 +32,12 @@ function CruiseLibraryContent() {
   const returnUrl = searchParams.get('returnUrl')
 
   const hasTripContext = !!(tripId && dayId && itineraryId)
+
+  // Fetch itinerary to get date bounds for filtering
+  const { data: itinerary } = useItinerary(tripId || '', itineraryId)
+
+  // Track if we've applied initial itinerary date filters
+  const hasAppliedItineraryFiltersRef = useRef(false)
 
   // Parse initial filters from URL (no page - using infinite scroll)
   const [filters, setFilters] = useState<Omit<SailingSearchFilters, 'page'>>(() => ({
@@ -72,10 +79,29 @@ function CruiseLibraryContent() {
   })
 
   // Stop the navigation loading overlay once page has mounted
-   
+
   useEffect(() => {
     stopLoading('cruise-library')
   }, [stopLoading])
+
+  // Auto-apply itinerary date filters when navigating from trip itinerary
+  // Only apply once on initial load, not on subsequent renders
+  useEffect(() => {
+    if (
+      hasTripContext &&
+      itinerary &&
+      itinerary.startDate &&
+      itinerary.endDate &&
+      !hasAppliedItineraryFiltersRef.current
+    ) {
+      hasAppliedItineraryFiltersRef.current = true
+      setFilters((prev) => ({
+        ...prev,
+        sailDateFrom: itinerary.startDate!,
+        sailDateTo: itinerary.endDate!,
+      }))
+    }
+  }, [hasTripContext, itinerary])
 
   // Flatten all pages into a single array
   const allSailings = data?.pages.flatMap((page) => page.items) ?? []
@@ -171,7 +197,13 @@ function CruiseLibraryContent() {
             <h1 className="text-2xl font-bold text-tern-gray-900">Cruise Library</h1>
           </div>
           <p className="mt-1 text-sm text-tern-gray-500">
-            Browse and add cruises from our sailing database
+            {hasTripContext && itinerary?.startDate && itinerary?.endDate ? (
+              <>
+                Showing cruises that fit within your itinerary dates: <span className="font-medium text-tern-teal-600">{itinerary.startDate}</span> to <span className="font-medium text-tern-teal-600">{itinerary.endDate}</span>
+              </>
+            ) : (
+              'Browse and add cruises from our sailing database'
+            )}
           </p>
         </div>
         {hasTripContext && returnUrl && (
@@ -251,9 +283,21 @@ function CruiseLibraryContent() {
         <div className="text-center py-12">
           <Ship className="mx-auto h-12 w-12 text-tern-gray-400" />
           <h3 className="mt-2 text-sm font-medium text-tern-gray-900">No cruises found</h3>
-          <p className="mt-1 text-sm text-tern-gray-500">
-            Try adjusting your filters or search criteria.
-          </p>
+          {hasTripContext && itinerary?.startDate && itinerary?.endDate ? (
+            <div className="mt-2 space-y-2">
+              <p className="text-sm text-tern-gray-500">
+                No cruises are available that depart and return within your itinerary dates
+                ({itinerary.startDate} to {itinerary.endDate}).
+              </p>
+              <p className="text-sm text-amber-600">
+                Consider adjusting the itinerary dates to find available cruises, or clear the date filters to browse all sailings.
+              </p>
+            </div>
+          ) : (
+            <p className="mt-1 text-sm text-tern-gray-500">
+              Try adjusting your filters or search criteria.
+            </p>
+          )}
         </div>
       ) : (
         <>
