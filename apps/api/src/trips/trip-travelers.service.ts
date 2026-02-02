@@ -14,6 +14,7 @@ import {
   TravelerCreatedEvent,
   TravelerUpdatedEvent,
   TravelerDeletedEvent,
+  AuditEvent,
 } from '../activity-logs/events'
 import type {
   CreateTripTravelerDto,
@@ -89,6 +90,41 @@ export class TripTravelersService {
       throw new BadRequestException('Either contactId or contactSnapshot must be provided')
     }
 
+    // Auto-create a CRM Contact when traveler is created inline (snapshot only, no contactId)
+    let autoCreatedContactId: string | undefined
+    if (hasContactSnapshot && !hasContactId) {
+      const snapshot = dto.contactSnapshot as Record<string, any>
+      const [newContact] = await this.db.client
+        .insert(this.db.schema.contacts)
+        .values({
+          agencyId: trip.agencyId,
+          firstName: snapshot.firstName || null,
+          lastName: snapshot.lastName || null,
+          email: snapshot.email || null,
+          phone: snapshot.phone || null,
+          dateOfBirth: snapshot.dateOfBirth || null,
+          gender: snapshot.gender || null,
+          pronouns: snapshot.pronouns || null,
+          passportNumber: snapshot.passportNumber || null,
+          passportExpiry: snapshot.passportExpiry || null,
+          passportCountry: snapshot.passportCountry || null,
+          passportIssueDate: snapshot.passportIssueDate || null,
+          nationality: snapshot.nationality || null,
+          redressNumber: snapshot.redressNumber || null,
+          knownTravelerNumber: snapshot.knownTravelerNumber || null,
+          dietaryRequirements: snapshot.dietaryRequirements || null,
+          mobilityRequirements: snapshot.mobilityRequirements || null,
+          seatPreference: snapshot.seatPreference || null,
+          cabinPreference: snapshot.cabinPreference || null,
+          floorPreference: snapshot.floorPreference || null,
+          contactType: 'lead',
+        })
+        .returning()
+
+      autoCreatedContactId = newContact!.id
+      this.logger.log(`[TripTravelersService] Auto-created CRM contact ${autoCreatedContactId} from inline traveler`)
+    }
+
     // Validate primary_contact role uniqueness
     const role = dto.role || 'limited_access'
     if (role === 'primary_contact') {
@@ -119,7 +155,7 @@ export class TripTravelersService {
         .insert(this.db.schema.tripTravelers)
         .values({
           tripId,
-          contactId: hasContactId ? dto.contactId : undefined,
+          contactId: hasContactId ? dto.contactId : autoCreatedContactId ?? undefined,
           contactSnapshot: resolvedSnapshot ?? null,
           role,
           isPrimaryTraveler: role === 'primary_contact', // Sync isPrimaryTraveler with role
@@ -128,14 +164,16 @@ export class TripTravelersService {
           emergencyContactInline: dto.emergencyContactInline,
           specialRequirements: dto.specialRequirements,
           sequenceOrder: dto.sequenceOrder || 0,
+          snapshotUpdatedAt: new Date(),
         })
         .returning()
 
       // Sync trip's primary_contact_id when creating a traveler with primary_contact role
-      if (role === 'primary_contact' && hasContactId) {
+      const resolvedContactId = hasContactId ? dto.contactId : autoCreatedContactId
+      if (role === 'primary_contact' && resolvedContactId) {
         await tx
           .update(this.db.schema.trips)
-          .set({ primaryContactId: dto.contactId })
+          .set({ primaryContactId: resolvedContactId })
           .where(eq(this.db.schema.trips.id, tripId))
       }
 
@@ -330,8 +368,10 @@ export class TripTravelersService {
 
     if (dto.contactSnapshot) {
       updateData.contactSnapshot = dto.contactSnapshot
+      updateData.snapshotUpdatedAt = new Date()
     } else if (contactSnapshotFromReference) {
       updateData.contactSnapshot = contactSnapshotFromReference
+      updateData.snapshotUpdatedAt = new Date()
     }
 
     // Use transaction to ensure atomicity when syncing primary contact
@@ -389,6 +429,19 @@ export class TripTravelersService {
     const existingTraveler = await this.findOne(id, tripId)
     const actualTripId = existingTraveler.tripId
 
+    // Capture group memberships before delete (cascade will remove them)
+    const groupMemberships = await this.db.client
+      .select({
+        groupId: this.db.schema.travelerGroupMembers.travelerGroupId,
+        groupName: this.db.schema.travelerGroups.name,
+      })
+      .from(this.db.schema.travelerGroupMembers)
+      .leftJoin(
+        this.db.schema.travelerGroups,
+        eq(this.db.schema.travelerGroupMembers.travelerGroupId, this.db.schema.travelerGroups.id)
+      )
+      .where(eq(this.db.schema.travelerGroupMembers.tripTravelerId, id))
+
     // Use transaction to ensure atomicity when syncing primary contact
     await this.db.client.transaction(async (tx) => {
       const [traveler] = await tx
@@ -418,6 +471,22 @@ export class TripTravelersService {
         'traveler.deleted',
         new TravelerDeletedEvent(traveler.id, traveler.tripId, travelerName, null),
       )
+
+      // Emit audit events for cascaded group membership removals
+      for (const membership of groupMemberships) {
+        this.eventEmitter.emit(
+          'audit.deleted',
+          new AuditEvent(
+            'trip_group',
+            membership.groupId,
+            'removed_from_group',
+            traveler.tripId,
+            null,
+            `Removed ${travelerName} from group "${membership.groupName || 'Unknown'}"`,
+            { travelerId: id, travelerName },
+          ),
+        )
+      }
     })
 
     // Clean up the traveller's cost splits (outside transaction to handle separately)
@@ -522,6 +591,7 @@ export class TripTravelersService {
       .update(this.db.schema.tripTravelers)
       .set({
         contactSnapshot: newSnapshot,
+        snapshotUpdatedAt: new Date(),
         updatedAt: new Date(),
       })
       .where(eq(this.db.schema.tripTravelers.id, id))
@@ -580,6 +650,22 @@ export class TripTravelersService {
       }
     }
 
+    // Compute snapshot staleness: compare snapshotUpdatedAt vs contact.updatedAt
+    let isSnapshotStale = false
+    if (contact && traveler.snapshotUpdatedAt) {
+      const snapshotTime = typeof traveler.snapshotUpdatedAt === 'string'
+        ? new Date(traveler.snapshotUpdatedAt)
+        : traveler.snapshotUpdatedAt
+      const contactTime = typeof contact.updatedAt === 'string'
+        ? new Date(contact.updatedAt)
+        : contact.updatedAt
+      if (contactTime && snapshotTime && contactTime > snapshotTime) {
+        isSnapshotStale = true
+      }
+    }
+
+    const formatTs = (ts: any) => ts ? (typeof ts === 'string' ? ts : ts.toISOString()) : null
+
     return {
       id: traveler.id,
       tripId: traveler.tripId,
@@ -593,6 +679,9 @@ export class TripTravelersService {
       emergencyContactInline: traveler.emergencyContactInline,
       specialRequirements: traveler.specialRequirements,
       sequenceOrder: traveler.sequenceOrder,
+      snapshotUpdatedAt: formatTs(traveler.snapshotUpdatedAt),
+      contactDeletedAt: formatTs(traveler.contactDeletedAt),
+      isSnapshotStale,
       createdAt: typeof traveler.createdAt === 'string' ? traveler.createdAt : traveler.createdAt.toISOString(),
       updatedAt: typeof traveler.updatedAt === 'string' ? traveler.updatedAt : traveler.updatedAt.toISOString(),
     }

@@ -246,6 +246,10 @@ export const tripTravelers = pgTable('trip_travelers', {
   // Ordering
   sequenceOrder: integer('sequence_order').default(0),
 
+  // Snapshot Tracking
+  snapshotUpdatedAt: timestamp('snapshot_updated_at', { withTimezone: true }).defaultNow(),
+  contactDeletedAt: timestamp('contact_deleted_at', { withTimezone: true }),
+
   // Audit Fields
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

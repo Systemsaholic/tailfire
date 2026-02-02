@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { ArrowLeft, Pencil, Save, X } from 'lucide-react'
 import { TernDashboardLayout } from '@/components/tern/layout'
 import { Button } from '@/components/ui/button'
@@ -16,7 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
-import { useContact, useUpdateContact } from '@/hooks/use-contacts'
+import { useContact, useUpdateContact, useContactTrips } from '@/hooks/use-contacts'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
 import { TableSkeleton } from '@/components/tern/shared/loading-skeleton'
 import { TernBadge } from '@/components/tern/core'
@@ -103,6 +104,7 @@ export default function ContactDetailPage() {
   const { toast } = useToast()
 
   const { data: contact, isLoading, error } = useContact(contactId)
+  const { data: contactTrips = [], isLoading: tripsLoading } = useContactTrips(contactId)
   const updateContact = useUpdateContact()
 
   const [editingSection, setEditingSection] = useState<EditSection>(null)
@@ -390,8 +392,8 @@ export default function ContactDetailPage() {
                         {contact.contactType === 'lead' ? 'Lead' : 'Client'}
                       </TernBadge>
 
-                      {/* Lifecycle Status Badge */}
-                      {contact.contactStatus && (
+                      {/* Lifecycle Status Badge (skip for leads — already shown by Contact Type Badge) */}
+                      {contact.contactType !== 'lead' && contact.contactStatus && (
                         <TernBadge
                           variant={getLifecycleBadgeVariant(contact.contactType, contact.contactStatus)}
                         >
@@ -1152,11 +1154,50 @@ export default function ContactDetailPage() {
                 />
               )}
               {activeSection === 'trips' && (
-                <ComingSoonSection
-                  title="Trips"
-                  description="All trips associated with this contact."
-                  icon={Plane}
-                />
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Plane className="h-5 w-5" />
+                      Trips
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {tripsLoading ? (
+                      <TableSkeleton />
+                    ) : contactTrips.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center">No trips associated with this contact.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {contactTrips.map((trip) => (
+                          <Link
+                            key={trip.id}
+                            href={`/trips/${trip.id}`}
+                            className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-medium truncate">{trip.name}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <TernBadge variant={trip.status === 'booked' ? 'booked' : trip.status === 'completed' ? 'completed' : 'secondary'}>
+                                  {trip.status}
+                                </TernBadge>
+                                {trip.tripType && (
+                                  <span className="text-xs text-muted-foreground">{trip.tripType}</span>
+                                )}
+                                {trip.isPrimaryContact && (
+                                  <TernBadge variant="inbound">Primary</TernBadge>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-xs text-muted-foreground text-right shrink-0 ml-4">
+                              {trip.startDate && <p>{trip.startDate}</p>}
+                              {trip.endDate && <p>to {trip.endDate}</p>}
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               )}
               {activeSection === 'bookings' && (
                 <ComingSoonSection

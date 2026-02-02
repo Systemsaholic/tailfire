@@ -367,6 +367,9 @@ export interface TripTravelerResponseDto {
   emergencyContactInline: Record<string, any> | null
   specialRequirements: string | null
   sequenceOrder: number
+  snapshotUpdatedAt: string | null
+  contactDeletedAt: string | null
+  isSnapshotStale?: boolean
   createdAt: string
   updatedAt: string
   // Populated contact data
