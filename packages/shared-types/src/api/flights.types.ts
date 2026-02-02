@@ -78,3 +78,70 @@ export interface FlightSearchParams {
   dateLocal?: string  // YYYY-MM-DD
   searchBy?: 'number' | 'callsign' | 'reg' | 'icao24'
 }
+
+// ============================================================================
+// FLIGHT OFFER SEARCH TYPES (Price Shopping)
+// ============================================================================
+
+/**
+ * Flight offer search parameters
+ */
+export interface FlightOfferSearchParams {
+  origin: string               // IATA
+  destination: string          // IATA
+  departureDate: string        // YYYY-MM-DD
+  returnDate?: string
+  adults: number
+  travelClass?: 'ECONOMY' | 'PREMIUM_ECONOMY' | 'BUSINESS' | 'FIRST'
+  nonStop?: boolean
+  maxPrice?: number
+  currencyCode?: string
+}
+
+/**
+ * Flight offer segment (one leg of a journey)
+ */
+export interface FlightOfferSegment {
+  departure: { iataCode: string; terminal?: string; at: string }
+  arrival: { iataCode: string; terminal?: string; at: string }
+  carrier: string
+  carrierName?: string         // resolved from dictionaries
+  flightNumber: string
+  aircraft?: string
+  aircraftName?: string        // resolved from dictionaries
+  duration: string             // ISO 8601
+  stops: number
+  cabin?: string
+}
+
+/**
+ * Normalized flight offer from external API
+ */
+export interface NormalizedFlightOffer {
+  id: string
+  source: string
+  segments: FlightOfferSegment[]
+  price: {
+    currency: string
+    total: string
+    perTraveler: string
+    base?: string
+    fees?: { amount: string; type: string }[]
+  }
+  validatingAirline: string
+  fareClass?: string
+  fareFamily?: string            // e.g., "LIGHT", "STANDARD", "FLEX"
+  cabin?: string                 // ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST
+  fareRules?: { exchangeable: boolean; refundable: boolean }
+  baggageAllowance?: { checked?: { quantity: number; weight?: string }; cabin?: { quantity: number } }
+  bookingClass?: string
+}
+
+/**
+ * Flight offer search API response
+ */
+export interface FlightOfferSearchResponse {
+  results: NormalizedFlightOffer[]
+  dictionaries?: Record<string, any>
+  warning?: string
+}

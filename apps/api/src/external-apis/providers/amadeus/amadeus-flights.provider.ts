@@ -35,47 +35,9 @@ import {
   AmadeusFlightResponse,
   AmadeusDatedFlight,
   AmadeusFlightPoint,
-  AmadeusTokenResponse,
-  AmadeusTokenCache,
   AmadeusTimingEntry,
 } from './amadeus.types'
-
-/**
- * Simple mutex implementation for token request serialization
- */
-class SimpleMutex {
-  private locked = false
-  private waitQueue: (() => void)[] = []
-
-  async acquire(): Promise<void> {
-    if (!this.locked) {
-      this.locked = true
-      return
-    }
-
-    return new Promise<void>(resolve => {
-      this.waitQueue.push(resolve)
-    })
-  }
-
-  release(): void {
-    if (this.waitQueue.length > 0) {
-      const next = this.waitQueue.shift()!
-      next()
-    } else {
-      this.locked = false
-    }
-  }
-
-  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    await this.acquire()
-    try {
-      return await fn()
-    } finally {
-      this.release()
-    }
-  }
-}
+import { AmadeusAuthService } from './amadeus-auth.service'
 
 /**
  * Build provider configuration with env-driven rate limits
@@ -108,21 +70,17 @@ const PROVIDER_PRIORITY = 2
 /**
  * Buffer time before token expiry (60 seconds)
  */
-const TOKEN_EXPIRY_BUFFER_MS = 60000
-
 @Injectable()
 export class AmadeusFlightsProvider
   extends BaseExternalApi<FlightStatusParams, NormalizedFlightStatus>
   implements OnModuleInit
 {
-  private tokenCache: AmadeusTokenCache | null = null
-  private tokenMutex = new SimpleMutex()
-
   constructor(
     httpService: HttpService,
     rateLimiter: RateLimiterService,
     metrics: MetricsService,
-    private readonly registry: ExternalApiRegistryService
+    private readonly registry: ExternalApiRegistryService,
+    private readonly authService: AmadeusAuthService
   ) {
     super(buildAmadeusConfig(), httpService, rateLimiter, metrics)
   }
@@ -135,76 +93,18 @@ export class AmadeusFlightsProvider
   }
 
   // ============================================================================
-  // OAUTH2 TOKEN MANAGEMENT
+  // OAUTH2 TOKEN MANAGEMENT (delegated to shared AmadeusAuthService)
   // ============================================================================
 
   /**
-   * Get a valid OAuth2 access token, using cache when possible
-   *
-   * Uses mutex to prevent concurrent token requests.
-   * Refreshes token 60 seconds before expiry.
+   * Get a valid OAuth2 access token via shared auth service
    */
   private async getAccessToken(): Promise<string> {
-    // Return cached token if still valid (with 60s buffer)
-    if (this.tokenCache && Date.now() < this.tokenCache.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
-      return this.tokenCache.token
+    if (!this.credentials) {
+      throw new Error('No credentials configured for Amadeus')
     }
-
-    // Use mutex to prevent concurrent token requests
-    return this.tokenMutex.runExclusive(async () => {
-      // Double-check after acquiring lock (another request may have refreshed)
-      if (this.tokenCache && Date.now() < this.tokenCache.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
-        return this.tokenCache.token
-      }
-
-      if (!this.credentials) {
-        throw new Error('No credentials configured for Amadeus')
-      }
-
-      const { clientId, clientSecret } = this.credentials as { clientId: string; clientSecret: string }
-
-      const tokenUrl = `${this.config.baseUrl}/v1/security/oauth2/token`
-      const params = new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: clientId,
-        client_secret: clientSecret,
-      })
-
-      try {
-        const response = await firstValueFrom(
-          this.httpService.post<AmadeusTokenResponse>(tokenUrl, params.toString(), {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            timeout: 10000,
-          })
-        )
-
-        const tokenData = response.data
-
-        // Log rate-limit headers for usage monitoring
-        this.logger.debug('Amadeus token acquired', {
-          expiresIn: tokenData.expires_in,
-          rateLimitRemaining: response.headers['x-ratelimit-remaining'],
-          rateLimitReset: response.headers['x-ratelimit-reset'],
-        })
-
-        // Cache the token
-        this.tokenCache = {
-          token: tokenData.access_token,
-          expiresAt: Date.now() + tokenData.expires_in * 1000,
-        }
-
-        return this.tokenCache.token
-      } catch (error: any) {
-        this.logger.error('Failed to acquire Amadeus token', {
-          error: error.message,
-          status: error.response?.status,
-          data: error.response?.data,
-        })
-        throw new Error(`OAuth2 token acquisition failed: ${error.message}`)
-      }
-    })
+    const { clientId, clientSecret } = this.credentials as { clientId: string; clientSecret: string }
+    return this.authService.getAccessToken(this.config.baseUrl, { clientId, clientSecret })
   }
 
   /**

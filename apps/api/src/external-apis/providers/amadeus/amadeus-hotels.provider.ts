@@ -40,43 +40,7 @@ import {
   AmadeusHotelOffer,
   AmadeusOffer,
 } from './amadeus-hotels.types'
-import { AmadeusTokenResponse, AmadeusTokenCache } from './amadeus.types'
-
-/**
- * Simple mutex for OAuth token serialization
- */
-class SimpleMutex {
-  private locked = false
-  private waitQueue: (() => void)[] = []
-
-  async acquire(): Promise<void> {
-    if (!this.locked) {
-      this.locked = true
-      return
-    }
-    return new Promise<void>(resolve => {
-      this.waitQueue.push(resolve)
-    })
-  }
-
-  release(): void {
-    if (this.waitQueue.length > 0) {
-      const next = this.waitQueue.shift()!
-      next()
-    } else {
-      this.locked = false
-    }
-  }
-
-  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    await this.acquire()
-    try {
-      return await fn()
-    } finally {
-      this.release()
-    }
-  }
-}
+import { AmadeusAuthService } from './amadeus-auth.service'
 
 /**
  * Build provider configuration
@@ -104,21 +68,17 @@ const PROVIDER_PRIORITY = 2
 /**
  * Buffer time before token expiry (60 seconds)
  */
-const TOKEN_EXPIRY_BUFFER_MS = 60000
-
 @Injectable()
 export class AmadeusHotelsProvider
   extends BaseExternalApi<HotelSearchParams, NormalizedHotelResult>
   implements OnModuleInit
 {
-  private tokenCache: AmadeusTokenCache | null = null
-  private tokenMutex = new SimpleMutex()
-
   constructor(
     httpService: HttpService,
     rateLimiter: RateLimiterService,
     metrics: MetricsService,
-    private readonly registry: ExternalApiRegistryService
+    private readonly registry: ExternalApiRegistryService,
+    private readonly authService: AmadeusAuthService
   ) {
     super(buildAmadeusHotelsConfig(), httpService, rateLimiter, metrics)
   }
@@ -131,61 +91,18 @@ export class AmadeusHotelsProvider
   }
 
   // ============================================================================
-  // OAUTH2 TOKEN MANAGEMENT (shared pattern with flights)
+  // OAUTH2 TOKEN MANAGEMENT (delegated to shared AmadeusAuthService)
   // ============================================================================
 
   /**
-   * Get a valid OAuth2 access token, using cache when possible
+   * Get a valid OAuth2 access token via shared auth service
    */
   private async getAccessToken(): Promise<string> {
-    if (this.tokenCache && Date.now() < this.tokenCache.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
-      return this.tokenCache.token
+    if (!this.credentials) {
+      throw new Error('No credentials configured for Amadeus Hotels')
     }
-
-    return this.tokenMutex.runExclusive(async () => {
-      if (this.tokenCache && Date.now() < this.tokenCache.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
-        return this.tokenCache.token
-      }
-
-      if (!this.credentials) {
-        throw new Error('No credentials configured for Amadeus Hotels')
-      }
-
-      const { clientId, clientSecret } = this.credentials as { clientId: string; clientSecret: string }
-
-      const tokenUrl = `${this.config.baseUrl}/v1/security/oauth2/token`
-      const params = new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: clientId,
-        client_secret: clientSecret,
-      })
-
-      try {
-        const response = await firstValueFrom(
-          this.httpService.post<AmadeusTokenResponse>(tokenUrl, params.toString(), {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            timeout: 10000,
-          })
-        )
-
-        const tokenData = response.data
-
-        this.tokenCache = {
-          token: tokenData.access_token,
-          expiresAt: Date.now() + tokenData.expires_in * 1000,
-        }
-
-        return this.tokenCache.token
-      } catch (error: any) {
-        this.logger.error('Failed to acquire Amadeus Hotels token', {
-          error: error.message,
-          status: error.response?.status,
-        })
-        throw new Error(`OAuth2 token acquisition failed: ${error.message}`)
-      }
-    })
+    const { clientId, clientSecret } = this.credentials as { clientId: string; clientSecret: string }
+    return this.authService.getAccessToken(this.config.baseUrl, { clientId, clientSecret })
   }
 
   /**

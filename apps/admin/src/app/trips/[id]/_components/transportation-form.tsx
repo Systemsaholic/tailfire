@@ -13,7 +13,9 @@ import type {
   UpdateTransportationActivityDto,
   TransportationSubtype,
   ItineraryDayWithActivitiesDto,
+  NormalizedTransferResult,
 } from '@tailfire/shared-types/api'
+import { TransferSearchPanel } from '@/components/transfer-search-panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -47,6 +49,8 @@ import {
   Check,
   AlertCircle,
   CalendarCheck,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
@@ -296,6 +300,31 @@ export function TransportationForm({
   const isRoundTripValue = useWatch({ control, name: 'transportationDetails.isRoundTrip' })
   const pickupAddressValue = useWatch({ control, name: 'transportationDetails.pickupAddress' })
   const dropoffAddressValue = useWatch({ control, name: 'transportationDetails.dropoffAddress' })
+
+  // Transfer search panel state
+  const [showTransferSearch, setShowTransferSearch] = useState(false)
+
+  const handleTransferSelect = (transfer: NormalizedTransferResult) => {
+    setValue('transportationDetails.providerName', transfer.provider || '', { shouldDirty: true })
+    setValue('transportationDetails.vehicleType', transfer.vehicle.type?.toLowerCase() || '', { shouldDirty: true })
+    if (transfer.vehicle.maxPassengers) {
+      setValue('transportationDetails.vehicleCapacity', transfer.vehicle.maxPassengers, { shouldDirty: true })
+    }
+    if (transfer.pickupLocation?.address) {
+      setValue('transportationDetails.pickupAddress', transfer.pickupLocation.address, { shouldDirty: true })
+    }
+    if (transfer.dropoffLocation?.address) {
+      setValue('transportationDetails.dropoffAddress', transfer.dropoffLocation.address, { shouldDirty: true })
+    }
+    if (transfer.cancellationPolicy) {
+      setValue('notes', transfer.cancellationPolicy.refundable ? 'Free cancellation' : `Non-refundable. ${transfer.cancellationPolicy.description || ''}`, { shouldDirty: true })
+    }
+    setShowTransferSearch(false)
+    toast({
+      title: 'Transfer Details Applied',
+      description: `${transfer.vehicle.type} - ${transfer.price.currency} ${transfer.price.total}`,
+    })
+  }
 
   // Auto-generate activity name from pickup/dropoff addresses
   const { displayName, placeholder } = useActivityNameGenerator({
@@ -805,6 +834,40 @@ export function TransportationForm({
               </div>
             </CardContent>
           </Card>
+
+          {/* Search Transfers (only for transfer subtype) */}
+          {subtype === 'transfer' && (
+            <div className="border border-gray-200 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setShowTransferSearch(!showTransferSearch)}
+                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <ArrowRightLeft className="h-5 w-5 text-emerald-500" />
+                  <span className="font-medium">Search Transfers</span>
+                  <span className="text-xs text-gray-400 ml-1">External providers</span>
+                </div>
+                {showTransferSearch ? (
+                  <ChevronUp className="h-5 w-5 text-gray-400" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 text-gray-400" />
+                )}
+              </button>
+
+              {showTransferSearch && (
+                <div className="p-4 border-t border-gray-200">
+                  <TransferSearchPanel
+                    onSelect={handleTransferSelect}
+                    defaultPickupAddress={pickupAddressValue || ''}
+                    defaultDropoffAddress={dropoffAddressValue || ''}
+                    defaultDate={pickupDateValue || ''}
+                    defaultTime={pickupTimeValue || ''}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Vehicle Details */}
           <Card>

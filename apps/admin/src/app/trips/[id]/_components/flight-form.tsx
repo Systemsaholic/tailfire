@@ -43,7 +43,8 @@ import { useIsChildOfPackage } from '@/hooks/use-is-child-of-package'
 import { useMarkActivityBooked } from '@/hooks/use-activity-bookings'
 import { MarkActivityBookedModal, BookingStatusBadge } from '@/components/activities/mark-activity-booked-modal'
 import { ChildOfPackageBookingSection } from '@/components/activities/child-of-package-booking-section'
-import type { NormalizedFlightStatus } from '@tailfire/shared-types/api'
+import type { NormalizedFlightStatus, NormalizedFlightOffer } from '@tailfire/shared-types/api'
+import { FlightOffersSearchPanel } from '@/components/flight-offers-search-panel'
 import { normalizedTimeToFormFields } from '@/lib/flight-time-utils'
 import { EditTravelersDialog } from './edit-travelers-dialog'
 import { PaymentScheduleSection } from './payment-schedule-section'
@@ -256,6 +257,9 @@ export function FlightForm({
   // Track whether user has selected a flight from search results (or is editing existing)
   // Visual journey display only shows after selection, not while typing
   const [hasSelectedFlight, setHasSelectedFlight] = useState(!!activity)
+
+  // Flight offers search (price shopping)
+  const [showFlightOffers, setShowFlightOffers] = useState(false)
 
   // Title editing state - allows user to override auto-generated title
   const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -834,6 +838,49 @@ export function FlightForm({
     })
   }
 
+  // Handler for selecting a flight offer (price shopping results)
+  const handleFlightOfferSelect = (offer: NormalizedFlightOffer) => {
+    // Clear existing segments and replace with offer segments
+    const currentSegments = segmentFields.length
+    for (let i = currentSegments - 1; i >= 0; i--) {
+      remove(i)
+    }
+
+    // Add a segment for each offer segment
+    offer.segments.forEach((seg, i) => {
+      append(createDefaultSegment())
+      const depDate = seg.departure.at ? seg.departure.at.split('T')[0] : ''
+      const depTime = seg.departure.at ? seg.departure.at.split('T')[1]?.substring(0, 5) : ''
+      const arrDate = seg.arrival.at ? seg.arrival.at.split('T')[0] : ''
+      const arrTime = seg.arrival.at ? seg.arrival.at.split('T')[1]?.substring(0, 5) : ''
+
+      setValue(`flightSegments.${i}.airline`, seg.carrier || '', { shouldDirty: true })
+      setValue(`flightSegments.${i}.flightNumber`, seg.flightNumber || '', { shouldDirty: true })
+      setValue(`flightSegments.${i}.departureAirport`, seg.departure.iataCode || '', { shouldDirty: true })
+      setValue(`flightSegments.${i}.arrivalAirport`, seg.arrival.iataCode || '', { shouldDirty: true })
+      setValue(`flightSegments.${i}.departureDate`, depDate || null, { shouldDirty: true })
+      setValue(`flightSegments.${i}.arrivalDate`, arrDate || depDate || null, { shouldDirty: true })
+      setValue(`flightSegments.${i}.departureTime`, depTime, { shouldDirty: true })
+      setValue(`flightSegments.${i}.arrivalTime`, arrTime, { shouldDirty: true })
+      setValue(`flightSegments.${i}.departureTerminal`, seg.departure.terminal || '', { shouldDirty: true })
+      setValue(`flightSegments.${i}.arrivalTerminal`, seg.arrival.terminal || '', { shouldDirty: true })
+      setValue(`flightSegments.${i}.isManualEntry`, true, { shouldDirty: true })
+    })
+
+    // Set itinerary display based on segment count
+    if (offer.segments.length > 1) {
+      setValue('itineraryDisplay', 'multi', { shouldDirty: true })
+    }
+
+    setShowFlightOffers(false)
+    setHasSelectedFlight(true)
+
+    toast({
+      title: 'Flight Offer Applied',
+      description: `${offer.validatingAirline} - ${offer.price.currency} ${offer.price.total}`,
+    })
+  }
+
   // Handler for "More Results" button - triggers Amadeus search
   const handleMoreResults = () => {
     if (!amadeusSearchEnabled) {
@@ -1197,6 +1244,37 @@ export function FlightForm({
                     Submit
                   </Button>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Search Flight Offers Section */}
+          <div className="border border-gray-200 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setShowFlightOffers(!showFlightOffers)}
+              className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Plane className="h-5 w-5 text-blue-500" />
+                <span className="font-medium">Search Flight Offers</span>
+                <span className="text-xs text-gray-400 ml-1">Price shopping</span>
+              </div>
+              {showFlightOffers ? (
+                <ChevronUp className="h-5 w-5 text-gray-400" />
+              ) : (
+                <ChevronDown className="h-5 w-5 text-gray-400" />
+              )}
+            </button>
+
+            {showFlightOffers && (
+              <div className="p-4 border-t border-gray-200">
+                <FlightOffersSearchPanel
+                  onSelect={handleFlightOfferSelect}
+                  defaultOrigin={segmentFields[0] ? (getValues(`flightSegments.0.departureAirport`) || '') : ''}
+                  defaultDestination={segmentFields[0] ? (getValues(`flightSegments.0.arrivalAirport`) || '') : ''}
+                  defaultDate={segmentFields[0] ? (getValues(`flightSegments.0.departureDate`) || '') : ''}
+                />
               </div>
             )}
           </div>

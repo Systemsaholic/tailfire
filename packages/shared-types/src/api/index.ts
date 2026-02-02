@@ -46,6 +46,12 @@ export * from './flights.types.js'
 // Hotel Search (External APIs)
 export * from './hotels.types.js'
 
+// Transfer Search (External APIs)
+export * from './transfers.types.js'
+
+// Tours & Activities Search (External APIs)
+export * from './tours-activities.types.js'
+
 // Amenities (dynamic, API-driven)
 export * from './amenities.types.js'
 

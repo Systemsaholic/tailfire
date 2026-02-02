@@ -8,7 +8,8 @@ import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Compass, ChevronDown, ChevronUp, Sparkles, Loader2, Check, AlertCircle, Plus, X } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
-import type { ActivityResponseDto, ItineraryDayWithActivitiesDto } from '@tailfire/shared-types/api'
+import type { ActivityResponseDto, ItineraryDayWithActivitiesDto, NormalizedTourActivity } from '@tailfire/shared-types/api'
+import { ActivitySearchPanel } from '@/components/activity-search-panel'
 import { Button } from '@/components/ui/button'
 import { FormSuccessOverlay } from '@/components/ui/form-success-overlay'
 import { useActivityNavigation } from '@/hooks/use-activity-navigation'
@@ -111,6 +112,7 @@ export function TourForm({
 
   const [showSuccess, setShowSuccess] = useState(false)
   const [isAiAssistOpen, setIsAiAssistOpen] = useState(false)
+  const [showActivitySearch, setShowActivitySearch] = useState(false)
   const [aiInput, setAiInput] = useState('')
   const [showTravelersDialog, setShowTravelersDialog] = useState(false)
   const [activeTab, setActiveTab] = useState(() => {
@@ -484,6 +486,35 @@ export function TourForm({
     setAiInput('')
   }
 
+  const handleActivitySelect = (activity: NormalizedTourActivity) => {
+    setValue('tourDetails.tourName', activity.name || '', { shouldDirty: true })
+    setValue('tourDetails.providerName', activity.provider || '', { shouldDirty: true })
+    if (activity.description) {
+      setValue('description', activity.description, { shouldDirty: true })
+    }
+    if (activity.duration) {
+      // Parse ISO duration like "PT2H30M" or simple "2 hours"
+      const match = activity.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?/)
+      if (match) {
+        const hours = parseInt(match[1] || '0', 10)
+        const mins = parseInt(match[2] || '0', 10)
+        setValue('tourDetails.durationMinutes', hours * 60 + mins, { shouldDirty: true })
+      }
+    }
+    if (activity.price) {
+      setValue('totalPriceCents', Math.round(parseFloat(activity.price.amount) * 100), { shouldDirty: true })
+      setValue('currency', activity.price.currency || 'USD', { shouldDirty: true })
+    }
+    if (activity.location?.address) {
+      setValue('tourDetails.location', activity.location.address, { shouldDirty: true })
+    }
+    setShowActivitySearch(false)
+    toast({
+      title: 'Activity Details Applied',
+      description: activity.name,
+    })
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     await forceSave()
@@ -718,6 +749,37 @@ export function TourForm({
                     Submit
                   </Button>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Search Activities Section */}
+          <div className="border border-gray-200 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setShowActivitySearch(!showActivitySearch)}
+              className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Compass className="h-5 w-5 text-orange-500" />
+                <span className="font-medium">Search Activities</span>
+                <span className="text-xs text-gray-400 ml-1">Tours & experiences nearby</span>
+              </div>
+              {showActivitySearch ? (
+                <ChevronUp className="h-5 w-5 text-gray-400" />
+              ) : (
+                <ChevronDown className="h-5 w-5 text-gray-400" />
+              )}
+            </button>
+
+            {showActivitySearch && (
+              <div className="p-4 border-t border-gray-200">
+                <p className="text-sm text-gray-500 mb-3">
+                  Search for tours and activities near this location. Requires latitude/longitude coordinates.
+                </p>
+                <ActivitySearchPanel
+                  onSelect={handleActivitySelect}
+                />
               </div>
             )}
           </div>
