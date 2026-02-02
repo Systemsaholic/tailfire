@@ -26,6 +26,8 @@ import {
 import type {
   ContactRelationshipResponseDto,
 } from '../../../../packages/shared-types/src/api'
+import { GetAuthContext } from '../auth/decorators/auth-context.decorator'
+import type { AuthContext } from '../auth/auth.types'
 
 @ApiTags('Contact Relationships')
 @Controller('contacts/:contactId/relationships')
@@ -39,10 +41,11 @@ export class ContactRelationshipsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async create(
+    @GetAuthContext() auth: AuthContext,
     @Param('contactId') contactId: string,
     @Body() dto: CreateContactRelationshipDto,
   ): Promise<ContactRelationshipResponseDto> {
-    return this.relationshipsService.create(contactId, dto)
+    return this.relationshipsService.create(contactId, dto, auth.agencyId)
   }
 
   /**
@@ -51,11 +54,11 @@ export class ContactRelationshipsController {
    */
   @Get()
   async findAll(
+    @GetAuthContext() auth: AuthContext,
     @Param('contactId') contactId: string,
     @Query() filters: ContactRelationshipFilterDto,
   ): Promise<ContactRelationshipResponseDto[]> {
-    // Add contactId to filters
-    return this.relationshipsService.findAll({ ...filters, contactId })
+    return this.relationshipsService.findAll({ ...filters, contactId }, auth.agencyId)
   }
 
   /**
@@ -64,10 +67,11 @@ export class ContactRelationshipsController {
    */
   @Put(':id')
   async update(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
     @Body() dto: UpdateContactRelationshipDto,
   ): Promise<ContactRelationshipResponseDto> {
-    return this.relationshipsService.update(id, dto)
+    return this.relationshipsService.update(id, dto, auth.agencyId)
   }
 
   /**
@@ -76,7 +80,10 @@ export class ContactRelationshipsController {
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id') id: string): Promise<void> {
-    return this.relationshipsService.remove(id)
+  async remove(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.relationshipsService.remove(id, auth.agencyId)
   }
 }

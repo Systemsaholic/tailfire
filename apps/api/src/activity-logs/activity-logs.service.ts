@@ -9,7 +9,7 @@
 
 import { Injectable, Logger } from '@nestjs/common'
 import { OnEvent } from '@nestjs/event-emitter'
-import { eq, desc, and } from 'drizzle-orm'
+import { eq, desc, and, sql } from 'drizzle-orm'
 import { DatabaseService } from '../db/database.service'
 import {
   TripCreatedEvent,
@@ -301,8 +301,24 @@ export class ActivityLogsService {
    */
   async getActivityForTrip(tripId: string, limit = 50, offset = 0) {
     const logs = await this.db.client
-      .select()
+      .select({
+        id: this.db.schema.activityLogs.id,
+        entityType: this.db.schema.activityLogs.entityType,
+        entityId: this.db.schema.activityLogs.entityId,
+        action: this.db.schema.activityLogs.action,
+        actorId: this.db.schema.activityLogs.actorId,
+        actorType: this.db.schema.activityLogs.actorType,
+        actorName: sql<string | null>`COALESCE(${this.db.schema.userProfiles.firstName} || ' ' || ${this.db.schema.userProfiles.lastName}, NULL)`.as('actor_name'),
+        description: this.db.schema.activityLogs.description,
+        metadata: this.db.schema.activityLogs.metadata,
+        tripId: this.db.schema.activityLogs.tripId,
+        createdAt: this.db.schema.activityLogs.createdAt,
+      })
       .from(this.db.schema.activityLogs)
+      .leftJoin(
+        this.db.schema.userProfiles,
+        eq(this.db.schema.activityLogs.actorId, this.db.schema.userProfiles.id)
+      )
       .where(eq(this.db.schema.activityLogs.tripId, tripId))
       .orderBy(desc(this.db.schema.activityLogs.createdAt))
       .limit(limit)
@@ -321,8 +337,24 @@ export class ActivityLogsService {
     offset = 0
   ) {
     const logs = await this.db.client
-      .select()
+      .select({
+        id: this.db.schema.activityLogs.id,
+        entityType: this.db.schema.activityLogs.entityType,
+        entityId: this.db.schema.activityLogs.entityId,
+        action: this.db.schema.activityLogs.action,
+        actorId: this.db.schema.activityLogs.actorId,
+        actorType: this.db.schema.activityLogs.actorType,
+        actorName: sql<string | null>`COALESCE(${this.db.schema.userProfiles.firstName} || ' ' || ${this.db.schema.userProfiles.lastName}, NULL)`.as('actor_name'),
+        description: this.db.schema.activityLogs.description,
+        metadata: this.db.schema.activityLogs.metadata,
+        tripId: this.db.schema.activityLogs.tripId,
+        createdAt: this.db.schema.activityLogs.createdAt,
+      })
       .from(this.db.schema.activityLogs)
+      .leftJoin(
+        this.db.schema.userProfiles,
+        eq(this.db.schema.activityLogs.actorId, this.db.schema.userProfiles.id)
+      )
       .where(
         and(
           eq(this.db.schema.activityLogs.entityType, entityType),

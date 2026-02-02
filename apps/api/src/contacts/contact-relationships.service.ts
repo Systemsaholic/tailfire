@@ -24,18 +24,22 @@ export class ContactRelationshipsService {
   async create(
     contactId1: string,
     dto: CreateContactRelationshipDto,
+    agencyId: string,
   ): Promise<ContactRelationshipResponseDto> {
-    // Validate that both contacts exist
+    // Validate that both contacts exist and belong to the same agency
+    const contact1Conditions = [eq(this.db.schema.contacts.id, contactId1), eq(this.db.schema.contacts.agencyId, agencyId)]
+    const contact2Conditions = [eq(this.db.schema.contacts.id, dto.contactId2), eq(this.db.schema.contacts.agencyId, agencyId)]
+
     const contact1 = await this.db.client
       .select()
       .from(this.db.schema.contacts)
-      .where(eq(this.db.schema.contacts.id, contactId1))
+      .where(and(...contact1Conditions))
       .limit(1)
 
     const contact2 = await this.db.client
       .select()
       .from(this.db.schema.contacts)
-      .where(eq(this.db.schema.contacts.id, dto.contactId2))
+      .where(and(...contact2Conditions))
       .limit(1)
 
     if (!contact1.length || !contact2.length) {
@@ -72,6 +76,7 @@ export class ContactRelationshipsService {
       const [relationship] = await this.db.client
         .insert(this.db.schema.contactRelationships)
         .values({
+          agencyId,
           contactId1,
           contactId2: dto.contactId2,
           labelForContact1: dto.labelForContact1,
@@ -98,8 +103,10 @@ export class ContactRelationshipsService {
    */
   async findAll(
     filters: ContactRelationshipFilterDto,
+    agencyId: string,
   ): Promise<ContactRelationshipResponseDto[]> {
     const conditions = []
+    conditions.push(eq(this.db.schema.contactRelationships.agencyId, agencyId))
 
     if (filters.contactId) {
       const contactCondition = or(
@@ -165,14 +172,17 @@ export class ContactRelationshipsService {
   async update(
     id: string,
     dto: UpdateContactRelationshipDto,
+    agencyId: string,
   ): Promise<ContactRelationshipResponseDto> {
+    const conditions = [eq(this.db.schema.contactRelationships.id, id)]
+    conditions.push(eq(this.db.schema.contactRelationships.agencyId, agencyId))
     const [relationship] = await this.db.client
       .update(this.db.schema.contactRelationships)
       .set({
         ...dto,
         updatedAt: new Date(),
       })
-      .where(eq(this.db.schema.contactRelationships.id, id))
+      .where(and(...conditions))
       .returning()
 
     if (!relationship) {
@@ -185,10 +195,12 @@ export class ContactRelationshipsService {
   /**
    * Delete a relationship
    */
-  async remove(id: string): Promise<void> {
+  async remove(id: string, agencyId: string): Promise<void> {
+    const conditions = [eq(this.db.schema.contactRelationships.id, id)]
+    conditions.push(eq(this.db.schema.contactRelationships.agencyId, agencyId))
     const [relationship] = await this.db.client
       .delete(this.db.schema.contactRelationships)
-      .where(eq(this.db.schema.contactRelationships.id, id))
+      .where(and(...conditions))
       .returning()
 
     if (!relationship) {

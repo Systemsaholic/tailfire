@@ -73,6 +73,29 @@ export function useContactWithRelationships(id: string | null) {
   })
 }
 
+/**
+ * Fetch trips associated with a contact
+ */
+export function useContactTrips(contactId: string | null) {
+  return useQuery({
+    queryKey: [...contactKeys.detail(contactId || ''), 'trips'],
+    queryFn: () =>
+      api.get<
+        Array<{
+          id: string
+          name: string
+          status: string
+          tripType: string | null
+          startDate: string | null
+          endDate: string | null
+          isPrimaryContact: boolean
+          createdAt: string
+        }>
+      >(`/contacts/${contactId}/trips`),
+    enabled: !!contactId,
+  })
+}
+
 // ============================================================================
 // MUTATIONS
 // ============================================================================

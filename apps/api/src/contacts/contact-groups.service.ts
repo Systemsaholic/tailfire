@@ -25,10 +25,11 @@ export class ContactGroupsService {
   /**
    * Create a new contact group
    */
-  async create(dto: CreateContactGroupDto): Promise<ContactGroupResponseDto> {
+  async create(dto: CreateContactGroupDto, agencyId: string): Promise<ContactGroupResponseDto> {
     const [group] = await this.db.client
       .insert(this.db.schema.contactGroups)
       .values({
+        agencyId,
         name: dto.name,
         groupType: dto.groupType,
         description: dto.description,
@@ -45,6 +46,7 @@ export class ContactGroupsService {
    */
   async findAll(
     filters: ContactGroupFilterDto,
+    agencyId: string,
   ): Promise<PaginatedContactGroupsResponseDto> {
     const page = filters.page || 1
     const limit = filters.limit || 20
@@ -52,6 +54,9 @@ export class ContactGroupsService {
 
     // Build WHERE conditions
     const conditions = []
+
+    // Always filter by agency
+    conditions.push(eq(this.db.schema.contactGroups.agencyId, agencyId))
 
     if (filters.search) {
       conditions.push(ilike(this.db.schema.contactGroups.name, `%${filters.search}%`))
@@ -117,11 +122,13 @@ export class ContactGroupsService {
   /**
    * Find one contact group by ID
    */
-  async findOne(id: string): Promise<ContactGroupResponseDto> {
+  async findOne(id: string, agencyId: string): Promise<ContactGroupResponseDto> {
+    const conditions = [eq(this.db.schema.contactGroups.id, id)]
+    conditions.push(eq(this.db.schema.contactGroups.agencyId, agencyId))
     const [group] = await this.db.client
       .select()
       .from(this.db.schema.contactGroups)
-      .where(eq(this.db.schema.contactGroups.id, id))
+      .where(and(...conditions))
       .limit(1)
 
     if (!group) {
@@ -136,8 +143,9 @@ export class ContactGroupsService {
    */
   async findOneWithMembers(
     id: string,
+    agencyId: string,
   ): Promise<ContactGroupWithMembersResponseDto> {
-    const group = await this.findOne(id)
+    const group = await this.findOne(id, agencyId)
 
     // Get members with contact details
     const members = await this.db.client
@@ -267,14 +275,17 @@ export class ContactGroupsService {
   async update(
     id: string,
     dto: UpdateContactGroupDto,
+    agencyId: string,
   ): Promise<ContactGroupResponseDto> {
+    const conditions = [eq(this.db.schema.contactGroups.id, id)]
+    conditions.push(eq(this.db.schema.contactGroups.agencyId, agencyId))
     const [group] = await this.db.client
       .update(this.db.schema.contactGroups)
       .set({
         ...dto,
         updatedAt: new Date(),
       })
-      .where(eq(this.db.schema.contactGroups.id, id))
+      .where(and(...conditions))
       .returning()
 
     if (!group) {
@@ -287,10 +298,12 @@ export class ContactGroupsService {
   /**
    * Delete a contact group
    */
-  async remove(id: string): Promise<void> {
+  async remove(id: string, agencyId: string): Promise<void> {
+    const conditions = [eq(this.db.schema.contactGroups.id, id)]
+    conditions.push(eq(this.db.schema.contactGroups.agencyId, agencyId))
     const [group] = await this.db.client
       .delete(this.db.schema.contactGroups)
-      .where(eq(this.db.schema.contactGroups.id, id))
+      .where(and(...conditions))
       .returning()
 
     if (!group) {
@@ -304,9 +317,10 @@ export class ContactGroupsService {
   async addMember(
     groupId: string,
     dto: AddContactToGroupDto,
+    agencyId: string,
   ): Promise<void> {
-    // Verify group exists
-    await this.findOne(groupId)
+    // Verify group exists and belongs to agency
+    await this.findOne(groupId, agencyId)
 
     // Verify contact exists
     const [contact] = await this.db.client
@@ -346,9 +360,9 @@ export class ContactGroupsService {
   /**
    * Remove a contact from a group
    */
-  async removeMember(groupId: string, memberId: string): Promise<void> {
-    // Verify group exists
-    await this.findOne(groupId)
+  async removeMember(groupId: string, memberId: string, agencyId: string): Promise<void> {
+    // Verify group exists and belongs to agency
+    await this.findOne(groupId, agencyId)
 
     const [member] = await this.db.client
       .delete(this.db.schema.contactGroupMembers)
@@ -372,9 +386,10 @@ export class ContactGroupsService {
     groupId: string,
     memberId: string,
     dto: UpdateContactGroupMemberDto,
+    agencyId: string,
   ): Promise<void> {
-    // Verify group exists
-    await this.findOne(groupId)
+    // Verify group exists and belongs to agency
+    await this.findOne(groupId, agencyId)
 
     const [member] = await this.db.client
       .update(this.db.schema.contactGroupMembers)

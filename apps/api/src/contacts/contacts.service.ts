@@ -6,7 +6,7 @@
 
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { OnEvent } from '@nestjs/event-emitter'
-import { eq, and, ilike, or, sql, desc, asc } from 'drizzle-orm'
+import { eq, and, ilike, or, sql, desc, asc, inArray } from 'drizzle-orm'
 import { DatabaseService } from '../db/database.service'
 import { TripBookedEvent } from '../trips/events/trip-booked.event'
 import type {
@@ -24,10 +24,11 @@ export class ContactsService {
   /**
    * Create a new contact
    */
-  async create(dto: CreateContactDto): Promise<ContactResponseDto> {
+  async create(dto: CreateContactDto, agencyId: string): Promise<ContactResponseDto> {
     const [contact] = await this.db.client
       .insert(this.db.schema.contacts)
       .values({
+        agencyId,
         // Name fields
         firstName: dto.firstName,
         lastName: dto.lastName,
@@ -105,6 +106,7 @@ export class ContactsService {
    */
   async findAll(
     filters: ContactFilterDto,
+    agencyId: string,
   ): Promise<PaginatedContactsResponseDto> {
     const page = filters.page || 1
     const limit = filters.limit || 20
@@ -112,6 +114,9 @@ export class ContactsService {
 
     // Build WHERE conditions
     const conditions = []
+
+    // Always filter by agency
+    conditions.push(eq(this.db.schema.contacts.agencyId, agencyId))
 
     // Default to showing only active contacts unless explicitly filtering for inactive ones
     if (filters.isActive !== undefined) {
@@ -192,7 +197,25 @@ export class ContactsService {
   /**
    * Find one contact by ID
    */
-  async findOne(id: string): Promise<ContactResponseDto> {
+  async findOne(id: string, agencyId: string): Promise<ContactResponseDto> {
+    const [contact] = await this.db.client
+      .select()
+      .from(this.db.schema.contacts)
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
+      .limit(1)
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+
+    return this.mapToResponseDto(contact)
+  }
+
+  /**
+   * Internal: Find contact by ID without agency scoping.
+   * Only for event handlers and tests — never expose via controller.
+   */
+  async findOneInternal(id: string): Promise<ContactResponseDto> {
     const [contact] = await this.db.client
       .select()
       .from(this.db.schema.contacts)
@@ -212,6 +235,7 @@ export class ContactsService {
   async update(
     id: string,
     dto: UpdateContactDto,
+    agencyId: string,
   ): Promise<ContactResponseDto> {
     const updateData: any = { ...dto }
 
@@ -226,7 +250,7 @@ export class ContactsService {
         ...updateData,
         updatedAt: new Date(),
       })
-      .where(eq(this.db.schema.contacts.id, id))
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
       .returning()
 
     if (!contact) {
@@ -239,11 +263,11 @@ export class ContactsService {
   /**
    * Delete a contact (soft delete by setting isActive = false)
    */
-  async remove(id: string): Promise<void> {
+  async remove(id: string, agencyId: string): Promise<void> {
     const [contact] = await this.db.client
       .update(this.db.schema.contacts)
       .set({ isActive: false, updatedAt: new Date() })
-      .where(eq(this.db.schema.contacts.id, id))
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
       .returning()
 
     if (!contact) {
@@ -254,10 +278,16 @@ export class ContactsService {
   /**
    * Hard delete a contact (permanent deletion)
    */
-  async hardDelete(id: string): Promise<void> {
+  async hardDelete(id: string, agencyId: string): Promise<void> {
+    // Mark affected travelers BEFORE deletion (FK cascade will null contactId)
+    await this.db.client
+      .update(this.db.schema.tripTravelers)
+      .set({ contactDeletedAt: new Date() })
+      .where(eq(this.db.schema.tripTravelers.contactId, id))
+
     const [contact] = await this.db.client
       .delete(this.db.schema.contacts)
-      .where(eq(this.db.schema.contacts.id, id))
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
       .returning()
 
     if (!contact) {
@@ -268,16 +298,16 @@ export class ContactsService {
   /**
    * Promote a lead to client
    */
-  async promoteToClient(id: string): Promise<ContactResponseDto> {
+  async promoteToClient(id: string, agencyId: string): Promise<ContactResponseDto> {
     const [contact] = await this.db.client
       .update(this.db.schema.contacts)
       .set({
         contactType: 'client',
         becameClientAt: new Date(),
-        contactStatus: 'prospecting', // Clients start at prospecting
+        contactStatus: 'prospecting',
         updatedAt: new Date(),
       })
-      .where(eq(this.db.schema.contacts.id, id))
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
       .returning()
 
     if (!contact) {
@@ -290,12 +320,12 @@ export class ContactsService {
   /**
    * Update contact status
    */
-  async updateStatus(id: string, status: string): Promise<ContactResponseDto> {
+  async updateStatus(id: string, status: string, agencyId: string): Promise<ContactResponseDto> {
     // Find contact first to validate status transition
     const [existing] = await this.db.client
       .select()
       .from(this.db.schema.contacts)
-      .where(eq(this.db.schema.contacts.id, id))
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
       .limit(1)
 
     if (!existing) {
@@ -313,7 +343,7 @@ export class ContactsService {
         contactStatus: status as 'prospecting' | 'quoted' | 'booked' | 'traveling' | 'returned' | 'awaiting_next' | 'inactive',
         updatedAt: new Date(),
       })
-      .where(eq(this.db.schema.contacts.id, id))
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
       .returning()
 
     return this.mapToResponseDto(contact)
@@ -322,7 +352,7 @@ export class ContactsService {
   /**
    * Update marketing consent
    */
-  async updateMarketingConsent(id: string, dto: any): Promise<ContactResponseDto> {
+  async updateMarketingConsent(id: string, dto: any, agencyId: string): Promise<ContactResponseDto> {
     const updates: any = { updatedAt: new Date() }
 
     if (dto.email !== undefined) {
@@ -354,7 +384,7 @@ export class ContactsService {
     const [contact] = await this.db.client
       .update(this.db.schema.contacts)
       .set(updates)
-      .where(eq(this.db.schema.contacts.id, id))
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
       .returning()
 
     if (!contact) {
@@ -405,6 +435,55 @@ export class ContactsService {
       event.primaryContactId,
       new Date(event.bookingDate),
     )
+  }
+
+  /**
+   * Get trips associated with a contact (as traveler or primary contact)
+   */
+  async getTripsForContact(contactId: string, agencyId: string) {
+    // Find trip IDs where contact is a traveler
+    const travelerTrips = await this.db.client
+      .select({ tripId: this.db.schema.tripTravelers.tripId })
+      .from(this.db.schema.tripTravelers)
+      .where(eq(this.db.schema.tripTravelers.contactId, contactId))
+
+    const travelerTripIds = travelerTrips.map((t) => t.tripId)
+
+    // Find trips where contact is primary contact OR a traveler
+    const conditions = []
+    conditions.push(eq(this.db.schema.trips.primaryContactId, contactId))
+    if (travelerTripIds.length > 0) {
+      conditions.push(inArray(this.db.schema.trips.id, travelerTripIds))
+    }
+
+    const tripConditions = [or(...conditions)]
+    tripConditions.push(eq(this.db.schema.trips.agencyId, agencyId))
+
+    const trips = await this.db.client
+      .select({
+        id: this.db.schema.trips.id,
+        name: this.db.schema.trips.name,
+        status: this.db.schema.trips.status,
+        tripType: this.db.schema.trips.tripType,
+        startDate: this.db.schema.trips.startDate,
+        endDate: this.db.schema.trips.endDate,
+        primaryContactId: this.db.schema.trips.primaryContactId,
+        createdAt: this.db.schema.trips.createdAt,
+      })
+      .from(this.db.schema.trips)
+      .where(and(...tripConditions))
+      .orderBy(desc(this.db.schema.trips.createdAt))
+
+    return trips.map((t) => ({
+      id: t.id,
+      name: t.name,
+      status: t.status,
+      tripType: t.tripType,
+      startDate: t.startDate,
+      endDate: t.endDate,
+      isPrimaryContact: t.primaryContactId === contactId,
+      createdAt: t.createdAt.toISOString(),
+    }))
   }
 
   /**

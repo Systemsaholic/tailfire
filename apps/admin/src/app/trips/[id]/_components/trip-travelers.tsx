@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { Users, Plus, UserCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -143,7 +144,13 @@ export function TripTravelers({ trip }: TripTravelersProps) {
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <h3 className="font-medium text-gray-900 truncate">
-                      {name}
+                      {traveler.contactId ? (
+                        <Link href={`/contacts/${traveler.contactId}`} className="hover:text-blue-600 hover:underline">
+                          {name}
+                        </Link>
+                      ) : (
+                        name
+                      )}
                     </h3>
                     <div className="flex items-center gap-2 mt-1">
                       <Badge variant={getRoleBadgeVariant(traveler.role)} className="text-xs">

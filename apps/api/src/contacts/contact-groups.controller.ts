@@ -30,6 +30,8 @@ import type {
   ContactGroupWithMembersResponseDto,
   PaginatedContactGroupsResponseDto,
 } from '../../../../packages/shared-types/src/api'
+import { GetAuthContext } from '../auth/decorators/auth-context.decorator'
+import type { AuthContext } from '../auth/auth.types'
 
 @ApiTags('Contact Groups')
 @Controller('contact-groups')
@@ -42,8 +44,11 @@ export class ContactGroupsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  async create(@Body() dto: CreateContactGroupDto): Promise<ContactGroupResponseDto> {
-    return this.groupsService.create(dto)
+  async create(
+    @GetAuthContext() auth: AuthContext,
+    @Body() dto: CreateContactGroupDto,
+  ): Promise<ContactGroupResponseDto> {
+    return this.groupsService.create(dto, auth.agencyId)
   }
 
   /**
@@ -52,9 +57,10 @@ export class ContactGroupsController {
    */
   @Get()
   async findAll(
+    @GetAuthContext() auth: AuthContext,
     @Query() filters: ContactGroupFilterDto,
   ): Promise<PaginatedContactGroupsResponseDto> {
-    return this.groupsService.findAll(filters)
+    return this.groupsService.findAll(filters, auth.agencyId)
   }
 
   /**
@@ -62,8 +68,11 @@ export class ContactGroupsController {
    * GET /contact-groups/:id
    */
   @Get(':id')
-  async findOne(@Param('id') id: string): Promise<ContactGroupResponseDto> {
-    return this.groupsService.findOne(id)
+  async findOne(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<ContactGroupResponseDto> {
+    return this.groupsService.findOne(id, auth.agencyId)
   }
 
   /**
@@ -71,8 +80,11 @@ export class ContactGroupsController {
    * GET /contact-groups/:id/members
    */
   @Get(':id/members')
-  async findOneWithMembers(@Param('id') id: string): Promise<ContactGroupWithMembersResponseDto> {
-    return this.groupsService.findOneWithMembers(id)
+  async findOneWithMembers(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<ContactGroupWithMembersResponseDto> {
+    return this.groupsService.findOneWithMembers(id, auth.agencyId)
   }
 
   /**
@@ -81,10 +93,11 @@ export class ContactGroupsController {
    */
   @Put(':id')
   async update(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
     @Body() dto: UpdateContactGroupDto,
   ): Promise<ContactGroupResponseDto> {
-    return this.groupsService.update(id, dto)
+    return this.groupsService.update(id, dto, auth.agencyId)
   }
 
   /**
@@ -93,8 +106,11 @@ export class ContactGroupsController {
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id') id: string): Promise<void> {
-    return this.groupsService.remove(id)
+  async remove(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.groupsService.remove(id, auth.agencyId)
   }
 
   /**
@@ -104,10 +120,11 @@ export class ContactGroupsController {
   @Post(':id/members')
   @HttpCode(HttpStatus.CREATED)
   async addMember(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') groupId: string,
     @Body() dto: AddContactToGroupDto,
   ): Promise<void> {
-    return this.groupsService.addMember(groupId, dto)
+    return this.groupsService.addMember(groupId, dto, auth.agencyId)
   }
 
   /**
@@ -117,11 +134,12 @@ export class ContactGroupsController {
   @Put(':id/members/:memberId')
   @HttpCode(HttpStatus.NO_CONTENT)
   async updateMember(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') groupId: string,
     @Param('memberId') memberId: string,
     @Body() dto: UpdateContactGroupMemberDto,
   ): Promise<void> {
-    return this.groupsService.updateMember(groupId, memberId, dto)
+    return this.groupsService.updateMember(groupId, memberId, dto, auth.agencyId)
   }
 
   /**
@@ -131,9 +149,10 @@ export class ContactGroupsController {
   @Delete(':id/members/:memberId')
   @HttpCode(HttpStatus.NO_CONTENT)
   async removeMember(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') groupId: string,
     @Param('memberId') memberId: string,
   ): Promise<void> {
-    return this.groupsService.removeMember(groupId, memberId)
+    return this.groupsService.removeMember(groupId, memberId, auth.agencyId)
   }
 }

@@ -124,7 +124,7 @@ describe('Trips Workflow (Integration)', () => {
       expect(trip.referenceNumber).toMatch(/^FIT-\d{4}-\d{6}$/)
 
       // Check contact - first booking date should NOT be set (still draft)
-      const contact = await contactsService.findOne(testContactId)
+      const contact = await contactsService.findOneInternal(testContactId)
       expect(contact.firstBookingDate).toBeNull()
     })
 
@@ -150,7 +150,7 @@ describe('Trips Workflow (Integration)', () => {
       await waitForEvents()
 
       // Check contact - first booking date SHOULD be set
-      const contact = await contactsService.findOne(testContactId)
+      const contact = await contactsService.findOneInternal(testContactId)
       expect(contact.firstBookingDate).toBeDefined()
       expect(contact.firstBookingDate).toBe(trip.bookingDate)
     })
@@ -173,7 +173,7 @@ describe('Trips Workflow (Integration)', () => {
       expect(trip.status).toBe('draft')
 
       // Verify contact has no first booking date yet
-      let contact = await contactsService.findOne(testContactId)
+      let contact = await contactsService.findOneInternal(testContactId)
       expect(contact.firstBookingDate).toBeNull()
 
       // Transition to booked
@@ -188,7 +188,7 @@ describe('Trips Workflow (Integration)', () => {
       await waitForEvents()
 
       // Check contact - first booking date should now be set
-      contact = await contactsService.findOne(testContactId)
+      contact = await contactsService.findOneInternal(testContactId)
       expect(contact.firstBookingDate).toBeDefined()
       expect(contact.firstBookingDate).toBe(bookedTrip.bookingDate)
     })
@@ -223,7 +223,7 @@ describe('Trips Workflow (Integration)', () => {
       await waitForEvents()
 
       // Check contact's firstBookingDate format
-      const contact = await contactsService.findOne(testContactId)
+      const contact = await contactsService.findOneInternal(testContactId)
       expect(contact.firstBookingDate).toBeDefined()
 
       // Verify YYYY-MM-DD format (no timestamp component)
@@ -250,7 +250,7 @@ describe('Trips Workflow (Integration)', () => {
       // Wait for first event to process
       await waitForEvents()
 
-      const contact1 = await contactsService.findOne(testContactId)
+      const contact1 = await contactsService.findOneInternal(testContactId)
       const firstBookingDate = contact1.firstBookingDate
 
       expect(firstBookingDate).toBeDefined()
@@ -272,7 +272,7 @@ describe('Trips Workflow (Integration)', () => {
       await waitForEvents()
 
       // First booking date should remain unchanged
-      const contact2 = await contactsService.findOne(testContactId)
+      const contact2 = await contactsService.findOneInternal(testContactId)
       expect(contact2.firstBookingDate).toBe(firstBookingDate)
     })
   })
@@ -349,7 +349,7 @@ describe('Trips Workflow (Integration)', () => {
       await waitForEvents()
 
       // Verify first booking date was set on contact
-      const contactAfterBooking = await contactsService.findOne(testContactId)
+      const contactAfterBooking = await contactsService.findOneInternal(testContactId)
       expect(contactAfterBooking.firstBookingDate).toBe(bookedTrip.bookingDate)
 
       // Step 4: Transition to in_progress

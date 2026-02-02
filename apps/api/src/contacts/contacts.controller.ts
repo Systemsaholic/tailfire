@@ -108,7 +108,7 @@ export class ContactsController {
     if (auth.role !== 'admin' && dto.ownerId !== auth.userId) {
       throw new ForbiddenException('Users can only create contacts they own')
     }
-    return this.contactsService.create(dto)
+    return this.contactsService.create(dto, auth.agencyId)
   }
 
   /**
@@ -121,12 +121,24 @@ export class ContactsController {
     @GetAuthContext() auth: AuthContext,
     @Query() filters: ContactFilterDto
   ): Promise<PaginatedContactsResponseDto> {
-    const result = await this.contactsService.findAll(filters)
+    const result = await this.contactsService.findAll(filters, auth.agencyId)
     // Apply limited view filter to each contact
     return {
       ...result,
       data: result.data.map((contact) => applyLimitedView(contact, auth)),
     }
+  }
+
+  /**
+   * Get trips associated with a contact
+   * GET /contacts/:id/trips
+   */
+  @Get(':id/trips')
+  async getTrips(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ) {
+    return this.contactsService.getTripsForContact(id, auth.agencyId)
   }
 
   /**
@@ -139,7 +151,7 @@ export class ContactsController {
     @GetAuthContext() auth: AuthContext,
     @Param('id') id: string
   ): Promise<ContactResponseDto> {
-    const contact = await this.contactsService.findOne(id)
+    const contact = await this.contactsService.findOne(id, auth.agencyId)
     return applyLimitedView(contact, auth)
   }
 
@@ -157,12 +169,12 @@ export class ContactsController {
   ): Promise<ContactResponseDto> {
     // Check ownership for non-admins
     if (auth.role !== 'admin') {
-      const existing = await this.contactsService.findOne(id)
+      const existing = await this.contactsService.findOne(id, auth.agencyId)
       if (existing.ownerId !== auth.userId) {
         throw new ForbiddenException('You can only update contacts you own')
       }
     }
-    return this.contactsService.update(id, dto)
+    return this.contactsService.update(id, dto, auth.agencyId)
   }
 
   /**
@@ -179,12 +191,12 @@ export class ContactsController {
   ): Promise<void> {
     // Check ownership for non-admins
     if (auth.role !== 'admin') {
-      const existing = await this.contactsService.findOne(id)
+      const existing = await this.contactsService.findOne(id, auth.agencyId)
       if (existing.ownerId !== auth.userId) {
         throw new ForbiddenException('You can only delete contacts you own')
       }
     }
-    return this.contactsService.remove(id)
+    return this.contactsService.remove(id, auth.agencyId)
   }
 
   /**
@@ -201,12 +213,12 @@ export class ContactsController {
   ): Promise<void> {
     // Check ownership for non-admins
     if (auth.role !== 'admin') {
-      const existing = await this.contactsService.findOne(id)
+      const existing = await this.contactsService.findOne(id, auth.agencyId)
       if (existing.ownerId !== auth.userId) {
         throw new ForbiddenException('You can only delete contacts you own')
       }
     }
-    return this.contactsService.hardDelete(id)
+    return this.contactsService.hardDelete(id, auth.agencyId)
   }
 
   /**
@@ -214,8 +226,11 @@ export class ContactsController {
    * POST /contacts/:id/promote-to-client
    */
   @Post(':id/promote-to-client')
-  async promoteToClient(@Param('id') id: string): Promise<ContactResponseDto> {
-    return this.contactsService.promoteToClient(id)
+  async promoteToClient(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<ContactResponseDto> {
+    return this.contactsService.promoteToClient(id, auth.agencyId)
   }
 
   /**
@@ -224,10 +239,11 @@ export class ContactsController {
    */
   @Patch(':id/status')
   async updateStatus(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
-    @Body() dto: { status: string }
+    @Body() dto: { status: string },
   ): Promise<ContactResponseDto> {
-    return this.contactsService.updateStatus(id, dto.status)
+    return this.contactsService.updateStatus(id, dto.status, auth.agencyId)
   }
 
   /**
@@ -236,9 +252,10 @@ export class ContactsController {
    */
   @Patch(':id/marketing-consent')
   async updateMarketingConsent(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
-    @Body() dto: any
+    @Body() dto: any,
   ): Promise<ContactResponseDto> {
-    return this.contactsService.updateMarketingConsent(id, dto)
+    return this.contactsService.updateMarketingConsent(id, dto, auth.agencyId)
   }
 }
