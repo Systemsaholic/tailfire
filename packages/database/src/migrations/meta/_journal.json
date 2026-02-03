@@ -589,6 +589,41 @@
       "when": 1770033600000,
       "tag": "20260202120000_add_geolocation_to_days_and_itineraries",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1770048000000,
+      "tag": "20260203000000_add_custom_tour_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1770010292000,
+      "tag": "20260203043132_create_tour_catalog_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1770010293000,
+      "tag": "20260203043133_tour_catalog_fdw",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1770019490000,
+      "tag": "20260203051450_add_tour_geocoding",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1770040554000,
+      "tag": "20260203105554_add_tour_day_details",
+      "breakpoints": true
     }
   ]
 }

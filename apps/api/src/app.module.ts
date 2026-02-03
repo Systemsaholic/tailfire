@@ -25,6 +25,9 @@ import { ExternalApisModule } from './external-apis/external-apis.module'
 import { CruiseImportModule } from './cruise-import/cruise-import.module'
 import { CruiseRepositoryModule } from './cruise-repository/cruise-repository.module'
 import { CruiseBookingModule } from './cruise-booking/cruise-booking.module'
+import { GlobusModule } from './globus/globus.module'
+import { TourImportModule } from './tour-import/tour-import.module'
+import { TourRepositoryModule } from './tour-repository/tour-repository.module'
 import { TemplatesModule } from './templates/templates.module'
 import { UserProfilesModule } from './user-profiles/user-profiles.module'
 import { UsersModule } from './users/users.module'
@@ -89,6 +92,15 @@ import { DashboardModule } from './dashboard/dashboard.module'
 
     // Cruise booking (FusionAPI real-time booking)
     CruiseBookingModule,
+
+    // Globus Tours (real-time proxy to Globus Family of Brands WebAPI)
+    GlobusModule,
+
+    // Tour data import (Globus Family of Brands catalog sync)
+    TourImportModule,
+
+    // Tour repository (search/detail API)
+    TourRepositoryModule,
 
     // Itinerary & Package Templates (Library)
     TemplatesModule,

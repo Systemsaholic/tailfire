@@ -21,6 +21,8 @@ export const activityTypeEnum = pgEnum('activity_type', [
   'custom_cruise',
   'port_info',
   'package', // Package grouping for multiple activities
+  'custom_tour', // Catalog tour with departure selection
+  'tour_day', // Child activity for each tour day
 ])
 
 export const activityStatusEnum = pgEnum('activity_status', [

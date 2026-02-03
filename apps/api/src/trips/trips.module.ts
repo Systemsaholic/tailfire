@@ -34,6 +34,8 @@ import { DiningDetailsService } from './dining-details.service'
 import { PortInfoDetailsService } from './port-info-details.service'
 import { OptionsDetailsService } from './options-details.service'
 import { CustomCruiseDetailsService } from './custom-cruise-details.service'
+import { CustomTourDetailsService } from './custom-tour-details.service'
+import { TourDayDetailsService } from './tour-day-details.service'
 import { ComponentOrchestrationService } from './component-orchestration.service'
 import { PaymentSchedulesService } from './payment-schedules.service'
 import { PaymentAuditService } from './payment-audit.service'
@@ -112,6 +114,8 @@ import { ActivityBookingsController } from './activity-bookings.controller'
     PortInfoDetailsService,
     OptionsDetailsService,
     CustomCruiseDetailsService,
+    CustomTourDetailsService,
+    TourDayDetailsService,
     ComponentOrchestrationService,
     PaymentSchedulesService,
     PaymentAuditService,

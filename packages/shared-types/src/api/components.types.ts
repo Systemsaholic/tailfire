@@ -219,6 +219,77 @@ export type CustomCruiseDetailsDto = {
 }
 
 /**
+ * Tour itinerary day structure (for JSON storage)
+ */
+export type TourItineraryDayDto = {
+  dayNumber: number
+  title?: string | null
+  description?: string | null
+  overnightCity?: string | null
+}
+
+/**
+ * Tour hotel structure (for JSON storage)
+ */
+export type TourHotelDto = {
+  dayNumber?: number | null
+  hotelName: string
+  city?: string | null
+  description?: string | null
+}
+
+/**
+ * Tour inclusion structure (for JSON storage)
+ */
+export type TourInclusionDto = {
+  inclusionType: 'included' | 'excluded' | 'highlight'
+  category?: string | null
+  description: string
+}
+
+/**
+ * Custom Tour-specific details
+ * Tour catalog data for multi-day guided tours
+ */
+export type CustomTourDetailsDto = {
+  // Catalog linkage
+  tourId?: string | null // UUID FK to catalog.tours
+  operatorCode?: string | null // e.g., 'globus', 'cosmos', 'monograms'
+  provider?: string | null // External provider (default: 'globus')
+  providerIdentifier?: string | null // Tour code (e.g., 'CQ')
+
+  // Departure selection
+  departureId?: string | null // UUID FK to catalog.tour_departures
+  departureCode?: string | null
+  departureStartDate?: string | null // ISO date (land_start_date)
+  departureEndDate?: string | null // ISO date (land_end_date)
+  currency?: string | null // Default: 'CAD'
+  basePriceCents?: number | null
+
+  // Snapshot/metadata (denormalized for display)
+  tourName?: string | null
+  days?: number | null
+  nights?: number | null
+  startCity?: string | null
+  endCity?: string | null
+
+  // JSON data for extended info
+  itineraryJson?: TourItineraryDayDto[] // Day-by-day itinerary
+  inclusionsJson?: TourInclusionDto[] // Included/excluded features
+  hotelsJson?: TourHotelDto[] // Hotels used on tour
+}
+
+/**
+ * Tour Day-specific details
+ * Minimal structure for tour_day child activities (read-only by default)
+ */
+export type TourDayDetailsDto = {
+  dayNumber?: number | null
+  overnightCity?: string | null
+  isLocked?: boolean | null // True = read-only (default), False = detached/customizable
+}
+
+/**
  * Port Info-specific details
  */
 export type PortInfoDetailsDto = {
@@ -488,6 +559,27 @@ export type DiningComponentDto = BaseComponentDto & {
 }
 
 /**
+ * Custom Tour component with tour-specific details.
+ * @deprecated Use `CustomTourActivityDto` instead.
+ */
+export type CustomTourComponentDto = BaseComponentDto & {
+  componentType: 'custom_tour'
+  activityType: 'custom_tour'
+  customTourDetails?: CustomTourDetailsDto | null
+}
+
+/**
+ * Tour Day component with tour day-specific details.
+ * Child activity of custom_tour, representing a single day of the tour.
+ * @deprecated Use `TourDayActivityDto` instead.
+ */
+export type TourDayComponentDto = BaseComponentDto & {
+  componentType: 'tour_day'
+  activityType: 'tour_day'
+  tourDayDetails?: TourDayDetailsDto | null
+}
+
+/**
  * Discriminated union of all component types.
  * @deprecated Use `ActivityDto` instead.
  */
@@ -501,6 +593,8 @@ export type ComponentDto =
   | OptionsComponentDto
   | InfoComponentDto
   | DiningComponentDto
+  | CustomTourComponentDto
+  | TourDayComponentDto
 
 // =============================================================================
 // Create Component DTOs
@@ -637,6 +731,24 @@ export type CreateDiningComponentDto = BaseCreateComponentDto & {
 }
 
 /**
+ * Create Custom Tour Component.
+ * @deprecated Use `CreateCustomTourActivityDto` instead.
+ */
+export type CreateCustomTourComponentDto = BaseCreateComponentDto & {
+  componentType: 'custom_tour'
+  customTourDetails?: CustomTourDetailsDto
+}
+
+/**
+ * Create Tour Day Component.
+ * @deprecated Use `CreateTourDayActivityDto` instead.
+ */
+export type CreateTourDayComponentDto = BaseCreateComponentDto & {
+  componentType: 'tour_day'
+  tourDayDetails?: TourDayDetailsDto
+}
+
+/**
  * Discriminated union for create component requests.
  * @deprecated Use the Activity-specific create DTOs instead.
  */
@@ -650,6 +762,8 @@ export type CreateComponentDto =
   | CreateOptionsComponentDto
   | CreateInfoComponentDto
   | CreateDiningComponentDto
+  | CreateCustomTourComponentDto
+  | CreateTourDayComponentDto
 
 // =============================================================================
 // Update Component DTOs
@@ -774,6 +888,22 @@ export type UpdateInfoComponentDto = BaseUpdateComponentDto & {
 }
 
 /**
+ * Update Custom Tour Component.
+ * @deprecated Use `UpdateCustomTourActivityDto` instead.
+ */
+export type UpdateCustomTourComponentDto = BaseUpdateComponentDto & {
+  customTourDetails?: CustomTourDetailsDto
+}
+
+/**
+ * Update Tour Day Component.
+ * @deprecated Use `UpdateTourDayActivityDto` instead.
+ */
+export type UpdateTourDayComponentDto = BaseUpdateComponentDto & {
+  tourDayDetails?: TourDayDetailsDto
+}
+
+/**
  * Generic update component DTO (can update any type).
  * @deprecated Use the Activity-specific update DTOs instead.
  */
@@ -787,6 +917,8 @@ export type UpdateComponentDto = BaseUpdateComponentDto & {
   optionsDetails?: OptionsDetailsDto
   infoDetails?: InfoDetailsDto
   diningDetails?: DiningDetailsDto
+  customTourDetails?: CustomTourDetailsDto
+  tourDayDetails?: TourDayDetailsDto
 }
 
 // =============================================================================
@@ -836,6 +968,10 @@ export type CreateCustomCruiseActivityDto = CreateCustomCruiseComponentDto
 export type CreatePortInfoActivityDto = CreatePortInfoComponentDto
 /** Create info activity request. Prefer over CreateInfoComponentDto. */
 export type CreateInfoActivityDto = CreateInfoComponentDto
+/** Create custom tour activity request. Prefer over CreateCustomTourComponentDto. */
+export type CreateCustomTourActivityDto = CreateCustomTourComponentDto
+/** Create tour day activity request. Prefer over CreateTourDayComponentDto. */
+export type CreateTourDayActivityDto = CreateTourDayComponentDto
 
 // Activity-specific update DTOs (preferred over Component variants)
 /** Update flight activity request. Prefer over UpdateFlightComponentDto. */
@@ -854,6 +990,10 @@ export type UpdateCustomCruiseActivityDto = UpdateCustomCruiseComponentDto
 export type UpdatePortInfoActivityDto = UpdatePortInfoComponentDto
 /** Update info activity request. Prefer over UpdateInfoComponentDto. */
 export type UpdateInfoActivityDto = UpdateInfoComponentDto
+/** Update custom tour activity request. Prefer over UpdateCustomTourComponentDto. */
+export type UpdateCustomTourActivityDto = UpdateCustomTourComponentDto
+/** Update tour day activity request. Prefer over UpdateTourDayComponentDto. */
+export type UpdateTourDayActivityDto = UpdateTourDayComponentDto
 // Note: UpdateActivityDto is defined in activities.types.ts for the "activity" component type
 
 // Activity-specific response DTOs (preferred over Component variants)
@@ -873,3 +1013,7 @@ export type CustomCruiseActivityDto = CustomCruiseComponentDto
 export type PortInfoActivityDto = PortInfoComponentDto
 /** Info activity with minimal structure. Prefer over InfoComponentDto. */
 export type InfoActivityDto = InfoComponentDto
+/** Custom tour activity with tour-specific details. Prefer over CustomTourComponentDto. */
+export type CustomTourActivityDto = CustomTourComponentDto
+/** Tour day activity with tour day-specific details. Prefer over TourDayComponentDto. */
+export type TourDayActivityDto = TourDayComponentDto

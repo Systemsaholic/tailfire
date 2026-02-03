@@ -45,6 +45,10 @@ import {
   updateOptionsComponentDtoSchema,
   createCustomCruiseComponentDtoSchema,
   updateCustomCruiseComponentDtoSchema,
+  createCustomTourComponentDtoSchema,
+  updateCustomTourComponentDtoSchema,
+  createTourDayComponentDtoSchema,
+  updateTourDayComponentDtoSchema,
 } from '@tailfire/shared-types'
 import type {
   ActivityResponseDto,
@@ -77,6 +81,12 @@ import type {
   CreateCustomCruiseComponentDto,
   CustomCruiseComponentDto,
   UpdateCustomCruiseComponentDto,
+  CreateCustomTourComponentDto,
+  CustomTourComponentDto,
+  UpdateCustomTourComponentDto,
+  CreateTourDayComponentDto,
+  TourDayComponentDto,
+  UpdateTourDayComponentDto,
 } from '@tailfire/shared-types'
 
 @ApiTags('Activities')
@@ -808,5 +818,163 @@ export class TypedActivitiesController {
   @Get('custom-cruise/:id/port-schedule')
   async getCruisePortSchedule(@Param('id') id: string): Promise<PortInfoComponentDto[]> {
     return this.orchestrationService.getCruisePortSchedule(id)
+  }
+
+  // ============================================================================
+  // Custom Tour Activity Endpoints
+  // ============================================================================
+
+  /**
+   * Create a new custom tour activity with details
+   * POST /activities/custom-tour
+   */
+  @Post('custom-tour')
+  @HttpCode(HttpStatus.CREATED)
+  @UsePipes(zodValidation(createCustomTourComponentDtoSchema))
+  async createCustomTour(@Body() dto: CreateCustomTourComponentDto): Promise<CustomTourComponentDto> {
+    return this.orchestrationService.createCustomTour(dto)
+  }
+
+  /**
+   * Get a custom tour activity with details
+   * GET /activities/custom-tour/:id
+   */
+  @Get('custom-tour/:id')
+  async getCustomTour(@Param('id') id: string): Promise<CustomTourComponentDto> {
+    return this.orchestrationService.getCustomTour(id)
+  }
+
+  /**
+   * Update a custom tour activity with details
+   * PATCH /activities/custom-tour/:id
+   */
+  @Patch('custom-tour/:id')
+  @UsePipes(zodValidation(updateCustomTourComponentDtoSchema))
+  async updateCustomTour(
+    @Param('id') id: string,
+    @Body() dto: UpdateCustomTourComponentDto
+  ): Promise<CustomTourComponentDto> {
+    return this.orchestrationService.updateCustomTour(id, dto)
+  }
+
+  /**
+   * Delete a custom tour activity
+   * DELETE /activities/custom-tour/:id
+   */
+  @Delete('custom-tour/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteCustomTour(@Param('id') id: string): Promise<void> {
+    await this.orchestrationService.deleteCustomTour(id)
+  }
+
+  /**
+   * Generate tour day schedule from tour details
+   * Auto-creates tour_day activities for each day of the tour
+   * POST /activities/custom-tour/:id/generate-tour-day-schedule
+   *
+   * Optionally accepts tour data in the body to avoid re-fetching (performance optimization).
+   * If body is provided with itineraryId and customTourDetails, uses that data directly.
+   *
+   * Security: The service layer validates that the provided itineraryId matches the actual
+   * tour ownership to prevent unauthorized data manipulation.
+   */
+  @Post('custom-tour/:id/generate-tour-day-schedule')
+  async generateTourDaySchedule(
+    @Param('id') id: string,
+    @Body() body?: {
+      itineraryId?: string
+      customTourDetails?: {
+        tourId?: string
+        departureStartDate?: string
+        departureEndDate?: string
+        days?: number
+        itineraryJson?: Array<{
+          dayNumber: number
+          title?: string
+          description?: string
+          overnightCity?: string
+        }>
+      }
+      /** Skip deleting existing tour_day activities (for newly created tours) */
+      skipDelete?: boolean
+      /** Auto-extend itinerary dates to fit the tour (instead of throwing an error) */
+      autoExtendItinerary?: boolean
+    }
+  ): Promise<{ created: TourDayComponentDto[]; deleted: number }> {
+    // Validate input when tourData is provided
+    if (body?.itineraryId) {
+      // Validate UUID format for itineraryId
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      if (!uuidRegex.test(body.itineraryId)) {
+        throw new BadRequestException('Invalid itineraryId format')
+      }
+    }
+
+    // Validate date format if provided
+    if (body?.customTourDetails?.departureStartDate) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+      if (!dateRegex.test(body.customTourDetails.departureStartDate)) {
+        throw new BadRequestException('Invalid departureStartDate format (expected YYYY-MM-DD)')
+      }
+    }
+
+    // Build tourData if body contains sufficient data
+    const tourData = body?.itineraryId && body?.customTourDetails
+      ? {
+          itineraryId: body.itineraryId,
+          customTourDetails: body.customTourDetails,
+          skipDelete: body.skipDelete,
+          autoExtendItinerary: body.autoExtendItinerary,
+        }
+      : undefined
+
+    return this.orchestrationService.generateTourDaySchedule(id, tourData)
+  }
+
+  // ============================================================================
+  // Tour Day Activity Endpoints
+  // ============================================================================
+
+  /**
+   * Create a new tour day activity (child of custom_tour)
+   * POST /activities/tour-day
+   */
+  @Post('tour-day')
+  @HttpCode(HttpStatus.CREATED)
+  @UsePipes(zodValidation(createTourDayComponentDtoSchema))
+  async createTourDay(@Body() dto: CreateTourDayComponentDto): Promise<TourDayComponentDto> {
+    return this.orchestrationService.createTourDay(dto)
+  }
+
+  /**
+   * Get a tour day activity
+   * GET /activities/tour-day/:id
+   */
+  @Get('tour-day/:id')
+  async getTourDay(@Param('id') id: string): Promise<TourDayComponentDto> {
+    return this.orchestrationService.getTourDay(id)
+  }
+
+  /**
+   * Update a tour day activity
+   * PATCH /activities/tour-day/:id
+   */
+  @Patch('tour-day/:id')
+  @UsePipes(zodValidation(updateTourDayComponentDtoSchema))
+  async updateTourDay(
+    @Param('id') id: string,
+    @Body() dto: UpdateTourDayComponentDto
+  ): Promise<TourDayComponentDto> {
+    return this.orchestrationService.updateTourDay(id, dto)
+  }
+
+  /**
+   * Delete a tour day activity
+   * DELETE /activities/tour-day/:id
+   */
+  @Delete('tour-day/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteTourDay(@Param('id') id: string): Promise<void> {
+    await this.orchestrationService.deleteTourDay(id)
   }
 }

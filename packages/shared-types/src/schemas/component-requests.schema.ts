@@ -16,6 +16,7 @@ import { diningDetailsDtoSchema } from './dining-details.schema'
 import { optionsDetailsDtoSchema } from './options-details.schema'
 import { portInfoDetailsDtoSchema } from './port-info-details.schema'
 import { customCruiseDetailsDtoSchema } from './custom-cruise-details.schema'
+import { customTourDetailsDtoSchema, tourDayDetailsDtoSchema } from './custom-tour-details.schema'
 
 // =============================================================================
 // Base Create Component Schema
@@ -207,4 +208,30 @@ export const createCustomCruiseComponentDtoSchema = baseCreateComponentSchema.ex
 
 export const updateCustomCruiseComponentDtoSchema = baseUpdateComponentSchema.extend({
   customCruiseDetails: customCruiseDetailsDtoSchema.optional(),
+})
+
+// =============================================================================
+// Custom Tour Component Schemas
+// =============================================================================
+
+export const createCustomTourComponentDtoSchema = baseCreateComponentSchema.extend({
+  componentType: z.literal('custom_tour'),
+  customTourDetails: customTourDetailsDtoSchema.optional(),
+})
+
+export const updateCustomTourComponentDtoSchema = baseUpdateComponentSchema.extend({
+  customTourDetails: customTourDetailsDtoSchema.optional(),
+})
+
+// =============================================================================
+// Tour Day Component Schemas
+// =============================================================================
+
+export const createTourDayComponentDtoSchema = baseCreateComponentSchema.extend({
+  componentType: z.literal('tour_day'),
+  tourDayDetails: tourDayDetailsDtoSchema.optional(),
+})
+
+export const updateTourDayComponentDtoSchema = baseUpdateComponentSchema.extend({
+  tourDayDetails: tourDayDetailsDtoSchema.optional(),
 })

@@ -62,6 +62,8 @@ export * from './dining-details.schema'
 export * from './port-info-details.schema'
 export * from './options-details.schema'
 export * from './custom-cruise-details.schema'
+export * from './custom-tour-details.schema'
+export * from './tour-day-details.schema'
 
 // Cruise booking sessions (FusionAPI integration)
 export * from './cruise-booking-sessions.schema'
@@ -113,6 +115,18 @@ export * from './email.schema'
 
 // Trip Orders (invoice snapshots with versioning)
 export * from './trip-orders.schema'
+
+// Tour catalog schemas (in catalog schema)
+export * from './tour-operators.schema'
+export * from './tours.schema'
+export * from './tour-departures.schema'
+export * from './tour-departure-pricing.schema'
+export * from './tour-itinerary-days.schema'
+export * from './tour-hotels.schema'
+export * from './tour-media.schema'
+export * from './tour-inclusions.schema'
+export * from './tour-sync-history.schema'
+export * from './geocoding-cache.schema'
 
 // Later phases:
 // export * from './financials.schema'

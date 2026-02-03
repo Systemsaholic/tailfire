@@ -1,7 +1,7 @@
 /**
  * Catalog Auth Guard
  *
- * Hybrid authentication guard for cruise repository endpoints.
+ * Hybrid authentication guard for catalog repository endpoints (cruises, tours, etc.).
  * Allows access via:
  * 1. Valid JWT token (for admin/client portal users) - uses Passport JWT strategy
  * 2. Valid catalog API key (for OTA public access)

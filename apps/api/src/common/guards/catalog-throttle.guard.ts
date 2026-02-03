@@ -1,7 +1,7 @@
 /**
  * Catalog Throttle Guard
  *
- * Tiered rate limiting for cruise repository endpoints:
+ * Tiered rate limiting for catalog repository endpoints (cruises, tours, etc.):
  * - JWT authenticated users: No throttling (trusted staff/clients)
  * - API key users: Aggressive throttling (30 req/min to prevent scraping)
  */

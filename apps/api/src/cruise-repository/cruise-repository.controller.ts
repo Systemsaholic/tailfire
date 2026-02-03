@@ -10,8 +10,7 @@
 import { Controller, Get, Query, Param, ParseUUIDPipe, ParseIntPipe, DefaultValuePipe, UseGuards } from '@nestjs/common'
 import { ApiTags, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiHeader, ApiSecurity } from '@nestjs/swagger'
 import { Public } from '../auth/decorators/public.decorator'
-import { CatalogAuthGuard } from './guards/catalog-auth.guard'
-import { CatalogThrottleGuard } from './guards/catalog-throttle.guard'
+import { CatalogAuthGuard, CatalogThrottleGuard } from '../common/guards'
 import { CruiseRepositoryService } from './cruise-repository.service'
 import {
   SailingSearchDto,
