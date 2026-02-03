@@ -41,11 +41,13 @@ export class TransfersController {
     @Query('pickupLat') pickupLat?: string,
     @Query('pickupLng') pickupLng?: string,
     @Query('pickupAddress') pickupAddress?: string,
+    @Query('pickupCountryCode') pickupCountryCode?: string,
     @Query('dropoffType') dropoffType?: TransferLocationType,
     @Query('dropoffCode') dropoffCode?: string,
     @Query('dropoffLat') dropoffLat?: string,
     @Query('dropoffLng') dropoffLng?: string,
     @Query('dropoffAddress') dropoffAddress?: string,
+    @Query('dropoffCountryCode') dropoffCountryCode?: string,
     @Query('date') date?: string,
     @Query('time') time?: string,
     @Query('passengers') passengers?: string
@@ -54,7 +56,7 @@ export class TransfersController {
       throw new BadRequestException('pickupType, dropoffType, date, and time are required')
     }
 
-    this.logger.log('Transfer search request', { pickupType, dropoffType, date })
+    this.logger.log('Transfer search request', { pickupType, pickupCode, pickupLat, pickupLng, pickupAddress, dropoffType, dropoffCode, dropoffLat, dropoffLng, dropoffAddress, date, time, passengers })
 
     await this.initializeCredentials()
 
@@ -64,11 +66,13 @@ export class TransfersController {
       pickupLat: pickupLat ? parseFloat(pickupLat) : undefined,
       pickupLng: pickupLng ? parseFloat(pickupLng) : undefined,
       pickupAddress,
+      pickupCountryCode,
       dropoffType,
       dropoffCode,
       dropoffLat: dropoffLat ? parseFloat(dropoffLat) : undefined,
       dropoffLng: dropoffLng ? parseFloat(dropoffLng) : undefined,
       dropoffAddress,
+      dropoffCountryCode,
       date,
       time,
       passengers: passengers ? parseInt(passengers, 10) : 1,

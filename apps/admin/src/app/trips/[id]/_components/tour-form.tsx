@@ -29,6 +29,9 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { useCreateTour, useUpdateTour, useTour } from '@/hooks/use-tours'
+import { useQueryClient } from '@tanstack/react-query'
+import { componentMediaKeys } from '@/hooks/use-component-media'
+import { api } from '@/lib/api'
 import { useIsChildOfPackage } from '@/hooks/use-is-child-of-package'
 import { EditTravelersDialog } from './edit-travelers-dialog'
 import { PaymentScheduleSection } from './payment-schedule-section'
@@ -98,6 +101,29 @@ export function TourForm({
   const isEditing = !!activity
   const { returnToItinerary } = useActivityNavigation()
 
+  // Extract day's start/end locations for activity search
+  const searchLocations = useMemo(() => {
+    const currentDay = days.find((d) => d.id === dayId)
+    if (!currentDay) return []
+    const locs: Array<{ label: string; lat: number; lng: number }> = []
+    if (currentDay.startLocationLat != null && currentDay.startLocationLng != null) {
+      locs.push({
+        label: currentDay.startLocationName || 'Start location',
+        lat: currentDay.startLocationLat,
+        lng: currentDay.startLocationLng,
+      })
+    }
+    if (currentDay.endLocationLat != null && currentDay.endLocationLng != null &&
+        (currentDay.endLocationLat !== currentDay.startLocationLat || currentDay.endLocationLng !== currentDay.startLocationLng)) {
+      locs.push({
+        label: currentDay.endLocationName || 'End location',
+        lat: currentDay.endLocationLat,
+        lng: currentDay.endLocationLng,
+      })
+    }
+    return locs
+  }, [days, dayId])
+
   // Derive effective dayDate from props or days array
   // This handles the case where dayDate prop is undefined because days hadn't loaded
   // when page.tsx rendered, but days is now available via the prop
@@ -110,6 +136,7 @@ export function TourForm({
     return null
   }, [dayDate, dayId, days])
 
+  const queryClient = useQueryClient()
   const [showSuccess, setShowSuccess] = useState(false)
   const [isAiAssistOpen, setIsAiAssistOpen] = useState(false)
   const [showActivitySearch, setShowActivitySearch] = useState(false)
@@ -126,6 +153,9 @@ export function TourForm({
   // Safety net refs to prevent duplicate creation race condition
   const activityIdRef = useRef<string | null>(activity?.id || null)
   const createInProgressRef = useRef(false)
+
+  // Pending Amadeus pictures to import after activity is created
+  const pendingPicturesRef = useRef<string[]>([])
 
   // Activity pricing ID (gated on this for payment schedule)
   const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
@@ -247,6 +277,43 @@ export function TourForm({
   const createTour = useCreateTour(itineraryId, effectiveDayId)
   const updateTour = useUpdateTour(itineraryId, effectiveDayId)
   const markActivityBooked = useMarkActivityBooked()
+
+  // Import Amadeus pictures to media tab
+  const importPicturesToMedia = useCallback(async (targetActivityId: string, pictures: string[]) => {
+    const uniquePics = [...new Set(pictures)]
+    let imported = 0
+    for (const url of uniquePics) {
+      try {
+        await api.post(`/components/${targetActivityId}/media/external/url?entityType=activity`, {
+          url,
+          caption: null,
+          attribution: { source: 'amadeus' },
+        })
+        imported++
+      } catch (err) {
+        console.warn('Failed to import Amadeus picture:', url, err)
+      }
+    }
+    if (imported > 0) {
+      queryClient.invalidateQueries({
+        queryKey: componentMediaKeys.list(targetActivityId, 'activity'),
+      })
+      toast({
+        title: 'Tour photos imported',
+        description: `${imported} image${imported > 1 ? 's' : ''} from Amadeus added to the Media tab`,
+      })
+    }
+  }, [queryClient, toast])
+
+  // Import pending Amadeus pictures once activityId is available
+  useEffect(() => {
+    if (!activityId || pendingPicturesRef.current.length === 0) return
+
+    const pictures = [...pendingPicturesRef.current]
+    pendingPicturesRef.current = []
+
+    importPicturesToMedia(activityId, pictures)
+  }, [activityId, importPicturesToMedia])
 
   // Ref to track loaded tour ID
   const tourIdRef = useRef<string | null>(null)
@@ -490,7 +557,9 @@ export function TourForm({
     setValue('tourDetails.tourName', activity.name || '', { shouldDirty: true })
     setValue('tourDetails.providerName', activity.provider || '', { shouldDirty: true })
     if (activity.description) {
-      setValue('description', activity.description, { shouldDirty: true })
+      // Strip HTML tags from description
+      const doc = new DOMParser().parseFromString(activity.description, 'text/html')
+      setValue('description', doc.body.textContent?.trim() || '', { shouldDirty: true })
     }
     if (activity.duration) {
       // Parse ISO duration like "PT2H30M" or simple "2 hours"
@@ -507,6 +576,21 @@ export function TourForm({
     }
     if (activity.location?.address) {
       setValue('tourDetails.location', activity.location.address, { shouldDirty: true })
+    } else if (activity.location?.lat && activity.location?.lng) {
+      // Amadeus doesn't return address — use coordinates as fallback location text
+      setValue('tourDetails.location', `${activity.location.lat.toFixed(4)}, ${activity.location.lng.toFixed(4)}`, { shouldDirty: true })
+    }
+    if (activity.bookingLink) {
+      setValue('tourDetails.providerWebsite', activity.bookingLink, { shouldDirty: true })
+    }
+    if (activity.pictures?.length) {
+      if (activityId) {
+        // Activity already saved — import immediately
+        importPicturesToMedia(activityId, activity.pictures)
+      } else {
+        // Activity not yet saved — queue for import after first save
+        pendingPicturesRef.current = activity.pictures
+      }
     }
     setShowActivitySearch(false)
     toast({
@@ -762,7 +846,7 @@ export function TourForm({
             >
               <div className="flex items-center gap-2">
                 <Compass className="h-5 w-5 text-orange-500" />
-                <span className="font-medium">Search Activities</span>
+                <span className="font-medium">Search Tours</span>
                 <span className="text-xs text-gray-400 ml-1">Tours & experiences nearby</span>
               </div>
               {showActivitySearch ? (
@@ -779,6 +863,7 @@ export function TourForm({
                 </p>
                 <ActivitySearchPanel
                   onSelect={handleActivitySelect}
+                  locations={searchLocations}
                 />
               </div>
             )}

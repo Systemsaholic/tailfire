@@ -568,6 +568,13 @@
       "when": 1769861400000,
       "tag": "20260130143000_fix_package_delete_trigger_timing",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1770033600000,
+      "tag": "20260202120000_add_geolocation_to_days_and_itineraries",
+      "breakpoints": true
     }
   ]
 }

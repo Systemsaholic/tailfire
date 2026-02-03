@@ -67,5 +67,8 @@ export * from './users.types.js'
 // Email System (Send, Log, Templates)
 export * from './email.types.js'
 
+// Geolocation (Cascade System)
+export * from './geolocation.types.js'
+
 // Future exports:
 // export * from './auth.types'

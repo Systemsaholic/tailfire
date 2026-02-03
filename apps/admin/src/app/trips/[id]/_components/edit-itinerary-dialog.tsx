@@ -23,6 +23,8 @@ import {
 } from '@/hooks/use-itinerary-days'
 import { UnsplashPicker } from '@/components/unsplash-picker'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
+import { LocationAutocomplete } from '@/components/location-autocomplete'
+import type { GeoLocation } from '@tailfire/shared-types/api'
 
 interface EditItineraryDialogProps {
   tripId: string
@@ -82,6 +84,10 @@ export function EditItineraryDialog({
     setIncludePreTravel(hasPreTravel)
   }, [hasPreTravel])
 
+  // Destination state
+  const [primaryDestination, setPrimaryDestination] = useState<GeoLocation | null>(null)
+  const [secondaryDestination, setSecondaryDestination] = useState<GeoLocation | null>(null)
+
   // Unsplash picker state
   const [showUnsplashPicker, setShowUnsplashPicker] = useState(false)
 
@@ -96,6 +102,16 @@ export function EditItineraryDialog({
         overview: itinerary.overview || '',
       })
       setShowUnsplashPicker(false)
+      setPrimaryDestination(
+        itinerary.primaryDestinationName
+          ? { name: itinerary.primaryDestinationName, lat: itinerary.primaryDestinationLat!, lng: itinerary.primaryDestinationLng! }
+          : null
+      )
+      setSecondaryDestination(
+        itinerary.secondaryDestinationName
+          ? { name: itinerary.secondaryDestinationName, lat: itinerary.secondaryDestinationLat!, lng: itinerary.secondaryDestinationLng! }
+          : null
+      )
     }
   }, [itinerary, open])
 
@@ -230,6 +246,12 @@ export function EditItineraryDialog({
           endDate: formData.endDate || undefined,
           coverPhoto: formData.coverPhoto.trim() || undefined,
           overview: formData.overview.trim() || undefined,
+          primaryDestinationName: primaryDestination?.name ?? undefined,
+          primaryDestinationLat: primaryDestination?.lat ?? undefined,
+          primaryDestinationLng: primaryDestination?.lng ?? undefined,
+          secondaryDestinationName: secondaryDestination?.name ?? undefined,
+          secondaryDestinationLat: secondaryDestination?.lat ?? undefined,
+          secondaryDestinationLng: secondaryDestination?.lng ?? undefined,
         },
       })
 
@@ -415,6 +437,33 @@ export function EditItineraryDialog({
             <p className="text-xs text-tern-gray-500 mt-1">
               Optional: Write a brief overview of what makes this itinerary special
             </p>
+          </div>
+
+          {/* Destinations */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium text-tern-gray-900 block mb-2">
+                Primary Destination
+              </label>
+              <LocationAutocomplete
+                value={primaryDestination}
+                onChange={setPrimaryDestination}
+                placeholder="Main destination..."
+              />
+              <p className="text-xs text-tern-gray-500 mt-1">
+                Default location for itinerary days
+              </p>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-tern-gray-900 block mb-2">
+                Secondary Destination
+              </label>
+              <LocationAutocomplete
+                value={secondaryDestination}
+                onChange={setSecondaryDestination}
+                placeholder="Optional second destination..."
+              />
+            </div>
           </div>
 
           {/* Actions */}

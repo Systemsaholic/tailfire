@@ -21,6 +21,15 @@ export type ItineraryDayResponseDto = {
   title: string | null
   notes: string | null
   sequenceOrder: number
+  // Geolocation
+  startLocationName: string | null
+  startLocationLat: number | null
+  startLocationLng: number | null
+  endLocationName: string | null
+  endLocationLat: number | null
+  endLocationLng: number | null
+  startLocationOverride: boolean
+  endLocationOverride: boolean
   createdAt: string
   updatedAt: string
 }
@@ -63,6 +72,15 @@ export type UpdateItineraryDayDto = {
   title?: string | null
   notes?: string | null
   sequenceOrder?: number
+  // Geolocation
+  startLocationName?: string | null
+  startLocationLat?: number | null
+  startLocationLng?: number | null
+  endLocationName?: string | null
+  endLocationLat?: number | null
+  endLocationLng?: number | null
+  startLocationOverride?: boolean
+  endLocationOverride?: boolean
 }
 
 /**

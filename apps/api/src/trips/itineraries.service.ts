@@ -252,10 +252,15 @@ export class ItinerariesService {
         )
 
       // Set this itinerary as selected along with approved status
+      const { primaryDestinationLat: apdLat, primaryDestinationLng: apdLng, secondaryDestinationLat: asdLat, secondaryDestinationLng: asdLng, ...approveRestDto } = dto
       const [itinerary] = await this.db.client
         .update(this.db.schema.itineraries)
         .set({
-          ...dto,
+          ...approveRestDto,
+          ...(apdLat !== undefined ? { primaryDestinationLat: apdLat != null ? String(apdLat) : null } : {}),
+          ...(apdLng !== undefined ? { primaryDestinationLng: apdLng != null ? String(apdLng) : null } : {}),
+          ...(asdLat !== undefined ? { secondaryDestinationLat: asdLat != null ? String(asdLat) : null } : {}),
+          ...(asdLng !== undefined ? { secondaryDestinationLng: asdLng != null ? String(asdLng) : null } : {}),
           status: 'approved',
           isSelected: true,
           updatedAt: new Date(),
@@ -275,10 +280,16 @@ export class ItinerariesService {
     // (dto.status here is never 'approved' - that case returned above)
     const shouldClearSelected = dto.status && existing.status === 'approved'
 
+    // Convert numeric DTO fields to strings for Drizzle numeric columns
+    const { primaryDestinationLat, primaryDestinationLng, secondaryDestinationLat, secondaryDestinationLng, ...restDto } = dto
     const [itinerary] = await this.db.client
       .update(this.db.schema.itineraries)
       .set({
-        ...dto,
+        ...restDto,
+        ...(primaryDestinationLat !== undefined ? { primaryDestinationLat: primaryDestinationLat != null ? String(primaryDestinationLat) : null } : {}),
+        ...(primaryDestinationLng !== undefined ? { primaryDestinationLng: primaryDestinationLng != null ? String(primaryDestinationLng) : null } : {}),
+        ...(secondaryDestinationLat !== undefined ? { secondaryDestinationLat: secondaryDestinationLat != null ? String(secondaryDestinationLat) : null } : {}),
+        ...(secondaryDestinationLng !== undefined ? { secondaryDestinationLng: secondaryDestinationLng != null ? String(secondaryDestinationLng) : null } : {}),
         ...(shouldClearSelected ? { isSelected: false } : {}),
         updatedAt: new Date(),
       })
@@ -377,6 +388,12 @@ export class ItinerariesService {
       overview: itinerary.overview,
       startDate: itinerary.startDate,
       endDate: itinerary.endDate,
+      primaryDestinationName: itinerary.primaryDestinationName || null,
+      primaryDestinationLat: itinerary.primaryDestinationLat ? Number(itinerary.primaryDestinationLat) : null,
+      primaryDestinationLng: itinerary.primaryDestinationLng ? Number(itinerary.primaryDestinationLng) : null,
+      secondaryDestinationName: itinerary.secondaryDestinationName || null,
+      secondaryDestinationLat: itinerary.secondaryDestinationLat ? Number(itinerary.secondaryDestinationLat) : null,
+      secondaryDestinationLng: itinerary.secondaryDestinationLng ? Number(itinerary.secondaryDestinationLng) : null,
       status: itinerary.status,
       isSelected: itinerary.isSelected,
       sequenceOrder: itinerary.sequenceOrder,

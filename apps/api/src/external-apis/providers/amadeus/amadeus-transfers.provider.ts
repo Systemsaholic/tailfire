@@ -49,6 +49,14 @@ export class AmadeusTransfersProvider
   extends BaseExternalApi<TransferSearchParams, NormalizedTransferResult>
   implements OnModuleInit
 {
+  protected override readonly resilience = {
+    timeoutMs: 30000,
+    maxRetries: 2,
+    retryDelayMs: 1000,
+    circuitBreakerThreshold: 5,
+    circuitBreakerResetMs: 30000,
+  }
+
   constructor(
     httpService: HttpService,
     rateLimiter: RateLimiterService,
@@ -102,6 +110,7 @@ export class AmadeusTransfersProvider
       )
 
       this.logger.log('Amadeus Transfers response', { requestId, latencyMs: Date.now() - startTime })
+      this.logger.debug('Amadeus Transfers raw response', JSON.stringify(response.data).slice(0, 500))
 
       return {
         success: true,
@@ -141,6 +150,14 @@ export class AmadeusTransfersProvider
       }
     }
 
+    // Resolve country code from lat/lng if not provided
+    const pickupCountry = params.pickupCountryCode
+      || (params.pickupLat !== undefined && params.pickupLng !== undefined
+        ? await this.reverseGeocodeCountry(params.pickupLat, params.pickupLng) : undefined)
+    const dropoffCountry = params.dropoffCountryCode
+      || (params.dropoffLat !== undefined && params.dropoffLng !== undefined
+        ? await this.reverseGeocodeCountry(params.dropoffLat, params.dropoffLng) : undefined)
+
     // Build Amadeus transfer search request body
     const body: any = {
       startDateTime: `${params.date}T${params.time}:00`,
@@ -152,8 +169,15 @@ export class AmadeusTransfersProvider
       body.startLocationCode = params.pickupCode
     } else if (params.pickupLat !== undefined && params.pickupLng !== undefined) {
       body.startGeoCode = `${params.pickupLat},${params.pickupLng}`
+      if (params.pickupAddress) {
+        body.startAddressLine = params.pickupAddress
+        body.startName = params.pickupAddress
+      }
+      if (pickupCountry) body.startCountryCode = pickupCountry
     } else if (params.pickupAddress) {
       body.startAddressLine = params.pickupAddress
+      body.startName = params.pickupAddress
+      if (pickupCountry) body.startCountryCode = pickupCountry
     }
 
     // End location
@@ -161,21 +185,40 @@ export class AmadeusTransfersProvider
       body.endLocationCode = params.dropoffCode
     } else if (params.dropoffLat !== undefined && params.dropoffLng !== undefined) {
       body.endGeoCode = `${params.dropoffLat},${params.dropoffLng}`
+      if (params.dropoffAddress) {
+        body.endAddressLine = params.dropoffAddress
+        body.endName = params.dropoffAddress
+      }
+      if (dropoffCountry) body.endCountryCode = dropoffCountry
     } else if (params.dropoffAddress) {
       body.endAddressLine = params.dropoffAddress
+      body.endName = params.dropoffAddress
+      if (dropoffCountry) body.endCountryCode = dropoffCountry
     }
 
-    if (params.pickupType === 'airport') body.startType = 'AIRPORT'
-    if (params.dropoffType === 'airport') body.endType = 'AIRPORT'
+    // Amadeus requires transferType
+    body.transferType = 'PRIVATE'
+
+    this.logger.debug('Amadeus Transfer search body', body)
 
     const endpoint = `${this.config.baseUrl}/v1/shopping/transfer-offers`
     const response = await this.makeAuthenticatedPost<AmadeusTransferOffersResponse>(endpoint, body)
 
     if (!response.success || !response.data) {
+      this.logger.warn('Amadeus Transfer search failed', { error: response.error })
       return { success: false, error: response.error || 'No transfers found', metadata: response.metadata }
     }
 
+    // Amadeus may return errors inside a 200 response
+    const apiErrors = (response.data as any).errors
+    if (apiErrors?.length) {
+      const errMsg = apiErrors.map((e: any) => `${e.code}: ${e.detail || e.title || ''}`).join('; ')
+      this.logger.warn('Amadeus Transfer API returned errors', { errors: apiErrors })
+      return { success: false, error: errMsg, metadata: response.metadata }
+    }
+
     const offers = response.data.data || []
+    this.logger.debug('Amadeus Transfer offers count', { count: offers.length })
     if (offers.length === 0) {
       return { success: false, error: 'No transfer offers found', metadata: response.metadata }
     }
@@ -225,7 +268,7 @@ export class AmadeusTransfersProvider
       transferType: offer.transferType,
       provider: offer.serviceProvider?.name || 'amadeus',
       vehicle: {
-        type: vehicle?.category || vehicle?.code || 'Unknown',
+        type: this.resolveVehicleCategory(vehicle?.category, vehicle?.description),
         description: vehicle?.description || '',
         maxPassengers,
         maxBags,
@@ -264,6 +307,44 @@ export class AmadeusTransfersProvider
       return { success: true, message: 'OAuth2 authentication successful' }
     } catch (error: any) {
       return { success: false, message: error.message || 'OAuth2 authentication failed' }
+    }
+  }
+
+  private resolveVehicleCategory(code?: string, description?: string): string {
+    const VEHICLE_CATEGORIES: Record<string, string> = {
+      BU: 'Business',
+      FC: 'First Class',
+      ST: 'Standard',
+      EC: 'Economy',
+      PR: 'Premium',
+      LX: 'Luxury',
+      VN: 'Van',
+      LM: 'Limousine',
+      MB: 'Minibus',
+      SD: 'Sedan',
+      SV: 'SUV',
+      WT: 'Water Taxi',
+      SH: 'Shared',
+    }
+    if (code && VEHICLE_CATEGORIES[code]) return VEHICLE_CATEGORIES[code]
+    if (description) return description
+    return code || 'Unknown'
+  }
+
+  private async reverseGeocodeCountry(lat: number, lng: number): Promise<string | undefined> {
+    try {
+      const res = await firstValueFrom(
+        this.httpService.get<{ address?: { country_code?: string } }>(
+          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=3`,
+          { headers: { 'User-Agent': 'Tailfire/1.0' }, timeout: 3000 }
+        )
+      )
+      const code = res.data?.address?.country_code?.toUpperCase()
+      if (code) this.logger.debug('Reverse geocoded country', { lat, lng, country: code })
+      return code || undefined
+    } catch {
+      this.logger.debug('Reverse geocode failed', { lat, lng })
+      return undefined
     }
   }
 

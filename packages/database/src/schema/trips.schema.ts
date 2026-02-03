@@ -326,6 +326,14 @@ export const itineraries = pgTable('itineraries', {
   startDate: date('start_date'), // Can override trip start date (TERN pattern)
   endDate: date('end_date'), // Can override trip end date (TERN pattern)
 
+  // Destinations (geolocation)
+  primaryDestinationName: varchar('primary_destination_name', { length: 255 }),
+  primaryDestinationLat: decimal('primary_destination_lat', { precision: 9, scale: 6 }),
+  primaryDestinationLng: decimal('primary_destination_lng', { precision: 10, scale: 6 }),
+  secondaryDestinationName: varchar('secondary_destination_name', { length: 255 }),
+  secondaryDestinationLat: decimal('secondary_destination_lat', { precision: 9, scale: 6 }),
+  secondaryDestinationLng: decimal('secondary_destination_lng', { precision: 10, scale: 6 }),
+
   // Status
   status: itineraryStatusEnum('status').default('draft').notNull(),
   isSelected: boolean('is_selected').default(false).notNull(),

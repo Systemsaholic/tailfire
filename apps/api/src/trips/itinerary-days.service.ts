@@ -490,6 +490,15 @@ export class ItineraryDaysService {
         ...(dto.title !== undefined && { title: dto.title }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
         ...(dto.sequenceOrder !== undefined && { sequenceOrder: dto.sequenceOrder }),
+        // Geolocation fields
+        ...(dto.startLocationName !== undefined && { startLocationName: dto.startLocationName }),
+        ...(dto.startLocationLat !== undefined && { startLocationLat: dto.startLocationLat?.toString() ?? null }),
+        ...(dto.startLocationLng !== undefined && { startLocationLng: dto.startLocationLng?.toString() ?? null }),
+        ...(dto.endLocationName !== undefined && { endLocationName: dto.endLocationName }),
+        ...(dto.endLocationLat !== undefined && { endLocationLat: dto.endLocationLat?.toString() ?? null }),
+        ...(dto.endLocationLng !== undefined && { endLocationLng: dto.endLocationLng?.toString() ?? null }),
+        ...(dto.startLocationOverride !== undefined && { startLocationOverride: dto.startLocationOverride }),
+        ...(dto.endLocationOverride !== undefined && { endLocationOverride: dto.endLocationOverride }),
         updatedAt: new Date(),
       })
       .where(eq(this.db.schema.itineraryDays.id, id))
@@ -950,6 +959,14 @@ export class ItineraryDaysService {
       date: day.date || null,
       title: day.title || null,
       notes: day.notes || null,
+      startLocationName: day.startLocationName || null,
+      startLocationLat: day.startLocationLat ? Number(day.startLocationLat) : null,
+      startLocationLng: day.startLocationLng ? Number(day.startLocationLng) : null,
+      endLocationName: day.endLocationName || null,
+      endLocationLat: day.endLocationLat ? Number(day.endLocationLat) : null,
+      endLocationLng: day.endLocationLng ? Number(day.endLocationLng) : null,
+      startLocationOverride: day.startLocationOverride ?? false,
+      endLocationOverride: day.endLocationOverride ?? false,
       createdAt: day.createdAt.toISOString(),
       updatedAt: day.updatedAt.toISOString(),
     }

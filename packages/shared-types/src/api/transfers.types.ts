@@ -19,11 +19,13 @@ export interface TransferSearchParams {
   pickupLat?: number
   pickupLng?: number
   pickupAddress?: string
+  pickupCountryCode?: string
   dropoffType: TransferLocationType
   dropoffCode?: string
   dropoffLat?: number
   dropoffLng?: number
   dropoffAddress?: string
+  dropoffCountryCode?: string
   date: string                  // YYYY-MM-DD
   time: string                  // HH:mm
   timezone?: string

@@ -71,8 +71,11 @@ import { TripDateWarning } from '@/components/ui/trip-date-warning'
 import { getDefaultMonthHint } from '@/lib/date-utils'
 import { usePendingDayResolution } from '@/components/ui/pending-day-picker'
 import type { ItineraryDayWithActivitiesDto } from '@tailfire/shared-types/api'
+import type { CascadePreview } from '@tailfire/shared-types/api'
 import { FlightJourneyDisplay } from '@/components/ui/flight-journey-display'
 import type { FlightSegmentDto } from '@tailfire/shared-types'
+import { useCascadePreview, useCascadeApply } from '@/hooks/use-itinerary-days'
+import { CascadeConfirmationDialog } from '@/components/cascade-confirmation-dialog'
 
 // UUID helper with fallback for SSR/older browsers
 function generateId(): string {
@@ -243,6 +246,12 @@ export function FlightForm({
     activityId: activity?.id,
     updatedAt: activity?.updatedAt,
   })
+
+  // Cascade state
+  const [cascadePreview, setCascadePreview] = useState<CascadePreview | null>(null)
+  const [showCascadeDialog, setShowCascadeDialog] = useState(false)
+  const cascadePreviewMutation = useCascadePreview(itineraryId)
+  const cascadeApplyMutation = useCascadeApply(itineraryId)
 
   // Flight search state (per-segment)
   const [searchingSegmentIndex, setSearchingSegmentIndex] = useState<number | null>(null)
@@ -953,6 +962,34 @@ export function FlightForm({
 
       setSaveStatus('saved')
       setLastSavedAt(new Date())
+
+      // Check for cascade: extract last segment arrival airport
+      const segments = data.flightSegments || []
+      const lastSegment = segments[segments.length - 1]
+      const arrivalCode = lastSegment?.arrivalAirport
+      const savedActivityId = response.id || activityId
+
+      if (arrivalCode && savedActivityId) {
+        try {
+          const preview = await cascadePreviewMutation.mutateAsync({
+            dayId,
+            request: {
+              location: { name: arrivalCode, lat: 0, lng: 0 }, // Backend geocoding resolves coords
+              activityId: savedActivityId,
+              activityType: 'flight',
+              description: `Flight arrives at ${arrivalCode}`,
+            },
+          })
+
+          if (preview.affectedDays.length > 0) {
+            setCascadePreview(preview)
+            setShowCascadeDialog(true)
+            return // Don't show success overlay yet
+          }
+        } catch {
+          // Cascade preview failure is non-blocking
+        }
+      }
 
       // Show success overlay and redirect
       setShowSuccess(true)
@@ -2030,6 +2067,35 @@ export function FlightForm({
         currentBookingDate={activityBookingDate}
         onConfirm={handleMarkAsBooked}
         isPending={markActivityBooked.isPending}
+      />
+
+      {/* Cascade Confirmation Dialog */}
+      <CascadeConfirmationDialog
+        preview={cascadePreview}
+        open={showCascadeDialog}
+        onOpenChange={setShowCascadeDialog}
+        isApplying={cascadeApplyMutation.isPending}
+        onConfirm={async (dayIds) => {
+          if (!cascadePreview) return
+          try {
+            await cascadeApplyMutation.mutateAsync({
+              dayId,
+              confirmation: { dayIds },
+              preview: cascadePreview,
+            })
+            toast({ title: 'Locations updated', description: `Applied to ${dayIds.length} days.` })
+          } catch {
+            toast({ title: 'Error', description: 'Failed to apply location updates.', variant: 'destructive' })
+          }
+          setShowCascadeDialog(false)
+          setCascadePreview(null)
+          setShowSuccess(true)
+        }}
+        onSkip={() => {
+          setShowCascadeDialog(false)
+          setCascadePreview(null)
+          setShowSuccess(true)
+        }}
       />
     </div>
   )
