@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Loader2, Trash2 } from 'lucide-react'
+import { Loader2, Trash2, Lock, Unlock } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -27,7 +27,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { useUpdateItineraryDay, useDeleteItineraryDay } from '@/hooks/use-itinerary-days'
 import { parseISODate } from '@/lib/date-utils'
+import { LocationAutocomplete } from '@/components/location-autocomplete'
 import type { ItineraryDayWithActivitiesDto } from '@tailfire/shared-types/api'
+import type { GeoLocation } from '@tailfire/shared-types/api'
 
 interface DayEditModalProps {
   day: ItineraryDayWithActivitiesDto
@@ -41,8 +43,22 @@ export function DayEditModal({ day, itineraryId, open, onOpenChange }: DayEditMo
   const updateDay = useUpdateItineraryDay(itineraryId)
   const deleteDay = useDeleteItineraryDay(itineraryId)
 
+  // Helper to construct GeoLocation from flat DTO fields
+  const toGeoLocation = (name: string | null, lat: number | null, lng: number | null): GeoLocation | null => {
+    if (name && lat != null && lng != null) return { name, lat, lng }
+    return null
+  }
+
   const [title, setTitle] = useState(day.title || '')
   const [notes, setNotes] = useState(day.notes || '')
+  const [startLocation, setStartLocation] = useState<GeoLocation | null>(
+    toGeoLocation(day.startLocationName, day.startLocationLat, day.startLocationLng)
+  )
+  const [endLocation, setEndLocation] = useState<GeoLocation | null>(
+    toGeoLocation(day.endLocationName, day.endLocationLat, day.endLocationLng)
+  )
+  const [startLocationOverride, setStartLocationOverride] = useState(day.startLocationOverride ?? false)
+  const [endLocationOverride, setEndLocationOverride] = useState(day.endLocationOverride ?? false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const activityCount = day.activities?.length || 0
@@ -52,8 +68,12 @@ export function DayEditModal({ day, itineraryId, open, onOpenChange }: DayEditMo
     if (open) {
       setTitle(day.title || '')
       setNotes(day.notes || '')
+      setStartLocation(toGeoLocation(day.startLocationName, day.startLocationLat, day.startLocationLng))
+      setEndLocation(toGeoLocation(day.endLocationName, day.endLocationLat, day.endLocationLng))
+      setStartLocationOverride(day.startLocationOverride ?? false)
+      setEndLocationOverride(day.endLocationOverride ?? false)
     }
-  }, [open, day.title, day.notes])
+  }, [open, day.title, day.notes, day.startLocationName, day.startLocationLat, day.startLocationLng, day.endLocationName, day.endLocationLat, day.endLocationLng, day.startLocationOverride, day.endLocationOverride])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -64,6 +84,14 @@ export function DayEditModal({ day, itineraryId, open, onOpenChange }: DayEditMo
         data: {
           title: title.trim() || null,
           notes: notes.trim() || null,
+          startLocationName: startLocation?.name ?? null,
+          startLocationLat: startLocation?.lat ?? null,
+          startLocationLng: startLocation?.lng ?? null,
+          endLocationName: endLocation?.name ?? null,
+          endLocationLat: endLocation?.lat ?? null,
+          endLocationLng: endLocation?.lng ?? null,
+          startLocationOverride,
+          endLocationOverride,
         },
       })
 
@@ -119,7 +147,7 @@ export function DayEditModal({ day, itineraryId, open, onOpenChange }: DayEditMo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[500px]">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>Edit Day</DialogTitle>
@@ -150,6 +178,58 @@ export function DayEditModal({ day, itineraryId, open, onOpenChange }: DayEditMo
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={4}
+              />
+            </div>
+
+            {/* Start Location */}
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <Label>Start Location</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 gap-1 text-xs"
+                  onClick={() => setStartLocationOverride(!startLocationOverride)}
+                  title={startLocationOverride ? 'Locked: cascade will not overwrite' : 'Unlocked: cascade can update this'}
+                >
+                  {startLocationOverride ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  {startLocationOverride ? 'Locked' : 'Auto'}
+                </Button>
+              </div>
+              <LocationAutocomplete
+                value={startLocation}
+                onChange={(loc) => {
+                  setStartLocation(loc)
+                  if (loc) setStartLocationOverride(true)
+                }}
+                placeholder="Where does this day begin?"
+              />
+            </div>
+
+            {/* End Location */}
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <Label>End Location</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 gap-1 text-xs"
+                  onClick={() => setEndLocationOverride(!endLocationOverride)}
+                  title={endLocationOverride ? 'Locked: cascade will not overwrite' : 'Unlocked: cascade can update this'}
+                >
+                  {endLocationOverride ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  {endLocationOverride ? 'Locked' : 'Auto'}
+                </Button>
+              </div>
+              <LocationAutocomplete
+                value={endLocation}
+                onChange={(loc) => {
+                  setEndLocation(loc)
+                  if (loc) setEndLocationOverride(true)
+                }}
+                placeholder="Where does this day end?"
               />
             </div>
           </div>

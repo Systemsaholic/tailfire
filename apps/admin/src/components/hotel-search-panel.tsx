@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { Search, Loader2, Building2, Star, MapPin, AlertCircle, ExternalLink } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -17,6 +17,12 @@ interface HotelSearchPanelProps {
   onSelect: (hotel: NormalizedHotelResult) => void
   /** Optional destination to filter results */
   destination?: string
+  /** Check-in date (YYYY-MM-DD) for Amadeus pricing enrichment */
+  checkIn?: string
+  /** Check-out date (YYYY-MM-DD) for Amadeus pricing enrichment */
+  checkOut?: string
+  /** Number of adult guests */
+  adults?: number
   /** Custom class name */
   className?: string
 }
@@ -33,10 +39,18 @@ interface HotelSearchPanelProps {
 export function HotelSearchPanel({
   onSelect,
   destination: _destination,
+  checkIn,
+  checkOut,
+  adults,
   className,
 }: HotelSearchPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [inputValue, setInputValue] = useState('')
+
+  const dateParams = useMemo(
+    () => ({ checkIn, checkOut, adults }),
+    [checkIn, checkOut, adults]
+  )
 
   const {
     data: searchResults,
@@ -46,7 +60,7 @@ export function HotelSearchPanel({
     searchValue,
     triggerSearch,
     clearSearch,
-  } = useDebouncedHotelLookup(300)
+  } = useDebouncedHotelLookup(300, dateParams)
 
   // Handle input change - trigger search
   const handleInputChange = useCallback(
@@ -188,13 +202,18 @@ export function HotelSearchPanel({
                             </p>
                           )}
 
-                          {/* Provider Badge */}
+                          {/* Provider Badge & Pricing */}
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
                               {hotel.provider === 'google_places' ? 'Google Places' :
                                hotel.provider === 'amadeus' ? 'Amadeus' :
                                hotel.provider === 'merged' ? 'Multiple Sources' : hotel.provider}
                             </span>
+                            {hotel.offers?.[0]?.price && (
+                              <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                {hotel.offers[0].price.currency} {hotel.offers[0].price.total}
+                              </span>
+                            )}
                             {hotel.website && (
                               <ExternalLink className="h-3 w-3 text-gray-400" />
                             )}

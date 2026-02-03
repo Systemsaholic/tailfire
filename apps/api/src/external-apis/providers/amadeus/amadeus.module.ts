@@ -11,11 +11,29 @@
  */
 
 import { Module } from '@nestjs/common'
+import { AmadeusAuthService } from './amadeus-auth.service'
 import { AmadeusFlightsProvider } from './amadeus-flights.provider'
 import { AmadeusHotelsProvider } from './amadeus-hotels.provider'
+import { AmadeusFlightOffersProvider } from './amadeus-flight-offers.provider'
+import { AmadeusTransfersProvider } from './amadeus-transfers.provider'
+import { AmadeusActivitiesProvider } from './amadeus-activities.provider'
 
 @Module({
-  providers: [AmadeusFlightsProvider, AmadeusHotelsProvider],
-  exports: [AmadeusFlightsProvider, AmadeusHotelsProvider],
+  providers: [
+    AmadeusAuthService,
+    AmadeusFlightsProvider,
+    AmadeusHotelsProvider,
+    AmadeusFlightOffersProvider,
+    AmadeusTransfersProvider,
+    AmadeusActivitiesProvider,
+  ],
+  exports: [
+    AmadeusAuthService,
+    AmadeusFlightsProvider,
+    AmadeusHotelsProvider,
+    AmadeusFlightOffersProvider,
+    AmadeusTransfersProvider,
+    AmadeusActivitiesProvider,
+  ],
 })
 export class AmadeusModule {}

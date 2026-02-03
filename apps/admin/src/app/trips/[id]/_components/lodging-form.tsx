@@ -37,6 +37,7 @@ import { EditTravelersDialog } from './edit-travelers-dialog'
 import { PaymentScheduleSection } from './payment-schedule-section'
 import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
 import { buildInitialPricingState, type PricingData, type ValidationErrors } from '@/lib/pricing'
+import { dollarsToCents } from '@/lib/pricing/currency-helpers'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
 import { TimePicker } from '@/components/ui/time-picker'
 import { AmenitiesSelector } from '@/components/ui/amenities-selector'
@@ -687,7 +688,31 @@ export function LodgingForm({
         setValue('lodgingDetails.amenities', mergedAmenities, { shouldDirty: true })
       }
 
-      // Build a rich description with rating if available
+      // Auto-fill pricing from Amadeus offers
+      const firstOffer = hotel.offers?.[0]
+      if (firstOffer) {
+        if (firstOffer.price?.total) {
+          setValue('totalPriceCents', dollarsToCents(firstOffer.price.total), { shouldDirty: true })
+        }
+        if (firstOffer.price?.currency) {
+          setValue('currency', firstOffer.price.currency, { shouldDirty: true })
+        }
+        if (firstOffer.cancellationPolicy?.description) {
+          setValue('cancellationPolicy', firstOffer.cancellationPolicy.description, { shouldDirty: true })
+        } else if (firstOffer.cancellationPolicy?.refundable !== undefined) {
+          setValue('cancellationPolicy', firstOffer.cancellationPolicy.refundable ? 'Refundable' : 'Non-refundable', { shouldDirty: true })
+        }
+        if (firstOffer.roomType) {
+          // Map Amadeus room type to form values if possible
+          const roomTypeLower = firstOffer.roomType.toLowerCase()
+          const matchedType = ROOM_TYPES.find(rt => roomTypeLower.includes(rt.value))
+          if (matchedType) {
+            setValue('lodgingDetails.roomType', matchedType.value, { shouldDirty: true })
+          }
+        }
+      }
+
+      // Build a rich description with rating and board type
       let enrichedDescription = hotel.description || ''
       if (hotel.rating) {
         const ratingText = `Rating: ${hotel.rating.toFixed(1)}/5`
@@ -696,6 +721,21 @@ export function LodgingForm({
           enrichedDescription = `${ratingText}${reviewsText}\n\n${enrichedDescription}`
         } else {
           enrichedDescription = `${ratingText}${reviewsText}`
+        }
+      }
+      // Prepend board type from Amadeus offer
+      if (firstOffer?.boardType && firstOffer.boardType !== 'ROOM_ONLY') {
+        const boardLabels: Record<string, string> = {
+          BREAKFAST: 'Breakfast included',
+          HALF_BOARD: 'Half board (breakfast + dinner)',
+          FULL_BOARD: 'Full board (all meals)',
+          ALL_INCLUSIVE: 'All inclusive',
+        }
+        const boardLabel = boardLabels[firstOffer.boardType]
+        if (boardLabel) {
+          enrichedDescription = enrichedDescription
+            ? `${boardLabel}\n\n${enrichedDescription}`
+            : boardLabel
         }
       }
       if (enrichedDescription) {
@@ -1108,6 +1148,9 @@ export function LodgingForm({
               <label className="text-sm font-medium text-gray-700">Search Hotel (Auto-fill)</label>
               <HotelSearchPanel
                 onSelect={handleHotelSelect}
+                checkIn={dateToString(checkInDateValue) ?? undefined}
+                checkOut={dateToString(checkOutDateValue) ?? undefined}
+                adults={totalTravelers || undefined}
                 className="max-w-md"
               />
             </div>

@@ -582,6 +582,13 @@
       "when": 1769990569000,
       "tag": "20260201220249_add_agency_id_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1770033600000,
+      "tag": "20260202120000_add_geolocation_to_days_and_itineraries",
+      "breakpoints": true
     }
   ]
 }

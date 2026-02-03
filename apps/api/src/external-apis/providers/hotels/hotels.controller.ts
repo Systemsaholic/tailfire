@@ -138,13 +138,16 @@ export class HotelsController {
   @Get('lookup')
   async lookupHotel(
     @Query('name') name: string,
-    @Query('destination') destination?: string
+    @Query('destination') destination?: string,
+    @Query('checkIn') checkIn?: string,
+    @Query('checkOut') checkOut?: string,
+    @Query('adults') adults?: string
   ): Promise<HotelSearchResponse> {
     if (!name || name.length < 3) {
       throw new BadRequestException('Hotel name must be at least 3 characters')
     }
 
-    this.logger.log('Hotel lookup request', { name, destination })
+    this.logger.log('Hotel lookup request', { name, destination, checkIn, checkOut, adults })
 
     await this.initializeProviderCredentials()
 
@@ -186,8 +189,47 @@ export class HotelsController {
       }
     }
 
+    const googleResults = response.data || []
+
+    // If dates provided and we have results, enrich top results with Amadeus pricing
+    if (checkIn && checkOut && googleResults.length > 0) {
+      // Validate dates: checkOut must be after checkIn
+      if (checkOut <= checkIn) {
+        this.logger.warn('Invalid date range for lookup enrichment, skipping pricing', { checkIn, checkOut })
+        return { results: googleResults, provider: 'google_places' }
+      }
+
+      // Use first result's coordinates for Amadeus geocode search
+      const topResult = googleResults[0]
+      if (topResult?.location?.latitude && topResult?.location?.longitude) {
+        const enrichParams: HotelSearchParams = {
+          ...params,
+          checkIn,
+          checkOut,
+          adults: adults ? parseInt(adults, 10) : undefined,
+          latitude: topResult.location.latitude,
+          longitude: topResult.location.longitude,
+          radius: 5000, // 5km to reduce mismatches
+        }
+
+        // Only merge for top 3 results to reduce Amadeus API calls
+        const limitedResults = googleResults.slice(0, 3)
+        const remainingResults = googleResults.slice(3)
+
+        try {
+          const merged = await this.mergeWithAmadeusPricing(limitedResults, enrichParams)
+          return {
+            ...merged,
+            results: [...merged.results, ...remainingResults],
+          }
+        } catch (error) {
+          this.logger.warn('Amadeus pricing merge failed for lookup, returning Google results', { error })
+        }
+      }
+    }
+
     return {
-      results: response.data || [],
+      results: googleResults,
       provider: 'google_places',
     }
   }

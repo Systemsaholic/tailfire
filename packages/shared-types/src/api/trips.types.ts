@@ -227,6 +227,13 @@ export interface UpdateItineraryDto {
   overview?: string // Rich text overview statement (TERN pattern)
   startDate?: string // ISO date string - can override trip start date (TERN pattern)
   endDate?: string // ISO date string - can override trip end date (TERN pattern)
+  // Destinations (geolocation)
+  primaryDestinationName?: string | null
+  primaryDestinationLat?: number | null
+  primaryDestinationLng?: number | null
+  secondaryDestinationName?: string | null
+  secondaryDestinationLat?: number | null
+  secondaryDestinationLng?: number | null
   status?: 'draft' | 'proposing' | 'approved' | 'archived'
   isSelected?: boolean
   sequenceOrder?: number
@@ -414,6 +421,13 @@ export interface ItineraryResponseDto {
   overview: string | null // Rich text overview statement (TERN pattern)
   startDate: string | null // ISO date string - can override trip start date (TERN pattern)
   endDate: string | null // ISO date string - can override trip end date (TERN pattern)
+  // Destinations (geolocation)
+  primaryDestinationName: string | null
+  primaryDestinationLat: number | null
+  primaryDestinationLng: number | null
+  secondaryDestinationName: string | null
+  secondaryDestinationLat: number | null
+  secondaryDestinationLng: number | null
   status: string
   isSelected: boolean
   sequenceOrder: number

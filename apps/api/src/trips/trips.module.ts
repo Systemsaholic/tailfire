@@ -46,6 +46,8 @@ import { StorageService } from './storage.service'
 import { ActivityDocumentsService } from './activity-documents.service'
 import { ActivityMediaService } from './activity-media.service'
 import { TripMediaService } from './trip-media.service'
+import { GeocodingService } from './geocoding.service'
+import { GeolocationCascadeService } from './geolocation-cascade.service'
 import { StorageProviderFactory } from '../storage/providers'
 
 // Controllers
@@ -93,6 +95,8 @@ import { ActivityBookingsController } from './activity-bookings.controller'
   ],
   providers: [
     StorageProviderFactory,
+    GeocodingService,
+    GeolocationCascadeService,
     TripsService,
     TripTravelersService,
     ItinerariesService,

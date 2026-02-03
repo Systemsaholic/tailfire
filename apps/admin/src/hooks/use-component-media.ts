@@ -185,6 +185,44 @@ export function useUpdateComponentMedia(componentId: string, entityType: Compone
 }
 
 /**
+ * Import external URL media (e.g. Amadeus tour images)
+ * Uses POST /components/:id/media/external/url
+ */
+export function useImportExternalUrlMedia(
+  componentId: string,
+  entityType: ComponentEntityType,
+  itineraryId?: string
+) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (data: {
+      url: string
+      caption?: string
+      attribution?: {
+        source: string
+        sourceUrl?: string
+        photographerName?: string
+      }
+    }) =>
+      api.post<ComponentMediaDto>(
+        `/components/${componentId}/media/external/url?entityType=${entityType}`,
+        data
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: componentMediaKeys.list(componentId, entityType),
+      })
+      if (itineraryId) {
+        void queryClient.invalidateQueries({
+          queryKey: itineraryDayKeys.withActivities(itineraryId),
+        })
+      }
+    },
+  })
+}
+
+/**
  * Delete media item
  * @param itineraryId - Optional itinerary ID to invalidate thumbnail cache
  */

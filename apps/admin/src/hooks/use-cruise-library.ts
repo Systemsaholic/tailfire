@@ -744,6 +744,14 @@ export function useAddCruiseToItinerary(defaultItineraryId?: string) {
               sequenceOrder: oldDays.length,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
+              startLocationName: null,
+              startLocationLat: null,
+              startLocationLng: null,
+              endLocationName: null,
+              endLocationLat: null,
+              endLocationLng: null,
+              startLocationOverride: false,
+              endLocationOverride: false,
               activities: [{ ...optimisticCruise, itineraryDayId: `temp-day-${Date.now()}` }],
             }
             // Insert in date order

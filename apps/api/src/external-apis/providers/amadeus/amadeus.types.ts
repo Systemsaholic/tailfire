@@ -276,3 +276,163 @@ export interface AmadeusTokenCache {
   /** Absolute expiry timestamp (ms since epoch) */
   expiresAt: number
 }
+
+// ============================================================================
+// FLIGHT OFFERS API RESPONSE TYPES
+// ============================================================================
+
+/**
+ * Amadeus Flight Offers Search raw response
+ */
+export interface AmadeusFlightOffersResponse {
+  meta?: { count?: number }
+  data: AmadeusFlightOfferRaw[]
+  dictionaries?: {
+    carriers?: Record<string, string>
+    aircraft?: Record<string, string>
+    currencies?: Record<string, string>
+    locations?: Record<string, { cityCode: string; countryCode: string }>
+  }
+}
+
+export interface AmadeusFlightOfferRaw {
+  type: 'flight-offer'
+  id: string
+  source: string
+  instantTicketingRequired: boolean
+  nonHomogeneous: boolean
+  oneWay: boolean
+  lastTicketingDate?: string
+  numberOfBookableSeats?: number
+  itineraries: AmadeusItinerary[]
+  price: AmadeusFlightPrice
+  pricingOptions?: { fareType?: string[]; includedCheckedBagsOnly?: boolean }
+  validatingAirlineCodes: string[]
+  travelerPricings?: AmadeusTravelerPricing[]
+}
+
+export interface AmadeusItinerary {
+  duration: string
+  segments: AmadeusFlightOfferSegment[]
+}
+
+export interface AmadeusFlightOfferSegment {
+  departure: { iataCode: string; terminal?: string; at: string }
+  arrival: { iataCode: string; terminal?: string; at: string }
+  carrierCode: string
+  number: string
+  aircraft?: { code: string }
+  operating?: { carrierCode: string }
+  duration: string
+  id: string
+  numberOfStops: number
+  blacklistedInEU?: boolean
+}
+
+export interface AmadeusFlightPrice {
+  currency: string
+  total: string
+  base?: string
+  fees?: { amount: string; type: string }[]
+  grandTotal: string
+}
+
+export interface AmadeusTravelerPricing {
+  travelerId: string
+  fareOption: string
+  travelerType: string
+  price: { currency: string; total: string; base?: string }
+  fareDetailsBySegment: AmadeusFareDetail[]
+}
+
+export interface AmadeusFareDetail {
+  segmentId: string
+  cabin?: string
+  fareBasis?: string
+  brandedFare?: string
+  class?: string
+  includedCheckedBags?: { quantity?: number; weight?: number; weightUnit?: string }
+  amenities?: any[]
+}
+
+// ============================================================================
+// TRANSFER OFFERS API RESPONSE TYPES
+// ============================================================================
+
+/**
+ * Amadeus Transfer Offers raw response
+ */
+export interface AmadeusTransferOffersResponse {
+  data: AmadeusTransferOfferRaw[]
+}
+
+export interface AmadeusTransferOfferRaw {
+  type: 'transfer-offer'
+  id: string
+  transferType: string  // PRIVATE, SHARED, TAXI, etc.
+  start: AmadeusTransferLocation
+  end: AmadeusTransferLocation
+  vehicle?: {
+    code?: string
+    category?: string
+    description?: string
+    seats?: { count?: number }[]
+    baggages?: { count?: number; size?: string }[]
+  }
+  quotation: {
+    monetaryAmount: string
+    currencyCode: string
+    base?: { monetaryAmount: string }
+  }
+  converted?: {
+    monetaryAmount: string
+    currencyCode: string
+  }
+  duration?: string  // ISO 8601
+  cancellationRules?: {
+    freeRefund?: boolean
+    ruleDescription?: string
+  }[]
+  methodsOfPaymentAccepted?: string[]
+  serviceProvider?: {
+    code?: string
+    name?: string
+    logoUrl?: string
+  }
+}
+
+export interface AmadeusTransferLocation {
+  dateTime?: string
+  locationCode?: string
+  latiLong?: { latitude: number; longitude: number }
+  address?: { line?: string; cityName?: string; countryCode?: string }
+}
+
+// ============================================================================
+// ACTIVITIES API RESPONSE TYPES
+// ============================================================================
+
+/**
+ * Amadeus Tours & Activities raw response
+ */
+export interface AmadeusActivitiesResponse {
+  meta?: { count?: number }
+  data: AmadeusActivityRaw[]
+}
+
+export interface AmadeusActivityRaw {
+  type: 'activity'
+  id: string
+  name: string
+  shortDescription?: string
+  description?: string
+  geoCode?: { latitude: number; longitude: number }
+  rating?: string
+  price?: {
+    currencyCode?: string
+    amount?: string
+  }
+  pictures?: string[]
+  bookingLink?: string
+  minimumDuration?: string
+}

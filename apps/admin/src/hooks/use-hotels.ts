@@ -16,7 +16,8 @@ export const hotelSearchKeys = {
   all: ['hotel-search'] as const,
   search: (destination?: string, hotelName?: string, provider?: string) =>
     [...hotelSearchKeys.all, 'search', destination ?? '', hotelName ?? '', provider ?? 'default'] as const,
-  lookup: (name: string) => [...hotelSearchKeys.all, 'lookup', name] as const,
+  lookup: (name: string, checkIn?: string, checkOut?: string, adults?: number) =>
+    [...hotelSearchKeys.all, 'lookup', name, checkIn ?? '', checkOut ?? '', adults ?? ''] as const,
   details: (id: string, provider?: string) =>
     [...hotelSearchKeys.all, 'details', id, provider ?? 'auto'] as const,
 }
@@ -37,19 +38,22 @@ export const hotelSearchKeys = {
  */
 export function useHotelLookup(
   name: string,
-  options: { enabled?: boolean; destination?: string } = {}
+  options: { enabled?: boolean; destination?: string; checkIn?: string; checkOut?: string; adults?: number } = {}
 ) {
-  const { enabled = true, destination } = options
+  const { enabled = true, destination, checkIn, checkOut, adults } = options
   const debouncedName = useDebounce(name, 300)
   const { toast } = useToast()
 
   return useQuery({
-    queryKey: hotelSearchKeys.lookup(debouncedName),
+    queryKey: hotelSearchKeys.lookup(debouncedName, checkIn, checkOut, adults),
     queryFn: async (): Promise<HotelSearchResponse> => {
       const params = new URLSearchParams({ name: debouncedName })
       if (destination) {
         params.set('destination', destination)
       }
+      if (checkIn) params.set('checkIn', checkIn)
+      if (checkOut) params.set('checkOut', checkOut)
+      if (adults) params.set('adults', adults.toString())
       try {
         return await api.get<HotelSearchResponse>(
           `/external-apis/hotels/lookup?${params}`
@@ -232,12 +236,18 @@ export function useHotelDetails(
  * Useful for search panels where user types and sees results.
  * Note: Debounce delay is handled internally by useHotelLookup (300ms)
  */
-export function useDebouncedHotelLookup(_delayMs = 300) {
+export function useDebouncedHotelLookup(
+  _delayMs = 300,
+  dateParams?: { checkIn?: string; checkOut?: string; adults?: number }
+) {
   const [searchValue, setSearchValue] = useState('')
   const queryClient = useQueryClient()
 
   const query = useHotelLookup(searchValue, {
     enabled: searchValue.length >= 3,
+    checkIn: dateParams?.checkIn,
+    checkOut: dateParams?.checkOut,
+    adults: dateParams?.adults,
   })
 
   const triggerSearch = useCallback((name: string) => {
@@ -251,10 +261,10 @@ export function useDebouncedHotelLookup(_delayMs = 300) {
   const refetchSearch = useCallback(() => {
     if (searchValue.length >= 3) {
       void queryClient.invalidateQueries({
-        queryKey: hotelSearchKeys.lookup(searchValue),
+        queryKey: hotelSearchKeys.lookup(searchValue, dateParams?.checkIn, dateParams?.checkOut, dateParams?.adults),
       })
     }
-  }, [queryClient, searchValue])
+  }, [queryClient, searchValue, dateParams?.checkIn, dateParams?.checkOut, dateParams?.adults])
 
   return {
     ...query,

@@ -36,6 +36,8 @@ export enum ApiCategory {
   CARS = 'cars',
   VISA = 'visa',
   IMAGES = 'images',
+  TRANSFERS = 'transfers',
+  ACTIVITIES = 'activities',
 }
 
 /**

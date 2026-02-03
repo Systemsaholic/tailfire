@@ -13,7 +13,9 @@ import type {
   UpdateTransportationActivityDto,
   TransportationSubtype,
   ItineraryDayWithActivitiesDto,
+  NormalizedTransferResult,
 } from '@tailfire/shared-types/api'
+import { TransferSearchPanel } from '@/components/transfer-search-panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -47,6 +49,8 @@ import {
   Check,
   AlertCircle,
   CalendarCheck,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
@@ -79,6 +83,9 @@ import { mapServerErrors, scrollToFirstError, getErrorMessage, getFirstError, fo
 import { TripDateWarning } from '@/components/ui/trip-date-warning'
 import { getDefaultMonthHint } from '@/lib/date-utils'
 import { usePendingDayResolution } from '@/components/ui/pending-day-picker'
+import type { CascadePreview } from '@tailfire/shared-types/api'
+import { useCascadePreview, useCascadeApply } from '@/hooks/use-itinerary-days'
+import { CascadeConfirmationDialog } from '@/components/cascade-confirmation-dialog'
 
 // Transportation subtype options
 const TRANSPORTATION_SUBTYPES: { value: TransportationSubtype; label: string }[] = [
@@ -233,6 +240,12 @@ export function TransportationForm({
   const [activityIsBooked, setActivityIsBooked] = useState(activity?.isBooked ?? false)
   const [activityBookingDate, setActivityBookingDate] = useState<string | null>(activity?.bookingDate ?? null)
 
+  // Cascade state
+  const [cascadePreview, setCascadePreview] = useState<CascadePreview | null>(null)
+  const [showCascadeDialog, setShowCascadeDialog] = useState(false)
+  const cascadePreviewMutation = useCascadePreview(itineraryId)
+  const cascadeApplyMutation = useCascadeApply(itineraryId)
+
   // Package linkage state for PricingSection
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(activity?.packageId ?? null)
   const { data: packagesData } = useBookings({ tripId: trip?.id })
@@ -296,6 +309,46 @@ export function TransportationForm({
   const isRoundTripValue = useWatch({ control, name: 'transportationDetails.isRoundTrip' })
   const pickupAddressValue = useWatch({ control, name: 'transportationDetails.pickupAddress' })
   const dropoffAddressValue = useWatch({ control, name: 'transportationDetails.dropoffAddress' })
+
+  // Transfer search panel state
+  const [showTransferSearch, setShowTransferSearch] = useState(false)
+
+  const handleTransferSelect = (transfer: NormalizedTransferResult) => {
+    setValue('transportationDetails.providerName', transfer.provider || '', { shouldDirty: true })
+    setValue('transportationDetails.vehicleType', transfer.vehicle.type?.toLowerCase() || '', { shouldDirty: true })
+    if (transfer.vehicle.maxPassengers) {
+      setValue('transportationDetails.vehicleCapacity', transfer.vehicle.maxPassengers, { shouldDirty: true })
+    }
+    if (transfer.pickupLocation?.address) {
+      setValue('transportationDetails.pickupAddress', transfer.pickupLocation.address, { shouldDirty: true })
+    }
+    if (transfer.dropoffLocation?.address) {
+      setValue('transportationDetails.dropoffAddress', transfer.dropoffLocation.address, { shouldDirty: true })
+    }
+    // Populate pricing
+    if (transfer.price?.total) {
+      const totalCents = Math.round(parseFloat(transfer.price.total) * 100)
+      setValue('totalPriceCents', totalCents, { shouldDirty: true })
+    }
+    if (transfer.price?.currency) {
+      setValue('currency', transfer.price.currency, { shouldDirty: true })
+    }
+    if (transfer.cancellationPolicy) {
+      const policyText = transfer.cancellationPolicy.refundable ? 'Free cancellation' : `Non-refundable. ${transfer.cancellationPolicy.description || ''}`
+      setValue('cancellationPolicy', policyText, { shouldDirty: true })
+    }
+    // Populate description with vehicle details and duration
+    const descParts = [transfer.vehicle.description]
+    if (transfer.duration) descParts.push(`Duration: ${transfer.duration.replace('PT', '').toLowerCase()}`)
+    if (transfer.vehicle.maxBags) descParts.push(`Max bags: ${transfer.vehicle.maxBags}`)
+    setValue('description', descParts.filter(Boolean).join(' | '), { shouldDirty: true })
+
+    setShowTransferSearch(false)
+    toast({
+      title: 'Transfer Details Applied',
+      description: `${transfer.vehicle.type} - ${transfer.price.currency} ${transfer.price.total}`,
+    })
+  }
 
   // Auto-generate activity name from pickup/dropoff addresses
   const { displayName, placeholder } = useActivityNameGenerator({
@@ -608,6 +661,34 @@ export function TransportationForm({
         setSaveStatus('saved')
         setLastSavedAt(new Date())
 
+        // Check for cascade: transfers with dropoff address
+        const subtype = data.transportationDetails?.subtype
+        const dropoffAddress = data.transportationDetails?.dropoffAddress
+        const savedActivityId = response.id || activityId
+        const isTransferType = subtype === 'transfer' || subtype === 'private_car' || subtype === 'shuttle'
+
+        if (isTransferType && dropoffAddress && savedActivityId) {
+          try {
+            const preview = await cascadePreviewMutation.mutateAsync({
+              dayId,
+              request: {
+                location: { name: dropoffAddress, lat: 0, lng: 0 },
+                activityId: savedActivityId,
+                activityType: 'transportation',
+                description: `Transfer arrives at ${dropoffAddress}`,
+              },
+            })
+
+            if (preview.affectedDays.length > 0) {
+              setCascadePreview(preview)
+              setShowCascadeDialog(true)
+              return
+            }
+          } catch {
+            // Non-blocking
+          }
+        }
+
         // Show success overlay and redirect
         setShowSuccess(true)
       } catch (err: any) {
@@ -805,6 +886,40 @@ export function TransportationForm({
               </div>
             </CardContent>
           </Card>
+
+          {/* Search Transfers (only for transfer subtype) */}
+          {subtype === 'transfer' && (
+            <div className="border border-gray-200 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setShowTransferSearch(!showTransferSearch)}
+                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <ArrowRightLeft className="h-5 w-5 text-emerald-500" />
+                  <span className="font-medium">Search Transfers</span>
+                  <span className="text-xs text-gray-400 ml-1">External providers</span>
+                </div>
+                {showTransferSearch ? (
+                  <ChevronUp className="h-5 w-5 text-gray-400" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 text-gray-400" />
+                )}
+              </button>
+
+              {showTransferSearch && (
+                <div className="p-4 border-t border-gray-200">
+                  <TransferSearchPanel
+                    onSelect={handleTransferSelect}
+                    defaultPickupAddress={pickupAddressValue || ''}
+                    defaultDropoffAddress={dropoffAddressValue || ''}
+                    defaultDate={pickupDateValue || ''}
+                    defaultTime={pickupTimeValue || ''}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Vehicle Details */}
           <Card>
@@ -1311,6 +1426,35 @@ export function TransportationForm({
         currentBookingDate={activityBookingDate}
         onConfirm={handleMarkAsBooked}
         isPending={markActivityBooked.isPending}
+      />
+
+      {/* Cascade Confirmation Dialog */}
+      <CascadeConfirmationDialog
+        preview={cascadePreview}
+        open={showCascadeDialog}
+        onOpenChange={setShowCascadeDialog}
+        isApplying={cascadeApplyMutation.isPending}
+        onConfirm={async (dayIds) => {
+          if (!cascadePreview) return
+          try {
+            await cascadeApplyMutation.mutateAsync({
+              dayId,
+              confirmation: { dayIds },
+              preview: cascadePreview,
+            })
+            toast({ title: 'Locations updated', description: `Applied to ${dayIds.length} days.` })
+          } catch {
+            toast({ title: 'Error', description: 'Failed to apply location updates.', variant: 'destructive' })
+          }
+          setShowCascadeDialog(false)
+          setCascadePreview(null)
+          setShowSuccess(true)
+        }}
+        onSkip={() => {
+          setShowCascadeDialog(false)
+          setCascadePreview(null)
+          setShowSuccess(true)
+        }}
       />
     </div>
   )

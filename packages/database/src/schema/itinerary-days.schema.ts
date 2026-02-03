@@ -5,7 +5,7 @@
  * Day 0 represents pre-travel information.
  */
 
-import { pgTable, uuid, integer, date, varchar, text, timestamp } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, integer, date, varchar, text, timestamp, numeric, boolean } from 'drizzle-orm/pg-core'
 import { relations } from 'drizzle-orm'
 import { itineraries } from './trips.schema'
 import { itineraryActivities } from './activities.schema'
@@ -25,6 +25,16 @@ export const itineraryDays = pgTable('itinerary_days', {
   title: varchar('title', { length: 255 }),
   notes: text('notes'),
   sequenceOrder: integer('sequence_order').notNull().default(0), // Display order
+
+  // Geolocation (start + end of day)
+  startLocationName: varchar('start_location_name', { length: 255 }),
+  startLocationLat: numeric('start_location_lat', { precision: 9, scale: 6 }),
+  startLocationLng: numeric('start_location_lng', { precision: 10, scale: 6 }),
+  endLocationName: varchar('end_location_name', { length: 255 }),
+  endLocationLat: numeric('end_location_lat', { precision: 9, scale: 6 }),
+  endLocationLng: numeric('end_location_lng', { precision: 10, scale: 6 }),
+  startLocationOverride: boolean('start_location_override').notNull().default(false),
+  endLocationOverride: boolean('end_location_override').notNull().default(false),
 
   // Audit fields
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -21,6 +21,9 @@ import { AmadeusModule } from './providers/amadeus'
 import { GooglePlacesModule } from './providers/google-places'
 import { BookingComModule } from './providers/booking-com'
 import { HotelsModule } from './providers/hotels'
+import { FlightsOffersModule } from './providers/flights'
+import { TransfersModule } from './providers/transfers'
+import { ActivitiesModule } from './providers/activities'
 
 @Global()
 @Module({
@@ -35,6 +38,9 @@ import { HotelsModule } from './providers/hotels'
     GooglePlacesModule,
     BookingComModule,
     HotelsModule,
+    FlightsOffersModule,
+    TransfersModule,
+    ActivitiesModule,
   ],
   providers: [
     RateLimiterService,
@@ -51,6 +57,9 @@ import { HotelsModule } from './providers/hotels'
     GooglePlacesModule,
     BookingComModule,
     HotelsModule,
+    FlightsOffersModule,
+    TransfersModule,
+    ActivitiesModule,
   ],
 })
 export class ExternalApisModule {}

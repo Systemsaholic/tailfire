@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsIn,
   IsInt,
+  IsNumber,
   MinLength,
   MaxLength,
   IsDateString,
@@ -45,4 +46,28 @@ export class CreateItineraryDto {
   @IsOptional()
   @IsDateString()
   endDate?: string
+
+  @IsOptional()
+  @IsString()
+  primaryDestinationName?: string
+
+  @IsOptional()
+  @IsNumber()
+  primaryDestinationLat?: number
+
+  @IsOptional()
+  @IsNumber()
+  primaryDestinationLng?: number
+
+  @IsOptional()
+  @IsString()
+  secondaryDestinationName?: string
+
+  @IsOptional()
+  @IsNumber()
+  secondaryDestinationLat?: number
+
+  @IsOptional()
+  @IsNumber()
+  secondaryDestinationLng?: number
 }
