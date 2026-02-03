@@ -378,12 +378,12 @@ export function useTourSearch2(params: { provider?: string; providerIdentifier?:
 function parseSyntheticTourId(tourId: string): { provider: string; brand?: string; tourCode: string } | null {
   // Match "globus-{brand}-{tourCode}-{index}"
   const fullMatch = tourId.match(/^globus-([A-Za-z]+)-([A-Z0-9]+)-\d+$/)
-  if (fullMatch) {
+  if (fullMatch && fullMatch[1] && fullMatch[2]) {
     return { provider: 'globus', brand: fullMatch[1], tourCode: fullMatch[2] }
   }
   // Match "globus-search-{tourCode}-{season}-{index}"
   const searchMatch = tourId.match(/^globus-search-([A-Z0-9]+)-\d{4}-\d+$/)
-  if (searchMatch) {
+  if (searchMatch && searchMatch[1]) {
     return { provider: 'globus', tourCode: searchMatch[1] }
   }
   return null

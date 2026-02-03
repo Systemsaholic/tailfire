@@ -280,6 +280,29 @@ export function TripItinerary({ trip }: TripItineraryProps) {
         return
       }
 
+      // Handle Tour Library
+      if (activeId === 'library-tour') {
+        if (!selectedItinerary) {
+          toast({
+            title: 'No itinerary selected',
+            description: 'Please select an itinerary before adding a tour.',
+            variant: 'destructive',
+          })
+          return
+        }
+
+        const returnUrl = `/trips/${trip.id}?tab=itinerary`
+        const params = new URLSearchParams({
+          tripId: trip.id,
+          dayId: targetDayId,
+          itineraryId: selectedItinerary.id,
+          returnUrl,
+        })
+        startLoading('tour-library', 'Opening Tour Library...')
+        router.push(`/library/tours?${params.toString()}`)
+        return
+      }
+
       // Other library items can be handled here in the future
       toast({
         title: 'Coming soon',
@@ -388,6 +411,39 @@ export function TripItinerary({ trip }: TripItineraryProps) {
         })
         startLoading('cruise-library', 'Opening Cruise Library...')
         router.push(`/library/cruises?${params.toString()}`)
+        return
+      }
+
+      // Handle Tour Library - requires a day, so we need to use first day
+      if (activeId === 'library-tour') {
+        if (!selectedItinerary || !days || days.length === 0) {
+          toast({
+            title: 'No days available',
+            description: 'Create itinerary days before adding a tour.',
+            variant: 'destructive',
+          })
+          return
+        }
+
+        // Use the first day as the target day for table view drops
+        const firstDay = days[0]
+        if (!firstDay) {
+          toast({
+            title: 'No days available',
+            description: 'Create itinerary days before adding a tour.',
+            variant: 'destructive',
+          })
+          return
+        }
+        const returnUrl = `/trips/${trip.id}?tab=itinerary`
+        const params = new URLSearchParams({
+          tripId: trip.id,
+          dayId: firstDay.id,
+          itineraryId: selectedItinerary.id,
+          returnUrl,
+        })
+        startLoading('tour-library', 'Opening Tour Library...')
+        router.push(`/library/tours?${params.toString()}`)
         return
       }
 

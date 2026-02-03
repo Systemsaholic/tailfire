@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { format, parseISO } from 'date-fns'
+import { useState, useEffect, useMemo } from 'react'
+import { format, parseISO, isWithinInterval, addDays } from 'date-fns'
 import {
   MapPin,
   Calendar,
@@ -17,6 +17,8 @@ import {
   Building2,
   Tag,
   CheckCircle2,
+  Filter,
+  Plane,
 } from 'lucide-react'
 import {
   Dialog,
@@ -41,7 +43,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import { getAirportCity } from '@/lib/airport-utils'
 import {
   useTourDetail,
   useTourRepositoryDepartures,
@@ -65,8 +70,38 @@ interface TourDetailModalProps {
     tripId: string
     dayId: string
     itineraryId: string
+    /** Itinerary start date for departure filtering */
+    startDate?: string
+    /** Itinerary end date for departure filtering */
+    endDate?: string
   }
   onAddedToItinerary?: () => void
+}
+
+// Departure status filter options
+type DepartureStatus = 'available' | 'please_call' | 'not_available'
+
+const STATUS_OPTIONS: { value: DepartureStatus; label: string }[] = [
+  { value: 'available', label: 'Available' },
+  { value: 'please_call', label: 'Please Call' },
+  { value: 'not_available', label: 'Not Available' },
+]
+
+// Normalize status string to standard values
+function normalizeStatus(status?: string): DepartureStatus {
+  if (!status) return 'not_available'
+  const s = status.toLowerCase().trim()
+  if (s === 'available') return 'available'
+  if (s === 'please call' || s === 'pleasecall') return 'please_call'
+  return 'not_available'
+}
+
+// Format city name from airport code using utility or fallback
+function formatCityFromCode(code: string | undefined): string {
+  if (!code) return ''
+  const city = getAirportCity(code)
+  // If unknown, show code directly
+  return city === 'Unknown' ? code : city
 }
 
 function formatPrice(cents: number): string {
@@ -167,9 +202,14 @@ function InclusionsSection({ inclusions }: { inclusions: TourInclusion[] }) {
       )}
 
       {inclusions.length === 0 && (
-        <div className="text-center py-8">
+        <div className="text-center py-8 border border-dashed border-tern-gray-200 rounded-lg bg-tern-gray-50/50">
           <Check className="mx-auto h-8 w-8 text-tern-gray-300" />
-          <p className="mt-2 text-sm text-tern-gray-500">No inclusions information available</p>
+          <p className="mt-2 text-sm font-medium text-tern-gray-500">
+            Inclusions not available
+          </p>
+          <p className="mt-1 text-xs text-tern-gray-400 max-w-xs mx-auto">
+            What&apos;s included and excluded is available in the production catalog.
+          </p>
         </div>
       )}
     </div>
@@ -258,19 +298,26 @@ function DepartureRow({
 
       {/* Cities */}
       {(departure.startCity || departure.endCity) && (
-        <div className="flex items-center gap-4 text-xs text-tern-gray-500">
+        <div className="flex items-center gap-2 text-xs text-tern-gray-500">
+          <Plane className="h-3 w-3 text-tern-teal-500" />
           {departure.startCity && (
-            <div className="flex items-center gap-1">
-              <MapPin className="h-3 w-3" />
-              <span>{departure.startCity}</span>
-            </div>
+            <span className="font-medium text-tern-gray-700">
+              {formatCityFromCode(departure.startCity)}
+            </span>
           )}
           {departure.endCity && departure.endCity !== departure.startCity && (
-            <div className="flex items-center gap-1">
-              <span>&rarr;</span>
-              <span>{departure.endCity}</span>
-            </div>
+            <>
+              <span className="text-tern-gray-400">&rarr;</span>
+              <span className="font-medium text-tern-gray-700">
+                {formatCityFromCode(departure.endCity)}
+              </span>
+            </>
           )}
+          {/* Show codes in smaller text for reference */}
+          <span className="text-tern-gray-400 text-[10px]">
+            ({departure.startCity}
+            {departure.endCity && departure.endCity !== departure.startCity && ` → ${departure.endCity}`})
+          </span>
         </div>
       )}
 
@@ -318,6 +365,15 @@ export function TourDetailModal({
   // Extend itinerary confirmation state
   const [showExtendConfirmation, setShowExtendConfirmation] = useState(false)
 
+  // Departure filtering state
+  // Default: show Available and Please Call, hide Not Available
+  const [statusFilters, setStatusFilters] = useState<Record<DepartureStatus, boolean>>({
+    available: true,
+    please_call: true,
+    not_available: false,
+  })
+  const [filterByItineraryDates, setFilterByItineraryDates] = useState(true)
+
   // Reset state when modal opens/closes or tour changes
   useEffect(() => {
     setCurrentImageIndex(0)
@@ -325,6 +381,13 @@ export function TourDetailModal({
     setSelectedDepartureId(null)
     setActiveTab('overview')
     setShowExtendConfirmation(false)
+    // Reset filters with default values
+    setStatusFilters({
+      available: true,
+      please_call: true,
+      not_available: false,
+    })
+    setFilterByItineraryDates(true)
   }, [tourId])
 
   const images = tour?.media.filter((m) => m.mediaType === 'image') ?? []
@@ -345,8 +408,41 @@ export function TourDetailModal({
     : currentImage?.url ?? (tour?.providerIdentifier ? getTourImageUrl(tour.providerIdentifier) : null)
 
   const brandStyle = getBrandStyle(tour?.operatorCode)
-  const departures = departuresData?.departures ?? []
-  const selectedDeparture = departures.find((d) => d.id === selectedDepartureId)
+  const allDepartures = departuresData?.departures ?? []
+
+  // Filter departures based on status and date range
+  const filteredDepartures = useMemo(() => {
+    let filtered = allDepartures
+
+    // Filter by status
+    filtered = filtered.filter((dep) => {
+      const status = normalizeStatus(dep.status)
+      return statusFilters[status]
+    })
+
+    // Filter by itinerary dates if enabled and context is available
+    if (filterByItineraryDates && tripContext?.startDate && tripContext?.endDate) {
+      try {
+        const itineraryStart = parseISO(tripContext.startDate)
+        const itineraryEnd = parseISO(tripContext.endDate)
+        // Add some buffer for tour selection (tours can start a bit before or after)
+        const rangeStart = addDays(itineraryStart, -7) // 1 week before
+        const rangeEnd = addDays(itineraryEnd, 14) // 2 weeks after
+
+        filtered = filtered.filter((dep) => {
+          if (!dep.landStartDate) return true // Keep departures without dates
+          const depDate = parseISO(dep.landStartDate)
+          return isWithinInterval(depDate, { start: rangeStart, end: rangeEnd })
+        })
+      } catch {
+        // If date parsing fails, don't filter
+      }
+    }
+
+    return filtered
+  }, [allDepartures, statusFilters, filterByItineraryDates, tripContext?.startDate, tripContext?.endDate])
+
+  const selectedDeparture = allDepartures.find((d) => d.id === selectedDepartureId)
 
   const handleAddToItinerary = () => {
     if (!tour || !selectedDeparture || !tripContext) return
@@ -464,7 +560,7 @@ export function TourDetailModal({
             <div className="flex-1 h-0 overflow-y-auto">
               <div className="px-6 pb-6">
                 {/* Tour Image */}
-                <div className="relative h-48 bg-tern-gray-100 rounded-lg overflow-hidden mb-4">
+                <div className="relative h-36 bg-tern-gray-100 rounded-lg overflow-hidden mb-4">
                   {imageUrl ? (
                     <>
                       <img
@@ -567,9 +663,9 @@ export function TourDetailModal({
                     <TabsTrigger value="inclusions">Inclusions</TabsTrigger>
                     <TabsTrigger value="departures">
                       Departures
-                      {departures.length > 0 && (
+                      {allDepartures.length > 0 && (
                         <span className="ml-1 text-xs text-tern-gray-400">
-                          ({departures.length})
+                          ({filteredDepartures.length}/{allDepartures.length})
                         </span>
                       )}
                     </TabsTrigger>
@@ -582,10 +678,13 @@ export function TourDetailModal({
                         <p className="text-tern-gray-700 whitespace-pre-wrap">{tour.description}</p>
                       </div>
                     ) : (
-                      <div className="text-center py-8">
+                      <div className="text-center py-8 border border-dashed border-tern-gray-200 rounded-lg bg-tern-gray-50/50">
                         <MapPin className="mx-auto h-8 w-8 text-tern-gray-300" />
-                        <p className="mt-2 text-sm text-tern-gray-500">
-                          No description available
+                        <p className="mt-2 text-sm font-medium text-tern-gray-500">
+                          Description not available
+                        </p>
+                        <p className="mt-1 text-xs text-tern-gray-400 max-w-xs mx-auto">
+                          Full tour details including description, itinerary, and inclusions are available in the production catalog.
                         </p>
                       </div>
                     )}
@@ -651,10 +750,13 @@ export function TourDetailModal({
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-8">
+                      <div className="text-center py-8 border border-dashed border-tern-gray-200 rounded-lg bg-tern-gray-50/50">
                         <Calendar className="mx-auto h-8 w-8 text-tern-gray-300" />
-                        <p className="mt-2 text-sm text-tern-gray-500">
-                          No itinerary information available
+                        <p className="mt-2 text-sm font-medium text-tern-gray-500">
+                          Day-by-day itinerary not available
+                        </p>
+                        <p className="mt-1 text-xs text-tern-gray-400 max-w-xs mx-auto">
+                          The detailed daily itinerary is available in the production catalog after data sync.
                         </p>
                       </div>
                     )}
@@ -674,20 +776,101 @@ export function TourDetailModal({
                           Loading departures...
                         </span>
                       </div>
-                    ) : departures.length > 0 ? (
+                    ) : allDepartures.length > 0 ? (
                       <div className="space-y-3">
-                        <p className="text-sm text-tern-gray-500 mb-3">
-                          {departures.length} departure{departures.length !== 1 ? 's' : ''}{' '}
-                          available. Select a departure to add to itinerary.
+                        {/* Filters */}
+                        <div className="flex flex-col gap-3 p-3 bg-tern-gray-50 rounded-lg">
+                          <div className="flex items-center gap-2 text-sm font-medium text-tern-gray-700">
+                            <Filter className="h-4 w-4" />
+                            <span>Filter Departures</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-4">
+                            {/* Status filters */}
+                            <div className="flex items-center gap-3">
+                              {STATUS_OPTIONS.map((opt) => (
+                                <div key={opt.value} className="flex items-center gap-1.5">
+                                  <Checkbox
+                                    id={`status-${opt.value}`}
+                                    checked={statusFilters[opt.value]}
+                                    onCheckedChange={(checked) =>
+                                      setStatusFilters((prev) => ({
+                                        ...prev,
+                                        [opt.value]: checked === true,
+                                      }))
+                                    }
+                                  />
+                                  <Label
+                                    htmlFor={`status-${opt.value}`}
+                                    className="text-xs cursor-pointer"
+                                  >
+                                    {opt.label}
+                                  </Label>
+                                </div>
+                              ))}
+                            </div>
+                            {/* Itinerary date filter (only when coming from trip context) */}
+                            {tripContext?.startDate && tripContext?.endDate && (
+                              <>
+                                <Separator orientation="vertical" className="h-4" />
+                                <div className="flex items-center gap-1.5">
+                                  <Checkbox
+                                    id="filter-by-dates"
+                                    checked={filterByItineraryDates}
+                                    onCheckedChange={(checked) =>
+                                      setFilterByItineraryDates(checked === true)
+                                    }
+                                  />
+                                  <Label
+                                    htmlFor="filter-by-dates"
+                                    className="text-xs cursor-pointer"
+                                  >
+                                    Near itinerary dates ({format(parseISO(tripContext.startDate), 'MMM d')} - {format(parseISO(tripContext.endDate), 'MMM d')})
+                                  </Label>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Results count */}
+                        <p className="text-sm text-tern-gray-500">
+                          Showing {filteredDepartures.length} of {allDepartures.length} departure{allDepartures.length !== 1 ? 's' : ''}.
+                          {filteredDepartures.length > 0 && ' Select a departure to add to itinerary.'}
                         </p>
-                        {departures.map((dep) => (
-                          <DepartureRow
-                            key={dep.id}
-                            departure={dep}
-                            isSelected={selectedDepartureId === dep.id}
-                            onSelect={() => setSelectedDepartureId(dep.id)}
-                          />
-                        ))}
+
+                        {/* Departures list */}
+                        {filteredDepartures.length > 0 ? (
+                          filteredDepartures.map((dep) => (
+                            <DepartureRow
+                              key={dep.id}
+                              departure={dep}
+                              isSelected={selectedDepartureId === dep.id}
+                              onSelect={() => setSelectedDepartureId(dep.id)}
+                            />
+                          ))
+                        ) : (
+                          <div className="text-center py-8 border border-dashed border-tern-gray-200 rounded-lg">
+                            <Filter className="mx-auto h-8 w-8 text-tern-gray-300" />
+                            <p className="mt-2 text-sm text-tern-gray-500">
+                              No departures match your filters.
+                            </p>
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="mt-1"
+                              onClick={() => {
+                                setStatusFilters({
+                                  available: true,
+                                  please_call: true,
+                                  not_available: true,
+                                })
+                                setFilterByItineraryDates(false)
+                              }}
+                            >
+                              Show all departures
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="text-center py-8">
