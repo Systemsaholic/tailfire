@@ -371,13 +371,77 @@ export function useTourSearch2(params: { provider?: string; providerIdentifier?:
 }
 
 /**
+ * Parse a synthetic tour ID to extract provider info
+ * Synthetic IDs are in format: globus-{brand}-{tourCode}-{index}
+ * or: globus-search-{tourCode}-{season}-{index}
+ */
+function parseSyntheticTourId(tourId: string): { provider: string; brand?: string; tourCode: string } | null {
+  // Match "globus-{brand}-{tourCode}-{index}"
+  const fullMatch = tourId.match(/^globus-([A-Za-z]+)-([A-Z0-9]+)-\d+$/)
+  if (fullMatch) {
+    return { provider: 'globus', brand: fullMatch[1], tourCode: fullMatch[2] }
+  }
+  // Match "globus-search-{tourCode}-{season}-{index}"
+  const searchMatch = tourId.match(/^globus-search-([A-Z0-9]+)-\d{4}-\d+$/)
+  if (searchMatch) {
+    return { provider: 'globus', tourCode: searchMatch[1] }
+  }
+  return null
+}
+
+/**
  * Get tour detail by ID from catalog
+ *
+ * Falls back to Globus API if:
+ * 1. tourId is a synthetic ID (local dev using Globus fallback)
+ * 2. Catalog API fails
  */
 export function useTourDetail(tourId: string | null) {
   return useQuery({
     queryKey: tourRepositoryKeys.detail(tourId ?? ''),
     queryFn: async () => {
-      return api.get<TourDetail>(`/tour-repository/tours/${tourId}`)
+      if (!tourId) throw new Error('tourId is required')
+
+      // Check if this is a synthetic ID from Globus fallback
+      const syntheticInfo = parseSyntheticTourId(tourId)
+
+      if (syntheticInfo) {
+        // Synthetic ID - fetch from Globus API
+        const brand = (syntheticInfo.brand ?? 'Globus') as GlobusBrand
+        const tourCode = syntheticInfo.tourCode
+
+        // Fetch departures to get additional info
+        const departures = await api.get<GlobusDeparture[]>(
+          `/globus/tours/${tourCode}/departures?brand=${brand}`
+        )
+
+        const firstDep = departures[0]
+
+        // Construct a minimal TourDetail from Globus data
+        const tourDetail: TourDetail = {
+          id: tourId,
+          provider: 'globus',
+          providerIdentifier: tourCode,
+          operatorCode: brand.toLowerCase(),
+          name: firstDep?.name ?? `Tour ${tourCode}`,
+          itinerary: [],
+          hotels: [],
+          media: [],
+          inclusions: [],
+          departureCount: departures.length,
+          lowestPriceCents: firstDep?.landOnlyPrice ? Math.round(firstDep.landOnlyPrice * 100) : undefined,
+        }
+
+        return tourDetail
+      }
+
+      // Real catalog ID - try catalog API first
+      try {
+        return await api.get<TourDetail>(`/tour-repository/tours/${tourId}`)
+      } catch (catalogError) {
+        console.warn('Catalog tour detail unavailable:', catalogError)
+        throw catalogError
+      }
     },
     enabled: !!tourId,
     staleTime: 10 * 60_000, // 10 minutes
@@ -386,12 +450,62 @@ export function useTourDetail(tourId: string | null) {
 
 /**
  * Get tour departures from catalog
+ *
+ * Falls back to Globus API if tourId is synthetic
  */
 export function useTourRepositoryDepartures(tourId: string | null) {
   return useQuery({
     queryKey: tourRepositoryKeys.departures(tourId ?? ''),
     queryFn: async () => {
-      return api.get<TourDeparturesResponse>(`/tour-repository/tours/${tourId}/departures`)
+      if (!tourId) throw new Error('tourId is required')
+
+      // Check if this is a synthetic ID from Globus fallback
+      const syntheticInfo = parseSyntheticTourId(tourId)
+
+      if (syntheticInfo) {
+        // Synthetic ID - fetch from Globus API
+        const brand = (syntheticInfo.brand ?? 'Globus') as GlobusBrand
+        const tourCode = syntheticInfo.tourCode
+
+        const globusDepartures = await api.get<GlobusDeparture[]>(
+          `/globus/tours/${tourCode}/departures?brand=${brand}`
+        )
+
+        // Map Globus departures to TourDeparture format
+        const departures: TourDeparture[] = globusDepartures.map((dep, index) => ({
+          id: `globus-dep-${tourCode}-${dep.departureCode}-${index}`,
+          departureCode: dep.departureCode,
+          landStartDate: dep.landStartDate,
+          landEndDate: dep.landEndDate,
+          status: dep.status,
+          basePriceCents: dep.landOnlyPrice ? Math.round(dep.landOnlyPrice * 100) : undefined,
+          currency: 'CAD',
+          guaranteedDeparture: dep.guaranteedDeparture,
+          shipName: dep.shipName,
+          startCity: dep.tourStartAirportCity,
+          endCity: dep.tourEndAirportCity,
+          cabinPricing: dep.pricing.map((p) => ({
+            cabinCategory: p.cabinCategory ?? undefined,
+            priceCents: Math.round(p.price * 100),
+            discountCents: p.discount ? Math.round(p.discount * 100) : undefined,
+            currency: 'CAD',
+          })),
+        }))
+
+        return {
+          tourId,
+          departures,
+          total: departures.length,
+        }
+      }
+
+      // Real catalog ID - use catalog API
+      try {
+        return await api.get<TourDeparturesResponse>(`/tour-repository/tours/${tourId}/departures`)
+      } catch (catalogError) {
+        console.warn('Catalog departures unavailable:', catalogError)
+        throw catalogError
+      }
     },
     enabled: !!tourId,
     staleTime: 5 * 60_000, // 5 minutes
