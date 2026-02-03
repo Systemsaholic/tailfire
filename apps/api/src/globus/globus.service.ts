@@ -27,6 +27,12 @@ import {
   GlobusPromotion,
 } from './types/globus-api.types'
 
+// Ensure value is an array (handles XML-to-JSON single element case)
+function ensureArray<T>(value: T | T[] | undefined | null): T[] {
+  if (!value) return []
+  return Array.isArray(value) ? value : [value]
+}
+
 // Cache TTLs
 const CACHE_5_MIN = 5 * 60 * 1000
 const CACHE_10_MIN = 10 * 60 * 1000
@@ -353,7 +359,7 @@ export class GlobusService implements OnModuleInit {
     const d = raw.Departure
     const pricingArr = Array.isArray(raw.Pricing)
       ? raw.Pricing
-      : raw.Pricing?.DeparturePricing ?? []
+      : ensureArray(raw.Pricing?.DeparturePricing)
 
     return {
       brand: normalizeBrand(d.Brand),
@@ -378,7 +384,7 @@ export class GlobusService implements OnModuleInit {
         price: p.Price,
         discount: p.Discount,
         cabinCategory: p.CabinCategory,
-        promotions: (p.DeparturePricingDetails ?? []).map((det) => ({
+        promotions: ensureArray(p.DeparturePricingDetails).map((det) => ({
           promotionId: det.PromotionId,
           amount: det.PromotionAmount,
         })),
