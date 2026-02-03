@@ -74,6 +74,15 @@ export {
   customCruiseDetailsDtoSchema,
 } from './custom-cruise-details.schema'
 
+// Custom Tour (schema only - type is in api/components.types.ts)
+export {
+  tourItineraryDaySchema,
+  tourHotelSchema,
+  tourInclusionSchema,
+  customTourDetailsDtoSchema,
+  tourDayDetailsDtoSchema,
+} from './custom-tour-details.schema'
+
 // =============================================================================
 // Component Request Schemas (for request body validation)
 // =============================================================================
@@ -100,6 +109,12 @@ export {
   // Custom Cruise
   createCustomCruiseComponentDtoSchema,
   updateCustomCruiseComponentDtoSchema,
+  // Custom Tour
+  createCustomTourComponentDtoSchema,
+  updateCustomTourComponentDtoSchema,
+  // Tour Day
+  createTourDayComponentDtoSchema,
+  updateTourDayComponentDtoSchema,
 } from './component-requests.schema'
 
 // =============================================================================

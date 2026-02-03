@@ -22,6 +22,8 @@ export const activityTypeSchema = z.enum([
   'custom_cruise',
   'port_info',
   'package',
+  'custom_tour',
+  'tour_day',
 ])
 
 export type ActivityType = z.infer<typeof activityTypeSchema>

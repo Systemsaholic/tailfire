@@ -33,3 +33,15 @@ export {
   type SyncHistoryError,
   type SyncHistoryMetrics,
 } from './schema/cruise-sync-history.schema'
+
+// Tour catalog schema exports
+export { tourOperators, type TourOperator, type NewTourOperator } from './schema/tour-operators.schema'
+export { tours, type Tour, type NewTour } from './schema/tours.schema'
+export { tourDepartures, type TourDeparture, type NewTourDeparture } from './schema/tour-departures.schema'
+export { tourDeparturePricing, type TourDeparturePricing, type NewTourDeparturePricing } from './schema/tour-departure-pricing.schema'
+export { tourItineraryDays, type TourItineraryDay, type NewTourItineraryDay } from './schema/tour-itinerary-days.schema'
+export { tourHotels, type TourHotel, type NewTourHotel } from './schema/tour-hotels.schema'
+export { tourMedia, type TourMedia, type NewTourMedia } from './schema/tour-media.schema'
+export { tourInclusions, type TourInclusion, type NewTourInclusion } from './schema/tour-inclusions.schema'
+export { tourSyncHistory, type TourSyncHistory, type NewTourSyncHistory } from './schema/tour-sync-history.schema'
+export { geocodingCache, type GeocodingCache, type NewGeocodingCache } from './schema/geocoding-cache.schema'

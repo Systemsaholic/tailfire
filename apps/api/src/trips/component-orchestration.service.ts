@@ -6,6 +6,8 @@
  */
 
 import { Injectable, BadRequestException, Logger } from '@nestjs/common'
+import { tourItineraryDays } from '@tailfire/database'
+import { asc } from 'drizzle-orm'
 
 // Valid transportation subtypes
 const VALID_TRANSPORTATION_SUBTYPES = [
@@ -32,6 +34,8 @@ import { DiningDetailsService } from './dining-details.service'
 import { PortInfoDetailsService } from './port-info-details.service'
 import { OptionsDetailsService } from './options-details.service'
 import { CustomCruiseDetailsService } from './custom-cruise-details.service'
+import { CustomTourDetailsService } from './custom-tour-details.service'
+import { TourDayDetailsService } from './tour-day-details.service'
 import { StorageService } from './storage.service'
 import { DatabaseService } from '../db/database.service'
 import { ItineraryDaysService } from './itinerary-days.service'
@@ -58,6 +62,12 @@ import type {
   CreateCustomCruiseComponentDto,
   CustomCruiseComponentDto,
   UpdateCustomCruiseComponentDto,
+  CreateCustomTourComponentDto,
+  CustomTourComponentDto,
+  UpdateCustomTourComponentDto,
+  CreateTourDayComponentDto,
+  TourDayComponentDto,
+  UpdateTourDayComponentDto,
   PortType,
 } from '@tailfire/shared-types'
 
@@ -75,6 +85,8 @@ export class ComponentOrchestrationService {
     private readonly portInfoDetailsService: PortInfoDetailsService,
     private readonly optionsDetailsService: OptionsDetailsService,
     private readonly customCruiseDetailsService: CustomCruiseDetailsService,
+    private readonly customTourDetailsService: CustomTourDetailsService,
+    private readonly tourDayDetailsService: TourDayDetailsService,
     private readonly storageService: StorageService,
     private readonly db: DatabaseService,
     private readonly itineraryDaysService: ItineraryDaysService,
@@ -1829,6 +1841,693 @@ export class ComponentOrchestrationService {
 
     await this.baseService.delete(id)
     // Custom cruise details and documents are automatically deleted via CASCADE foreign key
+  }
+
+  // =============================================================================
+  // Custom Tour Operations
+  // =============================================================================
+
+  /**
+   * Create a custom tour component with details (transactional)
+   */
+  async createCustomTour(dto: CreateCustomTourComponentDto): Promise<CustomTourComponentDto> {
+    // Get agencyId from itinerary day for RLS
+    const agencyId = await this.getAgencyIdFromDayId(dto.itineraryDayId)
+
+    // Create base component using the optimized method that returns full data
+    const { component, activityPricing: initialPricing } = await this.baseService.create({
+      agencyId,
+      itineraryDayId: dto.itineraryDayId,
+      componentType: 'custom_tour',
+      activityType: 'custom_tour',
+      name: dto.name,
+      description: dto.description,
+      sequenceOrder: dto.sequenceOrder,
+      startDatetime: dto.startDatetime,
+      endDatetime: dto.endDatetime,
+      timezone: dto.timezone,
+      location: dto.location,
+      address: dto.address,
+      coordinates: dto.coordinates,
+      notes: dto.notes,
+      confirmationNumber: dto.confirmationNumber,
+      status: dto.status,
+      pricingType: dto.pricingType,
+      currency: dto.currency,
+      photos: dto.photos,
+    }, { returnDetails: true })
+
+    // Create custom tour details if provided
+    if (dto.customTourDetails) {
+      await this.customTourDetailsService.create(component.id, dto.customTourDetails)
+    }
+
+    // Update activity_pricing if pricing fields are provided and get updated values
+    let finalPricing = initialPricing
+    const hasPricingData = dto.totalPriceCents !== undefined || dto.termsAndConditions ||
+      dto.cancellationPolicy || dto.supplier || dto.commissionTotalCents !== undefined ||
+      dto.bookingReference !== undefined
+
+    if (hasPricingData && initialPricing) {
+      const [updatedPricing] = await this.db.client
+        .update(this.db.schema.activityPricing)
+        .set({
+          pricingType: dto.pricingType || 'per_person',
+          ...(dto.totalPriceCents !== undefined && dto.totalPriceCents !== null && {
+            basePrice: (dto.totalPriceCents / 100).toFixed(2),
+            totalPriceCents: dto.totalPriceCents,
+          }),
+          taxesAndFeesCents: dto.taxesAndFeesCents ?? null,
+          currency: dto.currency || 'CAD',
+          commissionTotalCents: dto.commissionTotalCents ?? null,
+          commissionSplitPercentage: dto.commissionSplitPercentage?.toString() ?? null,
+          commissionExpectedDate: dto.commissionExpectedDate ?? null,
+          // Booking details
+          termsAndConditions: dto.termsAndConditions ?? null,
+          cancellationPolicy: dto.cancellationPolicy ?? null,
+          supplier: dto.supplier ?? null,
+          bookingReference: dto.bookingReference ?? null,
+          updatedAt: new Date(),
+        })
+        .where(eq(this.db.schema.activityPricing.activityId, component.id))
+        .returning()
+      if (updatedPricing) {
+        finalPricing = updatedPricing
+      }
+    }
+
+    // Construct DTO directly from inserted/updated data (no re-fetch)
+    return {
+      id: component.id,
+      itineraryDayId: component.itineraryDayId,
+      parentActivityId: component.parentActivityId || null,
+      componentType: 'custom_tour',
+      activityType: 'custom_tour',
+      name: component.name,
+      description: component.description || null,
+      sequenceOrder: component.sequenceOrder,
+      startDatetime: component.startDatetime?.toISOString() || null,
+      endDatetime: component.endDatetime?.toISOString() || null,
+      timezone: component.timezone || null,
+      location: component.location || null,
+      address: component.address || null,
+      coordinates: component.coordinates || null,
+      notes: component.notes || null,
+      confirmationNumber: component.confirmationNumber || null,
+      status: component.status || 'proposed',
+      pricingType: component.pricingType || null,
+      currency: component.currency || 'CAD',
+      invoiceType: finalPricing?.invoiceType || null,
+      totalPriceCents: finalPricing?.totalPriceCents || null,
+      taxesAndFeesCents: finalPricing?.taxesAndFeesCents || null,
+      activityPricingId: finalPricing?.id || null,
+      commissionTotalCents: finalPricing?.commissionTotalCents || null,
+      commissionSplitPercentage: finalPricing?.commissionSplitPercentage || null,
+      commissionExpectedDate: finalPricing?.commissionExpectedDate || null,
+      termsAndConditions: finalPricing?.termsAndConditions || null,
+      cancellationPolicy: finalPricing?.cancellationPolicy || null,
+      supplier: finalPricing?.supplier || null,
+      bookingReference: finalPricing?.bookingReference || null,
+      photos: component.photos || null,
+      createdAt: component.createdAt.toISOString(),
+      updatedAt: component.updatedAt.toISOString(),
+      customTourDetails: dto.customTourDetails || undefined,
+    }
+  }
+
+  /**
+   * Get a custom tour component with details
+   */
+  async getCustomTour(id: string): Promise<CustomTourComponentDto> {
+    const baseComponent = await this.baseService.findById(id)
+    const customTourDetails = await this.customTourDetailsService.findByComponentId(id)
+
+    // Fetch component_pricing if it exists
+    const [activityPricing] = await this.db.client
+      .select()
+      .from(this.db.schema.activityPricing)
+      .where(eq(this.db.schema.activityPricing.activityId, id))
+      .limit(1)
+
+    return {
+      id: baseComponent.id,
+      itineraryDayId: baseComponent.itineraryDayId,
+      parentActivityId: baseComponent.parentActivityId || null,
+      componentType: 'custom_tour',
+      activityType: 'custom_tour',
+      name: baseComponent.name,
+      description: baseComponent.description || null,
+      sequenceOrder: baseComponent.sequenceOrder,
+      startDatetime: baseComponent.startDatetime?.toISOString() || null,
+      endDatetime: baseComponent.endDatetime?.toISOString() || null,
+      timezone: baseComponent.timezone || null,
+      location: baseComponent.location || null,
+      address: baseComponent.address || null,
+      coordinates: baseComponent.coordinates || null,
+      notes: baseComponent.notes || null,
+      confirmationNumber: baseComponent.confirmationNumber || null,
+      status: baseComponent.status,
+      pricingType: baseComponent.pricingType || null,
+      currency: baseComponent.currency,
+      invoiceType: activityPricing?.invoiceType || null,
+      totalPriceCents: activityPricing?.totalPriceCents || null,
+      taxesAndFeesCents: activityPricing?.taxesAndFeesCents || null,
+      activityPricingId: activityPricing?.id || null,
+      commissionTotalCents: activityPricing?.commissionTotalCents || null,
+      commissionSplitPercentage: activityPricing?.commissionSplitPercentage || null,
+      commissionExpectedDate: activityPricing?.commissionExpectedDate || null,
+      // Booking details
+      termsAndConditions: activityPricing?.termsAndConditions || null,
+      cancellationPolicy: activityPricing?.cancellationPolicy || null,
+      supplier: activityPricing?.supplier || null,
+      bookingReference: activityPricing?.bookingReference || null,
+      photos: baseComponent.photos || null,
+      createdAt: baseComponent.createdAt.toISOString(),
+      updatedAt: baseComponent.updatedAt.toISOString(),
+      customTourDetails: customTourDetails || undefined,
+    }
+  }
+
+  /**
+   * Update a custom tour component with details (transactional)
+   */
+  async updateCustomTour(id: string, dto: UpdateCustomTourComponentDto): Promise<CustomTourComponentDto> {
+    // Update base component fields
+    await this.baseService.update(id, {
+      name: dto.name,
+      description: dto.description,
+      sequenceOrder: dto.sequenceOrder,
+      startDatetime: dto.startDatetime,
+      endDatetime: dto.endDatetime,
+      timezone: dto.timezone,
+      location: dto.location,
+      address: dto.address,
+      coordinates: dto.coordinates,
+      notes: dto.notes,
+      confirmationNumber: dto.confirmationNumber,
+      status: dto.status,
+      pricingType: dto.pricingType,
+      currency: dto.currency,
+      photos: dto.photos,
+    })
+
+    // Update custom tour details if provided
+    if (dto.customTourDetails) {
+      const existingDetails = await this.customTourDetailsService.findByComponentId(id)
+      if (existingDetails) {
+        await this.customTourDetailsService.update(id, dto.customTourDetails)
+      } else {
+        await this.customTourDetailsService.create(id, dto.customTourDetails)
+      }
+    }
+
+    // Update or create component_pricing if pricing or booking detail fields are provided
+    const hasPricingUpdate = dto.totalPriceCents !== undefined ||
+      dto.termsAndConditions !== undefined ||
+      dto.cancellationPolicy !== undefined ||
+      dto.supplier !== undefined ||
+      dto.bookingReference !== undefined
+
+    if (hasPricingUpdate) {
+      const [existingPricing] = await this.db.client
+        .select()
+        .from(this.db.schema.activityPricing)
+        .where(eq(this.db.schema.activityPricing.activityId, id))
+        .limit(1)
+
+      if (existingPricing) {
+        // Update existing pricing - merge with existing values (undefined = keep existing, null = clear, value = update)
+        await this.db.client
+          .update(this.db.schema.activityPricing)
+          .set({
+            pricingType: dto.pricingType || existingPricing.pricingType,
+            ...(dto.totalPriceCents !== null && dto.totalPriceCents !== undefined && {
+              basePrice: (dto.totalPriceCents / 100).toFixed(2),
+              totalPriceCents: dto.totalPriceCents,
+            }),
+            taxesAndFeesCents: dto.taxesAndFeesCents !== undefined ? dto.taxesAndFeesCents : existingPricing.taxesAndFeesCents,
+            currency: dto.currency || existingPricing.currency,
+            // Commission fields (update if provided, otherwise keep existing)
+            commissionTotalCents: dto.commissionTotalCents !== undefined ? dto.commissionTotalCents : existingPricing.commissionTotalCents,
+            commissionSplitPercentage: dto.commissionSplitPercentage !== undefined ? dto.commissionSplitPercentage?.toString() : existingPricing.commissionSplitPercentage,
+            commissionExpectedDate: dto.commissionExpectedDate !== undefined ? dto.commissionExpectedDate : existingPricing.commissionExpectedDate,
+            // Booking details (update if provided, otherwise keep existing)
+            termsAndConditions: dto.termsAndConditions !== undefined ? dto.termsAndConditions : existingPricing.termsAndConditions,
+            cancellationPolicy: dto.cancellationPolicy !== undefined ? dto.cancellationPolicy : existingPricing.cancellationPolicy,
+            supplier: dto.supplier !== undefined ? dto.supplier : existingPricing.supplier,
+            bookingReference: dto.bookingReference !== undefined ? dto.bookingReference : existingPricing.bookingReference,
+            updatedAt: new Date(),
+          })
+          .where(eq(this.db.schema.activityPricing.id, existingPricing.id))
+          .returning()
+      } else if (dto.totalPriceCents !== null && dto.totalPriceCents !== undefined) {
+        // Create new pricing record - get agencyId for RLS
+        const agencyId = await this.getActivityAgencyId(id)
+        await this.db.client.insert(this.db.schema.activityPricing).values({
+          agencyId,
+          activityId: id,
+          pricingType: dto.pricingType || 'per_person',
+          basePrice: (dto.totalPriceCents / 100).toFixed(2),
+          totalPriceCents: dto.totalPriceCents,
+          taxesAndFeesCents: dto.taxesAndFeesCents || null,
+          currency: dto.currency || 'CAD',
+          // Commission fields
+          commissionTotalCents: dto.commissionTotalCents || null,
+          commissionSplitPercentage: dto.commissionSplitPercentage?.toString() || null,
+          commissionExpectedDate: dto.commissionExpectedDate || null,
+          // Booking details
+          termsAndConditions: dto.termsAndConditions || null,
+          cancellationPolicy: dto.cancellationPolicy || null,
+          supplier: dto.supplier || null,
+          bookingReference: dto.bookingReference || null,
+        })
+      }
+    }
+
+    return this.getCustomTour(id)
+  }
+
+  /**
+   * Delete a custom tour component (cascades to details and tour_day children via FK)
+   */
+  async deleteCustomTour(id: string): Promise<void> {
+    // Clean up storage files before database delete
+    await this.cleanupComponentStorage(id)
+
+    await this.baseService.delete(id)
+    // Custom tour details, tour day children, and documents are automatically deleted via CASCADE foreign key
+  }
+
+  // =============================================================================
+  // Tour Day Operations
+  // =============================================================================
+
+  /**
+   * Create a tour day component (child of custom_tour)
+   */
+  async createTourDay(dto: CreateTourDayComponentDto): Promise<TourDayComponentDto> {
+    // Get agencyId from itinerary day for RLS
+    const agencyId = await this.getAgencyIdFromDayId(dto.itineraryDayId)
+
+    // Create base component
+    const { component } = await this.baseService.create({
+      agencyId,
+      itineraryDayId: dto.itineraryDayId,
+      parentActivityId: dto.parentActivityId,
+      componentType: 'tour_day',
+      activityType: 'tour_day',
+      name: dto.name,
+      description: dto.description,
+      sequenceOrder: dto.sequenceOrder,
+      startDatetime: dto.startDatetime,
+      endDatetime: dto.endDatetime,
+      timezone: dto.timezone,
+      location: dto.location,
+      address: dto.address,
+      coordinates: dto.coordinates,
+      notes: dto.notes,
+      status: dto.status,
+    }, { returnDetails: true })
+
+    // Create tour day details if provided
+    if (dto.tourDayDetails) {
+      await this.tourDayDetailsService.create(component.id, dto.tourDayDetails)
+    }
+
+    // Return constructed DTO
+    return {
+      id: component.id,
+      itineraryDayId: component.itineraryDayId,
+      parentActivityId: component.parentActivityId || null,
+      componentType: 'tour_day',
+      activityType: 'tour_day',
+      name: component.name,
+      description: component.description || null,
+      sequenceOrder: component.sequenceOrder,
+      startDatetime: component.startDatetime?.toISOString() || null,
+      endDatetime: component.endDatetime?.toISOString() || null,
+      timezone: component.timezone || null,
+      location: component.location || null,
+      address: component.address || null,
+      coordinates: component.coordinates || null,
+      notes: component.notes || null,
+      confirmationNumber: null,
+      status: component.status || 'proposed',
+      pricingType: null,
+      currency: 'CAD',
+      invoiceType: null,
+      totalPriceCents: null,
+      taxesAndFeesCents: null,
+      activityPricingId: null,
+      commissionTotalCents: null,
+      commissionSplitPercentage: null,
+      commissionExpectedDate: null,
+      termsAndConditions: null,
+      cancellationPolicy: null,
+      supplier: null,
+      bookingReference: null,
+      photos: null,
+      createdAt: component.createdAt.toISOString(),
+      updatedAt: component.updatedAt.toISOString(),
+      tourDayDetails: dto.tourDayDetails || undefined,
+    }
+  }
+
+  /**
+   * Get a tour day component
+   */
+  async getTourDay(id: string): Promise<TourDayComponentDto> {
+    const baseComponent = await this.baseService.findById(id)
+    const tourDayDetails = await this.tourDayDetailsService.findByComponentId(id)
+
+    return {
+      id: baseComponent.id,
+      itineraryDayId: baseComponent.itineraryDayId,
+      parentActivityId: baseComponent.parentActivityId || null,
+      componentType: 'tour_day',
+      activityType: 'tour_day',
+      name: baseComponent.name,
+      description: baseComponent.description || null,
+      sequenceOrder: baseComponent.sequenceOrder,
+      startDatetime: baseComponent.startDatetime?.toISOString() || null,
+      endDatetime: baseComponent.endDatetime?.toISOString() || null,
+      timezone: baseComponent.timezone || null,
+      location: baseComponent.location || null,
+      address: baseComponent.address || null,
+      coordinates: baseComponent.coordinates || null,
+      notes: baseComponent.notes || null,
+      confirmationNumber: null,
+      status: baseComponent.status,
+      pricingType: null,
+      currency: baseComponent.currency,
+      invoiceType: null,
+      totalPriceCents: null,
+      taxesAndFeesCents: null,
+      activityPricingId: null,
+      commissionTotalCents: null,
+      commissionSplitPercentage: null,
+      commissionExpectedDate: null,
+      termsAndConditions: null,
+      cancellationPolicy: null,
+      supplier: null,
+      bookingReference: null,
+      photos: null,
+      createdAt: baseComponent.createdAt.toISOString(),
+      updatedAt: baseComponent.updatedAt.toISOString(),
+      tourDayDetails: tourDayDetails || undefined,
+    }
+  }
+
+  /**
+   * Update a tour day component
+   */
+  async updateTourDay(id: string, dto: UpdateTourDayComponentDto): Promise<TourDayComponentDto> {
+    // Update base component fields
+    await this.baseService.update(id, {
+      name: dto.name,
+      description: dto.description,
+      sequenceOrder: dto.sequenceOrder,
+      startDatetime: dto.startDatetime,
+      endDatetime: dto.endDatetime,
+      timezone: dto.timezone,
+      location: dto.location,
+      address: dto.address,
+      coordinates: dto.coordinates,
+      notes: dto.notes,
+      status: dto.status,
+    })
+
+    // Update tour day details if provided
+    if (dto.tourDayDetails) {
+      await this.tourDayDetailsService.upsert(id, dto.tourDayDetails)
+    }
+
+    return this.getTourDay(id)
+  }
+
+  /**
+   * Delete a tour day component
+   */
+  async deleteTourDay(id: string): Promise<void> {
+    await this.baseService.delete(id)
+  }
+
+  // ============================================================================
+  // Tour Day Schedule Generation
+  // ============================================================================
+
+  /**
+   * Generate tour day entries for a custom tour.
+   * Creates tour_day activities for each day of the tour, linked via parentActivityId.
+   *
+   * Uses itinerary data from the catalog (tour_itinerary_days) or from
+   * the customTourDetails.itineraryJson snapshot.
+   *
+   * This method is idempotent - calling it multiple times will delete existing
+   * entries and recreate them (CASCADE delete via parentActivityId FK).
+   *
+   * @param tourId - The ID of the custom_tour component
+   * @param tourData - Optional tour data to avoid re-fetching
+   * @returns Object with created tour_day IDs and count of deleted entries
+   */
+  async generateTourDaySchedule(
+    tourId: string,
+    tourData?: {
+      itineraryId: string
+      customTourDetails: {
+        tourId?: string // catalog tour ID
+        departureStartDate?: string
+        departureEndDate?: string
+        days?: number
+        itineraryJson?: Array<{
+          dayNumber: number
+          title?: string
+          description?: string
+          overnightCity?: string
+        }>
+      }
+      skipDelete?: boolean
+      autoExtendItinerary?: boolean
+    }
+  ): Promise<{
+    created: TourDayComponentDto[]
+    deleted: number
+  }> {
+    let itineraryId: string
+    let tourDetails: {
+      tourId?: string
+      departureStartDate?: string
+      departureEndDate?: string
+      days?: number
+      itineraryJson?: Array<{
+        dayNumber: number
+        title?: string
+        description?: string
+        overnightCity?: string
+      }>
+    }
+
+    if (tourData) {
+      // Use provided tour data (avoids DB queries)
+      // Validate the tour exists and belongs to the provided itinerary
+      const [tourActivity] = await this.db.client
+        .select({
+          id: this.db.schema.itineraryActivities.id,
+          itineraryDayId: this.db.schema.itineraryActivities.itineraryDayId,
+          itineraryId: this.db.schema.itineraryDays.itineraryId,
+        })
+        .from(this.db.schema.itineraryActivities)
+        .innerJoin(
+          this.db.schema.itineraryDays,
+          eq(this.db.schema.itineraryActivities.itineraryDayId, this.db.schema.itineraryDays.id)
+        )
+        .where(eq(this.db.schema.itineraryActivities.id, tourId))
+        .limit(1)
+
+      if (!tourActivity) {
+        throw new BadRequestException('Tour component not found')
+      }
+
+      if (tourActivity.itineraryId !== tourData.itineraryId) {
+        throw new BadRequestException('Tour does not belong to the specified itinerary')
+      }
+
+      itineraryId = tourData.itineraryId
+      tourDetails = tourData.customTourDetails
+    } else {
+      // Fetch tour data from database
+      const tour = await this.getCustomTour(tourId)
+      if (!tour) {
+        throw new BadRequestException('Tour component not found')
+      }
+
+      // Get itinerary ID from the activity's day
+      if (!tour.itineraryDayId) {
+        throw new BadRequestException('Tour has no associated itinerary day')
+      }
+      const [day] = await this.db.client
+        .select({ itineraryId: this.db.schema.itineraryDays.itineraryId })
+        .from(this.db.schema.itineraryDays)
+        .where(eq(this.db.schema.itineraryDays.id, tour.itineraryDayId))
+        .limit(1)
+
+      if (!day) {
+        throw new BadRequestException('Tour day not found')
+      }
+
+      itineraryId = day.itineraryId
+      // Convert null values to undefined for type compatibility
+      const details = tour.customTourDetails
+      tourDetails = details ? {
+        tourId: details.tourId ?? undefined,
+        departureStartDate: details.departureStartDate ?? undefined,
+        departureEndDate: details.departureEndDate ?? undefined,
+        days: details.days ?? undefined,
+        itineraryJson: details.itineraryJson?.map(d => ({
+          dayNumber: d.dayNumber,
+          title: d.title ?? undefined,
+          description: d.description ?? undefined,
+          overnightCity: d.overnightCity ?? undefined,
+        })),
+      } : {}
+    }
+
+    // Get itinerary days data - either from snapshot or catalog
+    let itineraryDaysData: Array<{
+      dayNumber: number
+      title?: string
+      description?: string
+      overnightCity?: string
+    }> = []
+
+    if (tourDetails.itineraryJson && tourDetails.itineraryJson.length > 0) {
+      // Use snapshot data from customTourDetails
+      itineraryDaysData = tourDetails.itineraryJson
+    } else if (tourDetails.tourId) {
+      // Fetch from catalog using the linked tour ID
+      const catalogTourId = tourDetails.tourId
+      const catalogDays = await this.db.db
+        .select()
+        .from(tourItineraryDays)
+        .where(eq(tourItineraryDays.tourId, catalogTourId))
+        .orderBy(asc(tourItineraryDays.dayNumber))
+
+      itineraryDaysData = catalogDays.map((day) => ({
+        dayNumber: day.dayNumber,
+        title: day.title ?? undefined,
+        description: day.description ?? undefined,
+        overnightCity: day.overnightCity ?? undefined,
+      }))
+    }
+
+    if (itineraryDaysData.length === 0 && tourDetails.days) {
+      // No itinerary data available, generate placeholder days
+      for (let i = 1; i <= tourDetails.days; i++) {
+        itineraryDaysData.push({
+          dayNumber: i,
+          title: `Day ${i}`,
+        })
+      }
+    }
+
+    if (itineraryDaysData.length === 0) {
+      return { created: [], deleted: 0 }
+    }
+
+    // Delete existing tour_day activities if any
+    let deleted = 0
+    if (!tourData?.skipDelete) {
+      const existingDays = await this.db.client
+        .select({ id: this.db.schema.itineraryActivities.id })
+        .from(this.db.schema.itineraryActivities)
+        .where(eq(this.db.schema.itineraryActivities.parentActivityId, tourId))
+
+      for (const day of existingDays) {
+        await this.deleteTourDay(day.id)
+        deleted++
+      }
+    }
+
+    // Parse departure start date to calculate day dates
+    const startDate = tourDetails.departureStartDate
+      ? new Date(tourDetails.departureStartDate)
+      : new Date()
+
+    // Build list of dates needed for the tour
+    const tourDuration = itineraryDaysData.length
+    const neededDates: string[] = []
+    for (let i = 0; i < tourDuration; i++) {
+      const dayDate = new Date(startDate)
+      dayDate.setDate(dayDate.getDate() + i)
+      const dateStr = dayDate.toISOString().split('T')[0]
+      if (dateStr) {
+        neededDates.push(dateStr)
+      }
+    }
+
+    // Get existing itinerary days
+    const itinerary = await this.itineraryDaysService.findAll(itineraryId)
+    const itineraryDaysByDate = new Map<string, { id: string; date: string }>(
+      itinerary
+        .filter((d): d is typeof d & { date: string } => d.date !== null)
+        .map((d) => [d.date, { id: d.id, date: d.date }])
+    )
+
+    // Check if we need to extend the itinerary
+    const missingDates = neededDates.filter((date) => !itineraryDaysByDate.has(date))
+    if (missingDates.length > 0) {
+      if (tourData?.autoExtendItinerary) {
+        // Auto-extend itinerary by creating missing days using bulk method
+        const createdDays = await this.itineraryDaysService.findOrCreateByDateRange(itineraryId, missingDates)
+        // Add newly created days to the map
+        for (const d of createdDays) {
+          if (d.date) {
+            itineraryDaysByDate.set(d.date, { id: d.id, date: d.date })
+          }
+        }
+      } else {
+        throw new BadRequestException(
+          `Itinerary does not have days for the full tour duration. Missing dates: ${missingDates.join(', ')}. ` +
+            `Set autoExtendItinerary=true to auto-create the required days.`
+        )
+      }
+    }
+
+    // Create tour_day activities for each day
+    const created: TourDayComponentDto[] = []
+
+    for (const dayData of itineraryDaysData) {
+      const dayIndex = dayData.dayNumber - 1
+      const dayDate = neededDates[dayIndex]
+      if (!dayDate) {
+        this.logger.warn(`No date calculated for tour day ${dayData.dayNumber}, skipping`)
+        continue
+      }
+
+      const itineraryDay = itineraryDaysByDate.get(dayDate)
+      if (!itineraryDay) {
+        this.logger.warn(`No itinerary day found for date ${dayDate}, skipping tour day ${dayData.dayNumber}`)
+        continue
+      }
+
+      const tourDay = await this.createTourDay({
+        itineraryDayId: itineraryDay.id,
+        parentActivityId: tourId,
+        componentType: 'tour_day',
+        name: dayData.title || `Day ${dayData.dayNumber}`,
+        description: dayData.description,
+        status: 'proposed',
+        tourDayDetails: {
+          dayNumber: dayData.dayNumber,
+          overnightCity: dayData.overnightCity,
+          isLocked: true, // Locked by default - read-only from parent tour
+        },
+      })
+
+      created.push(tourDay)
+    }
+
+    return { created, deleted }
   }
 
   /**

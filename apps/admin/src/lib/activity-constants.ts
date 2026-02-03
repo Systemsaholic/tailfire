@@ -8,6 +8,8 @@ import {
   Settings,
   Anchor,
   Package,
+  MapPin,
+  CalendarDays,
   type LucideIcon,
 } from 'lucide-react'
 import type { ActivityType as DatabaseActivityType } from '@tailfire/shared-types/api'
@@ -185,6 +187,35 @@ export const ACTIVITY_TYPE_METADATA: Record<UIActivityType, ActivityTypeMetadata
     hasDocs: true,
     allowedFields: [], // Packages use their own form with different fields
   },
+  custom_tour: {
+    type: 'custom_tour',
+    label: 'Custom Tour',
+    icon: MapPin,
+    colorClass: 'text-emerald-600 bg-emerald-50',
+    defaultName: 'Custom Tour',
+    hasSupplier: true,
+    hasPricing: true,
+    hasMedia: true,
+    hasDocs: true,
+    allowedFields: [
+      'tourId', 'operatorCode', 'provider', 'providerIdentifier',
+      'departureId', 'departureCode', 'departureStartDate', 'departureEndDate',
+      'currency', 'basePriceCents', 'tourName', 'days', 'nights',
+      'startCity', 'endCity', 'itineraryJson', 'inclusionsJson', 'hotelsJson',
+    ],
+  },
+  tour_day: {
+    type: 'tour_day',
+    label: 'Tour Day',
+    icon: CalendarDays,
+    colorClass: 'text-emerald-500 bg-emerald-50',
+    defaultName: 'Tour Day',
+    hasSupplier: false,
+    hasPricing: false,
+    hasMedia: false,
+    hasDocs: false,
+    allowedFields: ['dayNumber', 'overnightCity', 'isLocked'],
+  },
 } as const
 
 /**
@@ -253,6 +284,8 @@ export const COMPONENT_DEFAULTS: Record<UIActivityType, { name: string; status: 
   dining: { name: 'Restaurant', status: 'proposed' },
   cruise: { name: 'Cruise', status: 'proposed' },
   package: { name: 'Package', status: 'proposed' },
+  custom_tour: { name: 'Custom Tour', status: 'proposed' },
+  tour_day: { name: 'Tour Day', status: 'proposed' },
 } as const
 
 /**

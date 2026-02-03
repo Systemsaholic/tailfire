@@ -10,8 +10,7 @@
 import { Module } from '@nestjs/common'
 import { CruiseRepositoryController } from './cruise-repository.controller'
 import { CruiseRepositoryService } from './cruise-repository.service'
-import { CatalogAuthGuard } from './guards/catalog-auth.guard'
-import { CatalogThrottleGuard } from './guards/catalog-throttle.guard'
+import { CatalogAuthGuard, CatalogThrottleGuard } from '../common/guards'
 import { DatabaseModule } from '../db/database.module'
 import { CruiseImportModule } from '../cruise-import/cruise-import.module'
 
