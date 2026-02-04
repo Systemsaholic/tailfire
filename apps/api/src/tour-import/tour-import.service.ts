@@ -678,6 +678,7 @@ export class TourImportService {
   private async markInactiveDepartures(operatorCode: string, syncStartTime: Date): Promise<number> {
     // Mark departures inactive where their tour is from this operator
     // and they weren't seen in this sync
+    // Note: Convert Date to ISO string for proper PostgreSQL timestamp compatibility
     await this.db.db.execute(sql`
       UPDATE catalog.tour_departures d
       SET is_active = false, updated_at = now()
@@ -685,7 +686,7 @@ export class TourImportService {
       WHERE d.tour_id = t.id
         AND t.operator_code = ${operatorCode}
         AND d.is_active = true
-        AND d.last_seen_at < ${syncStartTime}
+        AND d.last_seen_at < ${syncStartTime.toISOString()}::timestamptz
     `)
 
     return 0
