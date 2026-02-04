@@ -233,6 +233,13 @@ export class TourImportService {
       }
     }
 
+    // Use TourNumber or fall back to TourCode for MediaInfo format
+    const providerIdentifier = tourData.TourNumber || tourData.TourCode || ''
+    if (!providerIdentifier) {
+      this.logger.warn(`Tour missing identifier: ${JSON.stringify(Object.keys(tourData))}`)
+      return
+    }
+
     // Upsert main tour record
     const existingTour = await this.db.db
       .select({ id: tours.id })
@@ -240,7 +247,7 @@ export class TourImportService {
       .where(
         and(
           eq(tours.provider, 'globus'),
-          eq(tours.providerIdentifier, tourData.TourNumber),
+          eq(tours.providerIdentifier, providerIdentifier),
           eq(tours.season, tourData.Season || currentSeason)
         )
       )
@@ -276,7 +283,7 @@ export class TourImportService {
         .insert(tours)
         .values({
           provider: 'globus',
-          providerIdentifier: tourData.TourNumber,
+          providerIdentifier,
           operatorId,
           operatorCode,
           name: tourData.TourName,
