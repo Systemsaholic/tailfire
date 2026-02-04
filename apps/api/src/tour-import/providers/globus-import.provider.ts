@@ -14,6 +14,7 @@ import { firstValueFrom } from 'rxjs'
 import {
   GlobusBrand,
   GLOBUS_BRAND_CODES,
+  GLOBUS_CURRENCY_MAP,
   GlobusExternalContentResponse,
   GlobusExternalContentTour,
 } from '../tour-import.types'
@@ -49,9 +50,10 @@ export class GlobusImportProvider {
     // Build URL for GetExternalContentApiFile
     // This endpoint returns a JSON file with all tour data for the brand
     const url = `${this.baseUrl}/GetExternalContentApiFile`
+    const currencyCode = GLOBUS_CURRENCY_MAP[currency]
     const params = {
       brand: brandCode,
-      currency: currency,
+      currency: currencyCode,
       season: currentSeason,
       format: 'json',
     }

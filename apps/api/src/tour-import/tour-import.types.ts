@@ -7,11 +7,17 @@
 // Globus brand identifiers
 export type GlobusBrand = 'Globus' | 'Cosmos' | 'Monograms'
 
-// Map brand to lowercase code for API and DB
+// Map brand to API-expected code (capitalized for Globus API)
 export const GLOBUS_BRAND_CODES: Record<GlobusBrand, string> = {
-  Globus: 'globus',
-  Cosmos: 'cosmos',
-  Monograms: 'monograms',
+  Globus: 'Globus',
+  Cosmos: 'Cosmos',
+  Monograms: 'Monograms',
+}
+
+// Map currency code to Globus API-expected value
+export const GLOBUS_CURRENCY_MAP: Record<'CAD' | 'USD', string> = {
+  CAD: 'Canada',
+  USD: 'US',
 }
 
 // All Globus brands (Avalon excluded - handled by Traveltek Cruise API)
