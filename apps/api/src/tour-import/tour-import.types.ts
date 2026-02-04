@@ -5,13 +5,13 @@
  */
 
 // Globus brand identifiers
-export type GlobusBrand = 'Globus' | 'Cosmos' | 'Monograms'
+// Note: Monograms is not available via WebAPI, Avalon is handled by Traveltek Cruise API
+export type GlobusBrand = 'Globus' | 'Cosmos'
 
 // Map brand to API-expected code (capitalized for Globus API)
 export const GLOBUS_BRAND_CODES: Record<GlobusBrand, string> = {
   Globus: 'Globus',
   Cosmos: 'Cosmos',
-  Monograms: 'Monograms',
 }
 
 // Map currency code to Globus API-expected value
@@ -20,8 +20,8 @@ export const GLOBUS_CURRENCY_MAP: Record<'CAD' | 'USD', string> = {
   USD: 'US',
 }
 
-// All Globus brands (Avalon excluded - handled by Traveltek Cruise API)
-export const GLOBUS_BRANDS: GlobusBrand[] = ['Globus', 'Cosmos', 'Monograms']
+// All Globus brands available via WebAPI
+export const GLOBUS_BRANDS: GlobusBrand[] = ['Globus', 'Cosmos']
 
 /**
  * Tour sync options
