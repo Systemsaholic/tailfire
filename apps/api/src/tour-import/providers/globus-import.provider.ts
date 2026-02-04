@@ -18,6 +18,7 @@ import {
   GlobusExternalContentResponse,
   GlobusExternalContentTour,
 } from '../tour-import.types'
+import { parseStringWrappedJson } from '../../globus/utils/xml-parser.util'
 
 @Injectable()
 export class GlobusImportProvider {
@@ -62,24 +63,31 @@ export class GlobusImportProvider {
     this.logger.log(`Params: ${JSON.stringify(params)}`)
 
     try {
+      // Use responseType: 'text' because Globus API may return XML-wrapped JSON
       const response = await firstValueFrom(
-        this.httpService.get<GlobusExternalContentResponse | GlobusExternalContentTour[]>(url, {
+        this.httpService.get<string>(url, {
           params,
           timeout: this.timeout,
+          responseType: 'text',
           headers: {
             Accept: 'application/json',
           },
         })
       )
 
+      // Parse response - handles both plain JSON and XML-wrapped JSON
+      const data = parseStringWrappedJson<GlobusExternalContentResponse | GlobusExternalContentTour[]>(
+        response.data
+      )
+
       // Handle both array and object response formats
       let tours: GlobusExternalContentTour[]
-      if (Array.isArray(response.data)) {
-        tours = response.data
-      } else if (response.data && 'Tours' in response.data) {
-        tours = response.data.Tours
+      if (Array.isArray(data)) {
+        tours = data
+      } else if (data && 'Tours' in data) {
+        tours = data.Tours
       } else {
-        this.logger.warn(`Unexpected response format for ${brand}: ${typeof response.data}`)
+        this.logger.warn(`Unexpected response format for ${brand}: ${typeof data}`)
         tours = []
       }
 
