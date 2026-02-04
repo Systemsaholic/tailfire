@@ -88,12 +88,70 @@ export class GlobusImportProvider {
         tours = data.Tours
       } else if (data && 'MediaInfo' in (data as Record<string, unknown>)) {
         // Handle MediaInfo format: { Brand, MediaInfo: [{ Year, TourMediaInfo: [...] }] }
+        // MediaInfo tours have different structure - need to transform
         const mediaInfo = (data as Record<string, unknown>).MediaInfo as Array<{
           Year: number
-          TourMediaInfo: GlobusExternalContentTour[]
+          TourMediaInfo: Array<{
+            TourCode: string
+            DeparturesWithPricing: Array<{
+              Departure: {
+                Name: string
+                LandStartDate: string
+                LandEndDate: string
+                DepartureCode: string
+                Status?: string
+                GuaranteedDeparture?: boolean
+                ShipName?: string
+                TourStartAirportCity?: string
+                TourEndAirportCity?: string
+              }
+              Pricing: Array<{
+                Price: number
+                Discount?: number
+                CabinCategory?: string
+              }>
+            }>
+          }>
         }>
-        tours = mediaInfo?.flatMap((m) => m.TourMediaInfo || []) || []
-        this.logger.log(`Extracted ${tours.length} tours from MediaInfo format`)
+
+        // Transform MediaInfo format to expected format
+        tours = mediaInfo?.flatMap((yearInfo) =>
+          (yearInfo.TourMediaInfo || []).map((tour) => {
+            const firstDeparture = tour.DeparturesWithPricing?.[0]?.Departure
+            const landStart = firstDeparture?.LandStartDate ? new Date(firstDeparture.LandStartDate) : null
+            const landEnd = firstDeparture?.LandEndDate ? new Date(firstDeparture.LandEndDate) : null
+            const days = landStart && landEnd ? Math.ceil((landEnd.getTime() - landStart.getTime()) / (1000 * 60 * 60 * 24)) + 1 : 0
+
+            return {
+              TourNumber: tour.TourCode,
+              TourCode: tour.TourCode,
+              TourName: firstDeparture?.Name || `Tour ${tour.TourCode}`,
+              Season: String(yearInfo.Year),
+              Days: days,
+              Nights: Math.max(0, days - 1),
+              StartCity: firstDeparture?.TourStartAirportCity,
+              EndCity: firstDeparture?.TourEndAirportCity,
+              Departures: tour.DeparturesWithPricing?.map((dp) => ({
+                DepartureCode: dp.Departure.DepartureCode,
+                Season: String(yearInfo.Year),
+                LandStartDate: dp.Departure.LandStartDate,
+                LandEndDate: dp.Departure.LandEndDate,
+                Status: dp.Departure.Status,
+                GuaranteedDeparture: dp.Departure.GuaranteedDeparture,
+                ShipName: dp.Departure.ShipName?.trim() || undefined,
+                StartCity: dp.Departure.TourStartAirportCity,
+                EndCity: dp.Departure.TourEndAirportCity,
+                CabinPricing: dp.Pricing?.map((p) => ({
+                  CabinCategory: p.CabinCategory || undefined,
+                  Price: p.Price,
+                  Discount: p.Discount,
+                  Currency: currency,
+                })),
+              })),
+            } as GlobusExternalContentTour
+          })
+        ) || []
+        this.logger.log(`Transformed ${tours.length} tours from MediaInfo format`)
       } else {
         this.logger.warn(`Unexpected response format for ${brand}: ${JSON.stringify(Object.keys(data as object))}`)
         tours = []
