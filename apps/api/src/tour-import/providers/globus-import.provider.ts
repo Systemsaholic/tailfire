@@ -80,14 +80,22 @@ export class GlobusImportProvider {
         response.data
       )
 
-      // Handle both array and object response formats
+      // Handle various response formats from Globus API
       let tours: GlobusExternalContentTour[]
       if (Array.isArray(data)) {
         tours = data
       } else if (data && 'Tours' in data) {
         tours = data.Tours
+      } else if (data && 'MediaInfo' in (data as Record<string, unknown>)) {
+        // Handle MediaInfo format: { Brand, MediaInfo: [{ Year, TourMediaInfo: [...] }] }
+        const mediaInfo = (data as Record<string, unknown>).MediaInfo as Array<{
+          Year: number
+          TourMediaInfo: GlobusExternalContentTour[]
+        }>
+        tours = mediaInfo?.flatMap((m) => m.TourMediaInfo || []) || []
+        this.logger.log(`Extracted ${tours.length} tours from MediaInfo format`)
       } else {
-        this.logger.warn(`Unexpected response format for ${brand}: ${typeof data}`)
+        this.logger.warn(`Unexpected response format for ${brand}: ${JSON.stringify(Object.keys(data as object))}`)
         tours = []
       }
 
