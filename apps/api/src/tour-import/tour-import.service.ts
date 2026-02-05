@@ -704,10 +704,11 @@ export class TourImportService {
   // ============================================================================
 
   private async getOrCreateOperator(code: string, name: string): Promise<string> {
+    // Use case-insensitive matching to prevent duplicate operators
     const existing = await this.db.db
       .select({ id: tourOperators.id })
       .from(tourOperators)
-      .where(eq(tourOperators.code, code))
+      .where(sql`LOWER(${tourOperators.code}) = LOWER(${code})`)
       .limit(1)
 
     if (existing.length > 0) {
