@@ -294,7 +294,17 @@ export function AddDaysDialog({
                   toValue={dateRange?.end || null}
                   minFromDate={minStartDate}
                   maxToDate={tripEndDate || undefined}
-                  onChange={(from, to) => setDateRange(from && to ? { start: from, end: to } : null)}
+                  onChange={(from, to) => {
+                    // Preserve partial state to allow selecting dates one at a time
+                    if (from || to) {
+                      setDateRange({
+                        start: from || dateRange?.start || '',
+                        end: to || dateRange?.end || '',
+                      })
+                    } else {
+                      setDateRange(null)
+                    }
+                  }}
                   showLabels={false}
                 />
                 <p className="text-xs text-muted-foreground">

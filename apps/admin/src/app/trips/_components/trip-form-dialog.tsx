@@ -4,8 +4,11 @@ import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Search, Trash2 } from 'lucide-react'
-import type { TripResponseDto } from '@tailfire/shared-types/api'
+import type { TripResponseDto, TripWithDetailsResponseDto } from '@tailfire/shared-types/api'
 import { useLoading } from '@/context/loading-context'
+import { itineraryDayKeys } from '@/hooks/use-itinerary-days'
+import { itineraryKeys } from '@/hooks/use-itineraries'
+import type { ItineraryDayResponseDto } from '@tailfire/shared-types/api'
 import {
   Dialog,
   DialogContent,
@@ -156,10 +159,141 @@ export function TripFormDialog({
         // Navigate to the new trip's detail page
         router.push(`/trips/${newTrip.id}`)
       } else if (trip) {
+        const oldStartDate = trip.startDate
+        const oldEndDate = trip.endDate
+        const newStartDate = payload.startDate
+        const newEndDate = payload.endDate
+        const hadDates = !!(oldStartDate && oldEndDate)
+        const hasDates = !!(newStartDate && newEndDate)
+
         await updateTrip.mutateAsync({
           id: trip.id,
           data: payload,
         })
+
+        // Auto-extend itinerary days if trip dates were added or extended
+        // Need to fetch full trip details since list view doesn't include itineraries
+        if (hasDates) {
+          try {
+            const fullTrip = await api.get<TripWithDetailsResponseDto>(`/trips/${trip.id}`)
+            const itineraries = fullTrip.itineraries || []
+
+            for (const itinerary of itineraries) {
+              // Case 1: Trip didn't have dates before, now it does → auto-generate
+              // ONLY if itinerary has no existing days (to avoid deleting existing days/activities)
+              if (!hadDates) {
+                try {
+                  // Check if itinerary already has days
+                  const existingDays = await api.get<ItineraryDayResponseDto[]>(
+                    `/itineraries/${itinerary.id}/days`
+                  )
+
+                  // Update itinerary dates to match trip dates first
+                  await api.patch(`/itineraries/${itinerary.id}`, {
+                    startDate: newStartDate,
+                    endDate: newEndDate,
+                  })
+                  // Invalidate itinerary cache after date update
+                  queryClient.invalidateQueries({
+                    queryKey: itineraryKeys.list(trip.id),
+                  })
+                  queryClient.invalidateQueries({
+                    queryKey: itineraryKeys.detail(trip.id, itinerary.id),
+                  })
+
+                  // Only auto-generate if no existing days (auto-generate deletes all days first)
+                  if (existingDays.length === 0) {
+                    await api.post(`/itineraries/${itinerary.id}/days/auto-generate`, {})
+                    queryClient.invalidateQueries({
+                      queryKey: itineraryDayKeys.list(itinerary.id),
+                    })
+                    queryClient.invalidateQueries({
+                      queryKey: itineraryDayKeys.withActivities(itinerary.id),
+                    })
+                  }
+                } catch {
+                  console.warn(`Failed to auto-generate days for itinerary ${itinerary.id}`)
+                }
+                continue
+              }
+
+              // Case 2: Trip dates were extended → add days at start/end
+              const oldStart = new Date(oldStartDate!)
+              const newStart = new Date(newStartDate)
+              const startExtended = newStart < oldStart
+              const daysToAddAtStart = startExtended
+                ? Math.ceil((oldStart.getTime() - newStart.getTime()) / (1000 * 60 * 60 * 24))
+                : 0
+
+              const oldEnd = new Date(oldEndDate!)
+              const newEnd = new Date(newEndDate)
+              const endExtended = newEnd > oldEnd
+              const daysToAddAtEnd = endExtended
+                ? Math.ceil((newEnd.getTime() - oldEnd.getTime()) / (1000 * 60 * 60 * 24))
+                : 0
+
+              // Update itinerary dates to match new trip dates
+              if (startExtended || endExtended) {
+                try {
+                  const newItinStart = startExtended ? newStartDate : itinerary.startDate
+                  const newItinEnd = endExtended ? newEndDate : itinerary.endDate
+                  await api.patch(`/itineraries/${itinerary.id}`, {
+                    startDate: newItinStart,
+                    endDate: newItinEnd,
+                  })
+                  // Invalidate itinerary cache after date update
+                  queryClient.invalidateQueries({
+                    queryKey: itineraryKeys.list(trip.id),
+                  })
+                  queryClient.invalidateQueries({
+                    queryKey: itineraryKeys.detail(trip.id, itinerary.id),
+                  })
+                } catch {
+                  console.warn(`Failed to update itinerary ${itinerary.id} dates`)
+                }
+              }
+
+              // Add days at start if needed
+              if (daysToAddAtStart > 0) {
+                try {
+                  await api.post(`/itineraries/${itinerary.id}/days/batch`, {
+                    count: daysToAddAtStart,
+                    position: 'start',
+                  })
+                  queryClient.invalidateQueries({
+                    queryKey: itineraryDayKeys.list(itinerary.id),
+                  })
+                  queryClient.invalidateQueries({
+                    queryKey: itineraryDayKeys.withActivities(itinerary.id),
+                  })
+                } catch {
+                  console.warn(`Failed to extend itinerary ${itinerary.id} at start`)
+                }
+              }
+
+              // Add days at end if needed
+              if (daysToAddAtEnd > 0) {
+                try {
+                  await api.post(`/itineraries/${itinerary.id}/days/batch`, {
+                    count: daysToAddAtEnd,
+                    position: 'end',
+                  })
+                  queryClient.invalidateQueries({
+                    queryKey: itineraryDayKeys.list(itinerary.id),
+                  })
+                  queryClient.invalidateQueries({
+                    queryKey: itineraryDayKeys.withActivities(itinerary.id),
+                  })
+                } catch {
+                  console.warn(`Failed to extend itinerary ${itinerary.id} at end`)
+                }
+              }
+            }
+          } catch {
+            console.warn('Failed to fetch trip details for itinerary day extension')
+          }
+        }
+
         toast({
           title: 'Trip updated',
           description: 'The trip has been successfully updated.',

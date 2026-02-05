@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Check, X, Upload, Search, Trash2 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Dialog,
   DialogContent,
@@ -17,6 +18,7 @@ import { Label } from '@/components/ui/label'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
 import { useToast } from '@/hooks/use-toast'
 import { useCreateItinerary } from '@/hooks/use-itineraries'
+import { itineraryDayKeys } from '@/hooks/use-itinerary-days'
 import { api } from '@/lib/api'
 import { UnsplashPicker } from '@/components/unsplash-picker'
 
@@ -49,6 +51,7 @@ export function CreateItineraryDialog({
   onSuccess,
 }: CreateItineraryDialogProps) {
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const createItinerary = useCreateItinerary(tripId)
 
   const [formData, setFormData] = useState({
@@ -176,6 +179,13 @@ export function CreateItineraryDialog({
         try {
           await api.post(`/itineraries/${newItinerary.id}/days/auto-generate`, {
             includePreTravelDay: includePreTravel,
+          })
+          // Invalidate day queries so UI fetches the newly generated days
+          queryClient.invalidateQueries({
+            queryKey: itineraryDayKeys.list(newItinerary.id),
+          })
+          queryClient.invalidateQueries({
+            queryKey: itineraryDayKeys.withActivities(newItinerary.id),
           })
         } catch {
           // Days generation failed but itinerary was created - don't block success
