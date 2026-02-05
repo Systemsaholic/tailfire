@@ -25,6 +25,8 @@ import {
   GLOBUS_BRANDS,
   GLOBUS_BRAND_CODES,
   GlobusExternalContentTour,
+  GlobusTourMediaResponse,
+  GlobusHotelMedia,
 } from './tour-import.types'
 import {
   tourOperators,
@@ -169,7 +171,7 @@ export class TourImportService {
       // Process each tour
       for (const tour of tourData) {
         try {
-          await this.upsertTour(tour, operatorId, brandCode, currency, metrics)
+          await this.upsertTour(tour, operatorId, brandCode, brand, currency, metrics)
         } catch (error) {
           this.recordError(metrics, tour.TourNumber, error)
         }
@@ -206,6 +208,7 @@ export class TourImportService {
     tourData: GlobusExternalContentTour,
     operatorId: string,
     operatorCode: string,
+    brand: GlobusBrand,
     currency: string,
     metrics: TourSyncMetrics
   ): Promise<void> {
@@ -233,6 +236,13 @@ export class TourImportService {
       }
     }
 
+    // Use TourNumber or fall back to TourCode for MediaInfo format
+    const providerIdentifier = tourData.TourNumber || tourData.TourCode || ''
+    if (!providerIdentifier) {
+      this.logger.warn(`Tour missing identifier: ${JSON.stringify(Object.keys(tourData))}`)
+      return
+    }
+
     // Upsert main tour record
     const existingTour = await this.db.db
       .select({ id: tours.id })
@@ -240,7 +250,7 @@ export class TourImportService {
       .where(
         and(
           eq(tours.provider, 'globus'),
-          eq(tours.providerIdentifier, tourData.TourNumber),
+          eq(tours.providerIdentifier, providerIdentifier),
           eq(tours.season, tourData.Season || currentSeason)
         )
       )
@@ -276,7 +286,7 @@ export class TourImportService {
         .insert(tours)
         .values({
           provider: 'globus',
-          providerIdentifier: tourData.TourNumber,
+          providerIdentifier,
           operatorId,
           operatorCode,
           name: tourData.TourName,
@@ -300,12 +310,23 @@ export class TourImportService {
     }
     metrics.toursSynced++
 
-    // Sync related data
+    // Sync related data from initial fetch (if available)
     await this.syncItinerary(tourId, tourData, metrics)
     await this.syncHotels(tourId, tourData, metrics)
     await this.syncMedia(tourId, tourData, operatorCode, currentSeason, metrics)
     await this.syncInclusions(tourId, tourData, metrics)
     await this.syncDepartures(tourId, tourData, currency, metrics)
+
+    // Fetch and sync detailed tour media (description, itinerary, inclusions, hotels)
+    // This makes individual API calls per tour to GetTourMedia and GetBasicHotelMedia
+    const tourCode = tourData.TourCode || tourData.TourNumber || providerIdentifier
+    const season = tourData.Season || currentSeason
+    try {
+      await this.syncTourMediaDetails(tourId, tourCode, season, brand, metrics)
+    } catch (error) {
+      // Log but don't fail the entire tour sync for media fetch errors
+      this.logger.warn(`Failed to sync tour media details for ${tourCode}: ${error}`)
+    }
   }
 
   // ============================================================================
@@ -656,6 +677,267 @@ export class TourImportService {
   }
 
   // ============================================================================
+  // TOUR MEDIA DETAILS SYNC (GetTourMedia + GetBasicHotelMedia)
+  // ============================================================================
+
+  /**
+   * Fetch and sync detailed tour content from GetTourMedia and GetBasicHotelMedia.
+   * This populates description, itinerary days, inclusions, and hotels.
+   */
+  private async syncTourMediaDetails(
+    tourId: string,
+    tourCode: string,
+    season: string,
+    brand: GlobusBrand,
+    metrics: TourSyncMetrics
+  ): Promise<void> {
+    // Fetch tour media (description, itinerary, inclusions)
+    const tourMedia = await this.globusProvider.fetchTourMedia(tourCode, season)
+    if (tourMedia) {
+      await this.processTourMediaContent(tourId, tourMedia, metrics)
+    }
+
+    // Fetch hotel media
+    const hotels = await this.globusProvider.fetchHotelMedia(tourCode, season, brand)
+    if (hotels.length > 0) {
+      await this.processHotelMedia(tourId, hotels, metrics)
+    }
+  }
+
+  /**
+   * Process and store tour media content (description, itinerary, inclusions)
+   */
+  private async processTourMediaContent(
+    tourId: string,
+    mediaResponse: GlobusTourMediaResponse,
+    metrics: TourSyncMetrics
+  ): Promise<void> {
+    // Extract description from "Vacation Overview" content
+    const vacationOverview = mediaResponse.tourMedia.find(
+      (m) => m.ContentType === 'Vacation Overview'
+    )
+    if (vacationOverview?.Content) {
+      // Clean HTML tags from description
+      const cleanDescription = this.cleanHtmlContent(vacationOverview.Content)
+      await this.db.db
+        .update(tours)
+        .set({
+          description: cleanDescription,
+          updatedAt: new Date(),
+        })
+        .where(eq(tours.id, tourId))
+    }
+
+    // Extract and sync itinerary days
+    await this.syncItineraryFromMedia(tourId, mediaResponse, metrics)
+
+    // Extract and sync inclusions/highlights
+    await this.syncInclusionsFromMedia(tourId, mediaResponse, metrics)
+  }
+
+  /**
+   * Sync itinerary days from GetTourMedia response
+   */
+  private async syncItineraryFromMedia(
+    tourId: string,
+    mediaResponse: GlobusTourMediaResponse,
+    metrics: TourSyncMetrics
+  ): Promise<void> {
+    // Filter for "Vacation Itinerary" content type in DayMedia
+    const itineraryDays = mediaResponse.dayMedia.filter(
+      (dm) => dm.ContentType === 'Vacation Itinerary'
+    )
+
+    if (itineraryDays.length === 0) return
+
+    // Delete existing itinerary days and re-insert
+    await this.db.db.delete(tourItineraryDays).where(eq(tourItineraryDays.tourId, tourId))
+
+    // Extract cities from content for geocoding
+    // Cities are in <SPAN CLASS=location>CITY_NAME</SPAN> format
+    const cities: string[] = []
+    for (const day of itineraryDays) {
+      const city = this.extractCityFromItineraryContent(day.Content)
+      if (city) cities.push(city)
+    }
+    const geocodedCities = await this.geocodingService.geocodeBatch([...new Set(cities)])
+
+    for (const day of itineraryDays) {
+      // Extract city from <SPAN CLASS=location> tag
+      const overnightCity = this.extractCityFromItineraryContent(day.Content)
+
+      // Extract title from <SPAN CLASS=subtitle> tag
+      const title = this.extractTitleFromItineraryContent(day.Content)
+
+      // Clean the full description
+      const description = this.cleanHtmlContent(day.Content)
+
+      let overnightCityLat: string | undefined
+      let overnightCityLng: string | undefined
+
+      if (overnightCity) {
+        const geo = geocodedCities.get(overnightCity)
+        if (geo) {
+          overnightCityLat = String(geo.latitude)
+          overnightCityLng = String(geo.longitude)
+        }
+      }
+
+      await this.db.db.insert(tourItineraryDays).values({
+        tourId,
+        dayNumber: day.StartDayNum,
+        title: title || overnightCity,
+        description,
+        overnightCity,
+        overnightCityLat,
+        overnightCityLng,
+      })
+      metrics.itineraryDaysSynced++
+    }
+  }
+
+  /**
+   * Extract city name from <SPAN CLASS=location>CITY</SPAN> tag
+   */
+  private extractCityFromItineraryContent(content: string): string | undefined {
+    // Match <SPAN CLASS=location>CITY NAME</SPAN>
+    const match = content.match(/<SPAN\s+CLASS=location>(.*?)<\/SPAN>/i)
+    if (!match || !match[1]) return undefined
+    // Clean the city name (remove trailing spaces, commas, etc.)
+    return match[1].trim().replace(/[,–-].*$/, '').trim()
+  }
+
+  /**
+   * Extract title from <SPAN CLASS=subtitle>TITLE</SPAN> tag
+   */
+  private extractTitleFromItineraryContent(content: string): string | undefined {
+    // Match <SPAN CLASS=subtitle>TITLE</SPAN>
+    const match = content.match(/<SPAN\s+CLASS=subtitle>(.*?)<\/SPAN>/i)
+    if (!match || !match[1]) return undefined
+    return match[1].trim()
+  }
+
+  /**
+   * Sync inclusions/highlights from GetTourMedia response
+   */
+  private async syncInclusionsFromMedia(
+    tourId: string,
+    mediaResponse: GlobusTourMediaResponse,
+    metrics: TourSyncMetrics
+  ): Promise<void> {
+    // Delete existing inclusions and re-insert
+    await this.db.db.delete(tourInclusions).where(eq(tourInclusions.tourId, tourId))
+
+    let sortOrder = 0
+
+    // Map ContentType to inclusion type
+    const contentTypeMap: Record<string, { type: string; category?: string }> = {
+      'Meals': { type: 'included', category: 'Meals' },
+      'Notes': { type: 'included', category: 'Important Notes' },
+      'Travelers Notes': { type: 'highlight', category: 'Special Features' },
+      'Small Group': { type: 'included', category: 'Group Size' },
+      'UNESCO Sites': { type: 'highlight', category: 'UNESCO Sites' },
+    }
+
+    for (const tm of mediaResponse.tourMedia) {
+      const mapping = contentTypeMap[tm.ContentType]
+      if (!mapping) continue
+
+      const cleanContent = this.cleanHtmlContent(tm.Content)
+      if (!cleanContent) continue
+
+      // Some content types have multiple items separated by delimiters
+      if (tm.ContentType === 'UNESCO Sites') {
+        // UNESCO Sites are pipe-delimited
+        const sites = cleanContent.split('|').map((s) => s.trim()).filter(Boolean)
+        for (const site of sites) {
+          await this.db.db.insert(tourInclusions).values({
+            tourId,
+            inclusionType: mapping.type,
+            category: mapping.category,
+            description: site,
+            sortOrder: sortOrder++,
+          })
+          metrics.inclusionsSynced++
+        }
+      } else {
+        await this.db.db.insert(tourInclusions).values({
+          tourId,
+          inclusionType: mapping.type,
+          category: mapping.category,
+          description: cleanContent,
+          sortOrder: sortOrder++,
+        })
+        metrics.inclusionsSynced++
+      }
+    }
+
+    // Also extract highlights from keywords
+    const styleKeywords = mediaResponse.tourKeywords.filter(
+      (k) => k.KeywordType === 'Travel Style'
+    )
+    for (const kw of styleKeywords) {
+      await this.db.db.insert(tourInclusions).values({
+        tourId,
+        inclusionType: 'highlight',
+        category: 'Travel Style',
+        description: kw.Keyword,
+        sortOrder: sortOrder++,
+      })
+      metrics.inclusionsSynced++
+    }
+  }
+
+  /**
+   * Process and store hotel media from GetBasicHotelMedia
+   */
+  private async processHotelMedia(
+    tourId: string,
+    hotels: GlobusHotelMedia[],
+    metrics: TourSyncMetrics
+  ): Promise<void> {
+    // Delete existing hotels and re-insert
+    await this.db.db.delete(tourHotels).where(eq(tourHotels.tourId, tourId))
+
+    for (const hotel of hotels) {
+      await this.db.db.insert(tourHotels).values({
+        tourId,
+        hotelName: hotel.BasicName,
+        city: hotel.BasicAddressCity || hotel.BasicSellingLocation,
+        description: hotel.BasicDescription,
+      })
+      metrics.hotelsSynced++
+    }
+  }
+
+  /**
+   * Clean HTML tags and entities from content
+   */
+  private cleanHtmlContent(content: string): string {
+    if (!content) return ''
+
+    return content
+      // Replace HTML breaks with newlines
+      .replace(/<\/BR>/gi, '\n')
+      .replace(/<BR\s*\/?>/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      // Remove SPAN tags with class attributes (but keep content)
+      .replace(/<SPAN[^>]*>/gi, '')
+      .replace(/<\/SPAN>/gi, '')
+      // Remove other HTML tags
+      .replace(/<[^>]+>/g, '')
+      // Decode HTML entities
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&quot;/g, '"')
+      // Normalize whitespace
+      .replace(/\n\s*\n/g, '\n\n')
+      .trim()
+  }
+
+  // ============================================================================
   // SOFT-DELETE (mark inactive)
   // ============================================================================
 
@@ -678,6 +960,7 @@ export class TourImportService {
   private async markInactiveDepartures(operatorCode: string, syncStartTime: Date): Promise<number> {
     // Mark departures inactive where their tour is from this operator
     // and they weren't seen in this sync
+    // Note: Convert Date to ISO string for proper PostgreSQL timestamp compatibility
     await this.db.db.execute(sql`
       UPDATE catalog.tour_departures d
       SET is_active = false, updated_at = now()
@@ -685,7 +968,7 @@ export class TourImportService {
       WHERE d.tour_id = t.id
         AND t.operator_code = ${operatorCode}
         AND d.is_active = true
-        AND d.last_seen_at < ${syncStartTime}
+        AND d.last_seen_at < ${syncStartTime.toISOString()}::timestamptz
     `)
 
     return 0
@@ -696,10 +979,11 @@ export class TourImportService {
   // ============================================================================
 
   private async getOrCreateOperator(code: string, name: string): Promise<string> {
+    // Use case-insensitive matching to prevent duplicate operators
     const existing = await this.db.db
       .select({ id: tourOperators.id })
       .from(tourOperators)
-      .where(eq(tourOperators.code, code))
+      .where(sql`LOWER(${tourOperators.code}) = LOWER(${code})`)
       .limit(1)
 
     if (existing.length > 0) {

@@ -9,6 +9,7 @@ import {
   useCatalogTourFilters,
   type CatalogTourFilters,
 } from '@/hooks/use-tour-library'
+import { useItinerary } from '@/hooks/use-itineraries'
 import { TourCard } from './_components/tour-card'
 import { TourFilters } from './_components/tour-filters'
 import { TourDetailModal } from './_components/tour-detail-modal'
@@ -19,6 +20,17 @@ function TourLibraryContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { stopLoading } = useLoading()
+
+  // Context from trip itinerary (when navigated from sidebar drag)
+  const tripId = searchParams.get('tripId')
+  const dayId = searchParams.get('dayId')
+  const itineraryId = searchParams.get('itineraryId')
+  const returnUrl = searchParams.get('returnUrl')
+
+  const hasTripContext = !!(tripId && dayId && itineraryId)
+
+  // Fetch itinerary to get date bounds for filtering departures
+  const { data: itinerary } = useItinerary(tripId || '', itineraryId)
 
   const [filters, setFilters] = useState<CatalogTourFilters>(() => ({
     q: searchParams.get('q') ?? undefined,
@@ -101,7 +113,13 @@ function TourLibraryContent() {
           <h1 className="text-2xl font-bold text-tern-gray-900">Tour Library</h1>
         </div>
         <p className="mt-1 text-sm text-tern-gray-500">
-          Browse tours from Globus, Cosmos, and Monograms
+          {hasTripContext && itinerary?.startDate && itinerary?.endDate ? (
+            <>
+              Select a tour for your itinerary: <span className="font-medium text-tern-teal-600">{itinerary.startDate}</span> to <span className="font-medium text-tern-teal-600">{itinerary.endDate}</span>
+            </>
+          ) : (
+            'Browse tours from Globus, Cosmos, and Monograms'
+          )}
         </p>
       </div>
 
@@ -192,6 +210,19 @@ function TourLibraryContent() {
         tourId={selectedTourId}
         isOpen={!!selectedTourId}
         onClose={() => setSelectedTourId(null)}
+        tripContext={hasTripContext ? {
+          tripId: tripId!,
+          dayId: dayId!,
+          itineraryId: itineraryId!,
+          startDate: itinerary?.startDate ?? undefined,
+          endDate: itinerary?.endDate ?? undefined,
+        } : undefined}
+        onAddedToItinerary={() => {
+          setSelectedTourId(null)
+          if (returnUrl) {
+            router.push(returnUrl)
+          }
+        }}
       />
     </div>
   )

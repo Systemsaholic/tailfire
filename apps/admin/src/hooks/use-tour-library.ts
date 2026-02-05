@@ -378,12 +378,12 @@ export function useTourSearch2(params: { provider?: string; providerIdentifier?:
 function parseSyntheticTourId(tourId: string): { provider: string; brand?: string; tourCode: string } | null {
   // Match "globus-{brand}-{tourCode}-{index}"
   const fullMatch = tourId.match(/^globus-([A-Za-z]+)-([A-Z0-9]+)-\d+$/)
-  if (fullMatch) {
+  if (fullMatch && fullMatch[1] && fullMatch[2]) {
     return { provider: 'globus', brand: fullMatch[1], tourCode: fullMatch[2] }
   }
   // Match "globus-search-{tourCode}-{season}-{index}"
   const searchMatch = tourId.match(/^globus-search-([A-Z0-9]+)-\d{4}-\d+$/)
-  if (searchMatch) {
+  if (searchMatch && searchMatch[1]) {
     return { provider: 'globus', tourCode: searchMatch[1] }
   }
   return null
@@ -629,6 +629,11 @@ export function useCatalogTourFilters() {
 
 /**
  * Map tour detail and departure to custom_tour activity data
+ *
+ * Sets startDatetime and endDatetime at the activity level so the tour
+ * is recognized as a spanning activity (shown as a Gantt-style bar across days).
+ *
+ * Uses UTC timezone with 'Z' suffix to avoid timezone shift issues in spanning detection.
  */
 function mapTourToCustomTour(
   tour: TourDetail,
@@ -639,6 +644,9 @@ function mapTourToCustomTour(
   componentType: 'custom_tour'
   name: string
   description: string | null
+  startDatetime: string | null
+  endDatetime: string | null
+  timezone: string
   customTourDetails: {
     tourId: string
     operatorCode: string
@@ -660,11 +668,33 @@ function mapTourToCustomTour(
     hotelsJson: TourHotel[]
   }
 } {
+  // Convert YYYY-MM-DD dates to ISO datetime strings with UTC timezone (Z suffix)
+  // This ensures consistent date handling across timezones for spanning detection
+  // Use 00:00:00Z for start and 23:59:59Z for end to ensure full day coverage
+  const startDatetime = departure.landStartDate
+    ? `${departure.landStartDate}T00:00:00Z`
+    : null
+
+  // Derive endDatetime from landEndDate, or fallback to start + (days - 1) if available
+  let endDatetime: string | null = null
+  if (departure.landEndDate) {
+    endDatetime = `${departure.landEndDate}T23:59:59Z`
+  } else if (departure.landStartDate && tour.days && tour.days > 1) {
+    // Fallback: derive end date from start date + (days - 1)
+    const startDate = new Date(departure.landStartDate)
+    startDate.setDate(startDate.getDate() + tour.days - 1)
+    const endDateStr = startDate.toISOString().split('T')[0]
+    endDatetime = `${endDateStr}T23:59:59Z`
+  }
+
   return {
     itineraryDayId: dayId,
     componentType: 'custom_tour' as const,
     name: tour.name,
     description: tour.description ?? null,
+    startDatetime,
+    endDatetime,
+    timezone: 'UTC',
     customTourDetails: {
       tourId: tour.id,
       operatorCode: tour.operatorCode,
@@ -737,15 +767,19 @@ export function useAddTourToItinerary(defaultItineraryId?: string) {
 
       // 3. Generate tour day schedule (creates tour_day child activities)
       // Pass tour data to avoid re-fetching from DB
+      // Include tourId and days for fallback if itinerary is empty (fetch from catalog)
       const tourDaySchedule = await api.post<{ created: unknown[]; deleted: number }>(
         `/activities/custom-tour/${tourActivity.id}/generate-tour-day-schedule`,
         {
           itineraryId,
           customTourDetails: {
+            tourId: tour.id,
             departureStartDate: departure.landStartDate,
             departureEndDate: departure.landEndDate,
+            days: tour.days,
             itineraryJson: tour.itinerary,
           },
+          skipDelete: true, // Newly created tour, no existing children to delete
           autoExtendItinerary,
         }
       )
