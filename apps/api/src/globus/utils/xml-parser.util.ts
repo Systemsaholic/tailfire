@@ -22,6 +22,11 @@ const parser = new XMLParser({
       'DepartureWithPricing',
       'DeparturePricing',
       'DeparturePricingDetail',
+      'TourMedia',
+      'TourInfo',
+      'DayMedia',
+      'TourKeywords',
+      'BasicHotelMedia',
     ]
     return arrayTags.includes(name)
   },
@@ -80,6 +85,58 @@ export function parseDeparturesWithPricing<T>(xml: string): T[] {
 
   const departures = root.DepartureWithPricing ?? root.departureWithPricing ?? []
   return Array.isArray(departures) ? departures : [departures]
+}
+
+/**
+ * Parse GetTourMedia DataSet response with multiple tables.
+ * Returns all four table types: TourMedia, TourInfo, DayMedia, TourKeywords
+ */
+export function parseTourMediaDataSet(xml: string): {
+  tourMedia: unknown[]
+  tourInfo: unknown[]
+  dayMedia: unknown[]
+  tourKeywords: unknown[]
+} {
+  const parsed = parser.parse(xml)
+
+  // Navigate: root > DataSet > diffgram > NewDataSet
+  const root = parsed?.DataSet ?? parsed?.dataSet ?? Object.values(parsed)[0]
+  if (!root) return { tourMedia: [], tourInfo: [], dayMedia: [], tourKeywords: [] }
+
+  const diffgram = root['diffgr:diffgram'] ?? root['diffgram'] ?? root
+  if (!diffgram) return { tourMedia: [], tourInfo: [], dayMedia: [], tourKeywords: [] }
+
+  const dataSet = diffgram.NewDataSet ?? diffgram.newDataSet ?? diffgram
+  if (!dataSet) return { tourMedia: [], tourInfo: [], dayMedia: [], tourKeywords: [] }
+
+  const ensureArray = <T>(val: T | T[] | undefined): T[] => {
+    if (!val) return []
+    return Array.isArray(val) ? val : [val]
+  }
+
+  return {
+    tourMedia: ensureArray(dataSet.TourMedia),
+    tourInfo: ensureArray(dataSet.TourInfo),
+    dayMedia: ensureArray(dataSet.DayMedia),
+    tourKeywords: ensureArray(dataSet.TourKeywords),
+  }
+}
+
+/**
+ * Parse ArrayOfBasicHotelMedia XML responses.
+ * Structure: <ArrayOfBasicHotelMedia><BasicHotelMedia>...</BasicHotelMedia></ArrayOfBasicHotelMedia>
+ */
+export function parseHotelMediaArray<T>(xml: string): T[] {
+  const parsed = parser.parse(xml)
+
+  const root =
+    parsed?.ArrayOfBasicHotelMedia ??
+    parsed?.arrayOfBasicHotelMedia ??
+    Object.values(parsed)[0]
+  if (!root) return []
+
+  const hotels = root.BasicHotelMedia ?? root.basicHotelMedia ?? []
+  return Array.isArray(hotels) ? hotels : [hotels]
 }
 
 /**

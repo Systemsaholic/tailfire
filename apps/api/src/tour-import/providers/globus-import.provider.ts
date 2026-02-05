@@ -17,8 +17,14 @@ import {
   GLOBUS_CURRENCY_MAP,
   GlobusExternalContentResponse,
   GlobusExternalContentTour,
+  GlobusTourMediaResponse,
+  GlobusTourMediaContent,
+  GlobusTourMediaInfo,
+  GlobusDayMediaContent,
+  GlobusTourKeyword,
+  GlobusHotelMedia,
 } from '../tour-import.types'
-import { parseStringWrappedJson } from '../../globus/utils/xml-parser.util'
+import { parseStringWrappedJson, parseTourMediaDataSet, parseHotelMediaArray } from '../../globus/utils/xml-parser.util'
 
 @Injectable()
 export class GlobusImportProvider {
@@ -186,5 +192,80 @@ export class GlobusImportProvider {
     }
 
     return results
+  }
+
+  /**
+   * Fetch detailed tour media (description, itinerary, inclusions) for a specific tour.
+   * Uses GetTourMedia endpoint which returns full tour content.
+   */
+  async fetchTourMedia(
+    tourCode: string,
+    season: string,
+    mediaLanguage: string = 'English'
+  ): Promise<GlobusTourMediaResponse | null> {
+    const url = `${this.baseUrl}/GetTourMedia`
+    const params = {
+      tourCode,
+      season,
+      mediaLanguage,
+    }
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<string>(url, {
+          params,
+          timeout: 30000, // 30 seconds for single tour
+          responseType: 'text',
+          headers: { Accept: 'application/xml' },
+        })
+      )
+
+      const parsed = parseTourMediaDataSet(response.data)
+
+      return {
+        tourMedia: parsed.tourMedia as GlobusTourMediaContent[],
+        tourInfo: (parsed.tourInfo[0] as GlobusTourMediaInfo) || null,
+        dayMedia: parsed.dayMedia as GlobusDayMediaContent[],
+        tourKeywords: parsed.tourKeywords as GlobusTourKeyword[],
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.warn(`Failed to fetch tour media for ${tourCode}: ${message}`)
+      return null
+    }
+  }
+
+  /**
+   * Fetch hotel information for a specific tour.
+   * Uses GetBasicHotelMedia endpoint.
+   */
+  async fetchHotelMedia(
+    tourCode: string,
+    season: string,
+    brand: GlobusBrand
+  ): Promise<GlobusHotelMedia[]> {
+    const url = `${this.baseUrl}/GetBasicHotelMedia`
+    const params = {
+      tourCode,
+      tourYear: season,
+      brand: GLOBUS_BRAND_CODES[brand],
+    }
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<string>(url, {
+          params,
+          timeout: 15000,
+          responseType: 'text',
+          headers: { Accept: 'application/xml' },
+        })
+      )
+
+      return parseHotelMediaArray<GlobusHotelMedia>(response.data)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.logger.warn(`Failed to fetch hotel media for ${tourCode}: ${message}`)
+      return []
+    }
   }
 }
