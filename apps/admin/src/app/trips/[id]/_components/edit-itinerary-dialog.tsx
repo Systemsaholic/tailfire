@@ -11,6 +11,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -19,7 +29,7 @@ import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { useUpdateItinerary } from '@/hooks/use-itineraries'
 import {
-  useItineraryDays,
+  useItineraryDaysWithActivities,
   useCreateItineraryDay,
   useDeleteItineraryDay,
   itineraryDayKeys,
@@ -61,8 +71,8 @@ export function EditItineraryDialog({
   const queryClient = useQueryClient()
   const updateItinerary = useUpdateItinerary(tripId)
 
-  // Fetch itinerary days to check for Pre-Travel day
-  const { data: days = [] } = useItineraryDays(itinerary?.id || null)
+  // Fetch itinerary days with activities to check for Pre-Travel day and activity counts
+  const { data: days = [] } = useItineraryDaysWithActivities(itinerary?.id || null)
   const createDay = useCreateItineraryDay(itinerary?.id || '')
   const deleteDay = useDeleteItineraryDay(itinerary?.id || '')
 
@@ -80,6 +90,15 @@ export function EditItineraryDialog({
 
   // Pre-Travel toggle state (synced with actual days)
   const [includePreTravel, setIncludePreTravel] = useState(hasPreTravel)
+
+  // State for pending day removal confirmation
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    daysToRemove: typeof days
+    daysWithActivities: number
+    totalActivities: number
+    formData: typeof formData
+  } | null>(null)
+  const [isRemoving, setIsRemoving] = useState(false)
 
   // Sync checkbox state when days data loads/changes
   useEffect(() => {
@@ -139,6 +158,179 @@ export function EditItineraryDialog({
           : 'Failed to remove Pre-Travel day.',
         variant: 'destructive',
       })
+    }
+  }
+
+  // Helper to format date as YYYY-MM-DD
+  const formatDateISO = (d: Date): string => d.toISOString().split('T')[0] ?? ''
+
+  // Helper to get dated days (excluding Day 0)
+  const getDatedDays = () => {
+    return days
+      .filter((d): d is typeof d & { date: string } => !!d.date && d.dayNumber !== 0)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+  }
+
+  // Helper to calculate effective date range from existing days
+  const getEffectiveDateRange = (datedDays: ReturnType<typeof getDatedDays>) => {
+    let effectiveStart: Date | null = null
+    let effectiveEnd: Date | null = null
+
+    if (datedDays.length > 0) {
+      const firstDay = datedDays[0]!
+      const lastDay = datedDays[datedDays.length - 1]!
+      const firstDateStr = firstDay.date.split('T')[0] ?? firstDay.date
+      const lastDateStr = lastDay.date.split('T')[0] ?? lastDay.date
+      effectiveStart = new Date(`${firstDateStr}T00:00:00Z`)
+      effectiveEnd = new Date(`${lastDateStr}T00:00:00Z`)
+    } else if (itinerary?.startDate && itinerary?.endDate) {
+      const origStartStr = itinerary.startDate.split('T')[0] ?? itinerary.startDate
+      const origEndStr = itinerary.endDate.split('T')[0] ?? itinerary.endDate
+      effectiveStart = new Date(`${origStartStr}T00:00:00Z`)
+      effectiveEnd = new Date(`${origEndStr}T00:00:00Z`)
+    }
+
+    return { effectiveStart, effectiveEnd }
+  }
+
+  // Core update logic - shared between direct submit and confirmed removal
+  const executeUpdate = async (formDataToUse: typeof formData, daysToRemove: typeof days = []) => {
+    if (!itinerary) return
+
+    const trimmedName = formDataToUse.name.trim()
+
+    // Update itinerary first
+    await updateItinerary.mutateAsync({
+      id: itinerary.id,
+      data: {
+        name: trimmedName,
+        startDate: formDataToUse.startDate || undefined,
+        endDate: formDataToUse.endDate || undefined,
+        coverPhoto: formDataToUse.coverPhoto.trim() || undefined,
+        overview: formDataToUse.overview.trim() || undefined,
+      },
+    })
+
+    // Delete days if any need to be removed (in descending dayNumber order to minimize renumbering)
+    if (daysToRemove.length > 0) {
+      const sortedDaysToRemove = [...daysToRemove].sort((a, b) => b.dayNumber - a.dayNumber)
+      for (const day of sortedDaysToRemove) {
+        await deleteDay.mutateAsync(day.id)
+      }
+    }
+
+    // Check if dates were extended and we need to add days
+    if (formDataToUse.startDate && formDataToUse.endDate) {
+      const newStart = new Date(`${formDataToUse.startDate}T00:00:00Z`)
+      const newEnd = new Date(`${formDataToUse.endDate}T00:00:00Z`)
+
+      const datedDays = getDatedDays()
+      const { effectiveStart, effectiveEnd } = getEffectiveDateRange(datedDays)
+
+      const daysToAddAtStart: string[] = []
+      const daysToAddAtEnd: string[] = []
+
+      // Check if we need to add days at the start
+      if (effectiveStart && newStart < effectiveStart) {
+        const currentDate = new Date(newStart)
+        while (currentDate < effectiveStart) {
+          daysToAddAtStart.push(formatDateISO(currentDate))
+          currentDate.setUTCDate(currentDate.getUTCDate() + 1)
+        }
+      }
+
+      // Check if we need to add days at the end
+      if (effectiveEnd && newEnd > effectiveEnd) {
+        const currentDate = new Date(effectiveEnd)
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1)
+        while (currentDate <= newEnd) {
+          daysToAddAtEnd.push(formatDateISO(currentDate))
+          currentDate.setUTCDate(currentDate.getUTCDate() + 1)
+        }
+      }
+
+      // If no existing days, generate all days for the date range
+      if (!effectiveStart && !effectiveEnd && datedDays.length === 0) {
+        const currentDate = new Date(newStart)
+        while (currentDate <= newEnd) {
+          daysToAddAtEnd.push(formatDateISO(currentDate))
+          currentDate.setUTCDate(currentDate.getUTCDate() + 1)
+        }
+      }
+
+      // Add days at start if needed (must use count mode)
+      if (daysToAddAtStart.length > 0 && !hasPreTravel) {
+        try {
+          const chunkSize = 30
+          for (let i = 0; i < daysToAddAtStart.length; i += chunkSize) {
+            const chunkCount = Math.min(chunkSize, daysToAddAtStart.length - i)
+            const batchData: BatchCreateDaysDto = {
+              count: chunkCount,
+              position: 'start',
+            }
+            await api.post(`/itineraries/${itinerary.id}/days/batch`, batchData)
+          }
+        } catch (e) {
+          console.warn('Failed to add days at start:', e)
+        }
+      }
+
+      // Add days at end if needed (date range mode is supported)
+      if (daysToAddAtEnd.length > 0) {
+        try {
+          const chunkSize = 30
+          for (let i = 0; i < daysToAddAtEnd.length; i += chunkSize) {
+            const chunkEnd = Math.min(i + chunkSize - 1, daysToAddAtEnd.length - 1)
+            const startDateChunk = daysToAddAtEnd[i]
+            const endDateChunk = daysToAddAtEnd[chunkEnd]
+            if (startDateChunk && endDateChunk) {
+              const batchData: BatchCreateDaysDto = {
+                startDate: startDateChunk,
+                endDate: endDateChunk,
+                position: 'end',
+              }
+              await api.post(`/itineraries/${itinerary.id}/days/batch`, batchData)
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to add days at end:', e)
+        }
+      }
+
+      // Invalidate day caches if any days were added or removed
+      if (daysToAddAtStart.length > 0 || daysToAddAtEnd.length > 0 || daysToRemove.length > 0) {
+        queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itinerary.id) })
+        queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itinerary.id) })
+      }
+    }
+
+    return trimmedName
+  }
+
+  // Handle confirmation of day removal
+  const handleConfirmRemoval = async () => {
+    if (!pendingRemoval || !itinerary) return
+
+    setIsRemoving(true)
+    try {
+      const trimmedName = await executeUpdate(pendingRemoval.formData, pendingRemoval.daysToRemove)
+
+      toast({
+        title: 'Itinerary updated',
+        description: `"${trimmedName}" updated. ${pendingRemoval.daysToRemove.length} day${pendingRemoval.daysToRemove.length > 1 ? 's' : ''} removed.`,
+      })
+
+      setPendingRemoval(null)
+      onSuccess?.()
+      onOpenChange(false)
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to update itinerary. Please try again.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsRemoving(false)
     }
   }
 
@@ -225,139 +417,48 @@ export function EditItineraryDialog({
       }
     }
 
-    try {
-      // Capture original dates before update for comparison
-      const originalStartDate = itinerary.startDate
-      const originalEndDate = itinerary.endDate
+    // Check if dates are being reduced and days would be removed
+    if (formData.startDate && formData.endDate) {
+      const newStart = new Date(`${formData.startDate}T00:00:00Z`)
+      const newEnd = new Date(`${formData.endDate}T00:00:00Z`)
 
-      await updateItinerary.mutateAsync({
-        id: itinerary.id,
-        data: {
-          name: trimmedName,
-          startDate: formData.startDate || undefined,
-          endDate: formData.endDate || undefined,
-          coverPhoto: formData.coverPhoto.trim() || undefined,
-          overview: formData.overview.trim() || undefined,
-        },
+      const datedDays = getDatedDays()
+
+      // Find days that would fall outside the new date range
+      const daysToRemove = datedDays.filter((d) => {
+        const dayDateStr = d.date.split('T')[0] ?? d.date
+        const dayDate = new Date(`${dayDateStr}T00:00:00Z`)
+        return dayDate < newStart || dayDate > newEnd
       })
 
-      // Check if dates were extended and we need to add days
-      if (formData.startDate && formData.endDate) {
-        const newStart = new Date(`${formData.startDate}T00:00:00Z`)
-        const newEnd = new Date(`${formData.endDate}T00:00:00Z`)
+      if (daysToRemove.length > 0) {
+        // Count days with activities
+        const daysWithActivitiesCount = daysToRemove.filter(
+          (d) => d.activities && d.activities.length > 0
+        ).length
+        const totalActivities = daysToRemove.reduce(
+          (sum, d) => sum + (d.activities?.length ?? 0),
+          0
+        )
 
-        // Get existing days with dates (excluding Day 0)
-        const datedDays = days
-          .filter((d): d is typeof d & { date: string } => !!d.date && d.dayNumber !== 0)
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-
-        // Calculate day coverage
-        let effectiveStart: Date | null = null
-        let effectiveEnd: Date | null = null
-
-        if (datedDays.length > 0) {
-          const firstDay = datedDays[0]!
-          const lastDay = datedDays[datedDays.length - 1]!
-          const firstDateStr = firstDay.date.split('T')[0] ?? firstDay.date
-          const lastDateStr = lastDay.date.split('T')[0] ?? lastDay.date
-          effectiveStart = new Date(`${firstDateStr}T00:00:00Z`)
-          effectiveEnd = new Date(`${lastDateStr}T00:00:00Z`)
-        } else if (originalStartDate && originalEndDate) {
-          const origStartStr = originalStartDate.split('T')[0] ?? originalStartDate
-          const origEndStr = originalEndDate.split('T')[0] ?? originalEndDate
-          effectiveStart = new Date(`${origStartStr}T00:00:00Z`)
-          effectiveEnd = new Date(`${origEndStr}T00:00:00Z`)
-        }
-
-        const daysToAddAtStart: string[] = []
-        const daysToAddAtEnd: string[] = []
-
-        // Helper to format date as YYYY-MM-DD
-        const formatDateISO = (d: Date): string => d.toISOString().split('T')[0] ?? ''
-
-        // Check if we need to add days at the start
-        if (effectiveStart && newStart < effectiveStart) {
-          const currentDate = new Date(newStart)
-          while (currentDate < effectiveStart) {
-            daysToAddAtStart.push(formatDateISO(currentDate))
-            currentDate.setUTCDate(currentDate.getUTCDate() + 1)
-          }
-        }
-
-        // Check if we need to add days at the end
-        if (effectiveEnd && newEnd > effectiveEnd) {
-          const currentDate = new Date(effectiveEnd)
-          currentDate.setUTCDate(currentDate.getUTCDate() + 1) // Start from day after last
-          while (currentDate <= newEnd) {
-            daysToAddAtEnd.push(formatDateISO(currentDate))
-            currentDate.setUTCDate(currentDate.getUTCDate() + 1)
-          }
-        }
-
-        // If no existing days, generate all days for the date range
-        if (!effectiveStart && !effectiveEnd && datedDays.length === 0) {
-          const currentDate = new Date(newStart)
-          while (currentDate <= newEnd) {
-            daysToAddAtEnd.push(formatDateISO(currentDate))
-            currentDate.setUTCDate(currentDate.getUTCDate() + 1)
-          }
-        }
-
-        // Add days at start if needed (must use count mode - date range not supported for 'start')
-        // Note: If Pre-Travel (Day 0) exists, adding at start will shift day numbers
-        if (daysToAddAtStart.length > 0 && !hasPreTravel) {
-          try {
-            // Chunk into batches of max 30 days to avoid API limit
-            const chunkSize = 30
-            for (let i = 0; i < daysToAddAtStart.length; i += chunkSize) {
-              const chunkCount = Math.min(chunkSize, daysToAddAtStart.length - i)
-              const batchData: BatchCreateDaysDto = {
-                count: chunkCount,
-                position: 'start',
-              }
-              await api.post(`/itineraries/${itinerary.id}/days/batch`, batchData)
-            }
-          } catch (e) {
-            console.warn('Failed to add days at start:', e)
-          }
-        } else if (daysToAddAtStart.length > 0 && hasPreTravel) {
-          // Skip start extension when Pre-Travel exists to preserve Day 0
-          console.warn('Skipping start extension: Pre-Travel Day (Day 0) exists and would be renumbered')
-        }
-
-        // Add days at end if needed (date range mode is supported for 'end')
-        if (daysToAddAtEnd.length > 0) {
-          try {
-            // Chunk into batches of max 30 days to avoid API limit
-            const chunkSize = 30
-            for (let i = 0; i < daysToAddAtEnd.length; i += chunkSize) {
-              const chunkEnd = Math.min(i + chunkSize - 1, daysToAddAtEnd.length - 1)
-              const startDateChunk = daysToAddAtEnd[i]
-              const endDateChunk = daysToAddAtEnd[chunkEnd]
-              if (startDateChunk && endDateChunk) {
-                const batchData: BatchCreateDaysDto = {
-                  startDate: startDateChunk,
-                  endDate: endDateChunk,
-                  position: 'end',
-                }
-                await api.post(`/itineraries/${itinerary.id}/days/batch`, batchData)
-              }
-            }
-          } catch (e) {
-            console.warn('Failed to add days at end:', e)
-          }
-        }
-
-        // Invalidate day caches if any days were added
-        if (daysToAddAtStart.length > 0 || daysToAddAtEnd.length > 0) {
-          queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itinerary.id) })
-          queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itinerary.id) })
-        }
+        // Show confirmation dialog
+        setPendingRemoval({
+          daysToRemove,
+          daysWithActivities: daysWithActivitiesCount,
+          totalActivities,
+          formData: { ...formData },
+        })
+        return
       }
+    }
+
+    // No days to remove - proceed with update
+    try {
+      const updatedName = await executeUpdate(formData)
 
       toast({
         title: 'Itinerary updated',
-        description: `"${trimmedName}" has been updated successfully.`,
+        description: `"${updatedName}" has been updated successfully.`,
       })
 
       onSuccess?.()
@@ -371,7 +472,7 @@ export function EditItineraryDialog({
     }
   }
 
-  const isSubmitting = updateItinerary.isPending
+  const isSubmitting = updateItinerary.isPending || isRemoving
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -575,6 +676,40 @@ export function EditItineraryDialog({
             />
           </DialogContent>
         </Dialog>
+
+        {/* Day Removal Confirmation Dialog */}
+        <AlertDialog open={!!pendingRemoval} onOpenChange={(open) => !open && setPendingRemoval(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove Days from Itinerary?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-2">
+                  <p>
+                    <strong>{pendingRemoval?.daysToRemove.length} day{(pendingRemoval?.daysToRemove.length ?? 0) > 1 ? 's' : ''}</strong> will be removed because they fall outside the new date range.
+                  </p>
+                  {(pendingRemoval?.daysWithActivities ?? 0) > 0 && (
+                    <p className="text-destructive font-medium">
+                      Warning: {pendingRemoval?.daysWithActivities} of these days have activities ({pendingRemoval?.totalActivities} total) that will be permanently deleted.
+                    </p>
+                  )}
+                  <p className="text-sm text-muted-foreground">
+                    This action cannot be undone.
+                  </p>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isRemoving}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleConfirmRemoval}
+                disabled={isRemoving}
+                className="bg-destructive hover:bg-destructive/90"
+              >
+                {isRemoving ? 'Removing...' : 'Remove Days'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )
