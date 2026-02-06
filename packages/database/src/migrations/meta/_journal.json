@@ -631,6 +631,13 @@
       "when": 1770508716000,
       "tag": "20260206163836_add_supplier_extended_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1770530911000,
+      "tag": "20260206222831_backfill_lodging_spanning_datetimes",
+      "breakpoints": true
     }
   ]
 }

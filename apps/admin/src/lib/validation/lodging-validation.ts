@@ -283,6 +283,30 @@ function formatDateForApi(date: Date | null | undefined): string | null {
 }
 
 /**
+ * Normalize time string to HH:MM:SS format.
+ * Handles both HH:MM and HH:MM:SS inputs.
+ */
+function normalizeTime(value?: string | null): string | null {
+  if (!value) return null
+  const match = value.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+  if (!match) return null
+  const hh = match[1]!.padStart(2, '0')
+  const mm = match[2]!
+  const ss = match[3] ?? '00'
+  return `${hh}:${mm}:${ss}`
+}
+
+/**
+ * Combines date and optional time into ISO datetime string.
+ * Uses 12:00:00 noon as default time if not provided.
+ */
+function combineDateAndTime(date: Date | null, time: string | null): string | null {
+  if (!date) return null
+  const timePart = normalizeTime(time) ?? '12:00:00'
+  return `${formatDateForApi(date)}T${timePart}`
+}
+
+/**
  * Maps form data to API payload with proper type conversions.
  * Converts Date objects to ISO strings as expected by the API.
  */
@@ -293,6 +317,15 @@ export function toApiPayload(data: LodgingFormData): CreateLodgingActivityDto {
     name: data.lodgingDetails.propertyName, // Auto-name from property
     description: data.description,
     status: data.status,
+    // Compute startDatetime/endDatetime for spanning activity display
+    startDatetime: combineDateAndTime(
+      data.lodgingDetails.checkInDate,
+      data.lodgingDetails.checkInTime
+    ),
+    endDatetime: combineDateAndTime(
+      data.lodgingDetails.checkOutDate,
+      data.lodgingDetails.checkOutTime
+    ),
     lodgingDetails: {
       propertyName: data.lodgingDetails.propertyName,
       address: data.lodgingDetails.address,

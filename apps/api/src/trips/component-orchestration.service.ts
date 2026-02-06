@@ -145,6 +145,39 @@ export class ComponentOrchestrationService {
   }
 
   /**
+   * Normalize time to HH:MM:SS format, handling both HH:MM and HH:MM:SS inputs.
+   */
+  private normalizeTime(time?: string | null): string {
+    if (!time) return '12:00:00'
+    const match = time.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+    if (!match) return '12:00:00'
+    const hh = match[1]!.padStart(2, '0')
+    const mm = match[2]!
+    const ss = match[3] ?? '00'
+    return `${hh}:${mm}:${ss}`
+  }
+
+  /**
+   * Compute startDatetime/endDatetime from lodgingDetails if not provided.
+   * Fallback for older frontend versions that don't send these fields.
+   */
+  private computeLodgingDatetimes(dto: CreateLodgingComponentDto | UpdateLodgingComponentDto) {
+    let startDatetime = dto.startDatetime
+    let endDatetime = dto.endDatetime
+
+    if (!startDatetime && dto.lodgingDetails?.checkInDate) {
+      const time = this.normalizeTime(dto.lodgingDetails.checkInTime)
+      startDatetime = `${dto.lodgingDetails.checkInDate}T${time}`
+    }
+    if (!endDatetime && dto.lodgingDetails?.checkOutDate) {
+      const time = this.normalizeTime(dto.lodgingDetails.checkOutTime)
+      endDatetime = `${dto.lodgingDetails.checkOutDate}T${time}`
+    }
+
+    return { startDatetime, endDatetime }
+  }
+
+  /**
    * Create a flight component with details (transactional)
    */
   async createFlight(dto: CreateFlightComponentDto): Promise<FlightComponentDto> {
@@ -446,6 +479,9 @@ export class ComponentOrchestrationService {
     // Get agencyId from itinerary day for RLS
     const agencyId = await this.getAgencyIdFromDayId(dto.itineraryDayId)
 
+    // Compute spanning datetimes from lodging details if not provided
+    const { startDatetime, endDatetime } = this.computeLodgingDatetimes(dto)
+
     // Create base component
     const activityId = await this.baseService.create({
       agencyId,
@@ -455,8 +491,8 @@ export class ComponentOrchestrationService {
       name: dto.name,
       description: dto.description,
       sequenceOrder: dto.sequenceOrder,
-      startDatetime: dto.startDatetime,
-      endDatetime: dto.endDatetime,
+      startDatetime,
+      endDatetime,
       timezone: dto.timezone,
       location: dto.location,
       address: dto.address,
@@ -564,13 +600,16 @@ export class ComponentOrchestrationService {
    * Update a lodging component with details (transactional)
    */
   async updateLodging(id: string, dto: UpdateLodgingComponentDto): Promise<LodgingComponentDto> {
+    // Compute spanning datetimes from lodging details if not provided
+    const { startDatetime, endDatetime } = this.computeLodgingDatetimes(dto)
+
     // Update base component fields
     await this.baseService.update(id, {
       name: dto.name,
       description: dto.description,
       sequenceOrder: dto.sequenceOrder,
-      startDatetime: dto.startDatetime,
-      endDatetime: dto.endDatetime,
+      startDatetime,
+      endDatetime,
       timezone: dto.timezone,
       location: dto.location,
       address: dto.address,
