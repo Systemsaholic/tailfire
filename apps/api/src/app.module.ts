@@ -33,6 +33,7 @@ import { UserProfilesModule } from './user-profiles/user-profiles.module'
 import { UsersModule } from './users/users.module'
 import { HealthModule } from './health/health.module'
 import { DashboardModule } from './dashboard/dashboard.module'
+import { SuppliersModule } from './suppliers/suppliers.module'
 
 @Module({
   imports: [
@@ -116,6 +117,9 @@ import { DashboardModule } from './dashboard/dashboard.module'
 
     // Dashboard statistics
     DashboardModule,
+
+    // Supplier management
+    SuppliersModule,
   ],
   controllers: [AppController],
   providers: [

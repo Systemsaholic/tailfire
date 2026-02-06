@@ -624,6 +624,13 @@
       "when": 1770040554000,
       "tag": "20260203105554_add_tour_day_details",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1770508716000,
+      "tag": "20260206163836_add_supplier_extended_fields",
+      "breakpoints": true
     }
   ]
 }

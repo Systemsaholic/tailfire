@@ -4,7 +4,7 @@
  * Normalized supplier data for bookings (hotels, airlines, tour operators, etc.)
  */
 
-import { pgTable, uuid, varchar, timestamp, jsonb } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, varchar, timestamp, jsonb, boolean, text, index } from 'drizzle-orm/pg-core'
 
 export type SupplierContactInfo = {
   email?: string
@@ -13,16 +13,34 @@ export type SupplierContactInfo = {
   address?: string
 }
 
-export const suppliers = pgTable('suppliers', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: varchar('name', { length: 255 }).notNull(),
-  supplierType: varchar('supplier_type', { length: 100 }), // e.g., 'hotel', 'airline', 'tour_operator'
-  contactInfo: jsonb('contact_info').$type<SupplierContactInfo>(),
+export const suppliers = pgTable(
+  'suppliers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: varchar('name', { length: 255 }).notNull(),
+    legalName: varchar('legal_name', { length: 255 }), // Legal business name for contracts
+    supplierType: varchar('supplier_type', { length: 100 }), // e.g., 'hotel', 'airline', 'tour_operator'
+    contactInfo: jsonb('contact_info').$type<SupplierContactInfo>(),
 
-  // Audit fields
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+    // Business settings
+    defaultCommissionRate: varchar('default_commission_rate', { length: 10 }), // e.g., "10.00" for 10%
+    isActive: boolean('is_active').notNull().default(true),
+    isPreferred: boolean('is_preferred').notNull().default(false),
+    notes: text('notes'),
+
+    // Default booking text
+    defaultTermsAndConditions: text('default_terms_and_conditions'),
+    defaultCancellationPolicy: text('default_cancellation_policy'),
+
+    // Audit fields
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    isActiveIdx: index('idx_suppliers_is_active').on(table.isActive),
+    isPreferredIdx: index('idx_suppliers_is_preferred').on(table.isPreferred),
+  })
+)
 
 // TypeScript types
 export type Supplier = typeof suppliers.$inferSelect

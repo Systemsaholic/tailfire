@@ -70,5 +70,8 @@ export * from './email.types.js'
 // Geolocation (Cascade System)
 export * from './geolocation.types.js'
 
+// Suppliers
+export * from './suppliers.types.js'
+
 // Future exports:
 // export * from './auth.types'

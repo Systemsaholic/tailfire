@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { SupplierCombobox } from '@/components/suppliers/supplier-combobox'
 
 interface BookingDetailsSectionProps {
   pricingData: PricingData
@@ -28,10 +29,11 @@ export function BookingDetailsSection({ pricingData, onUpdate }: BookingDetailsS
       {/* Supplier */}
       <div className="space-y-2">
         <Label className="text-sm font-medium text-gray-700">Supplier</Label>
-        <Input
+        <SupplierCombobox
+          value={pricingData.supplier || null}
+          onValueChange={(value) => onUpdate({ supplier: value || '' })}
           placeholder="Search for supplier..."
-          value={pricingData.supplier || ''}
-          onChange={(e) => onUpdate({ supplier: e.target.value })}
+          allowCreate
         />
       </div>
 
@@ -63,26 +65,13 @@ export function BookingDetailsSection({ pricingData, onUpdate }: BookingDetailsS
       <div className="space-y-4">
         <h4 className="text-md font-semibold">Confirmation Details</h4>
 
-        <div className="grid grid-cols-2 gap-4">
-          {/* Confirmation Number */}
-          <div className="space-y-2">
-            <Label className="text-sm font-medium text-gray-700">Confirmation Number</Label>
-            <Input
-              placeholder="Enter confirmation number..."
-              value={pricingData.confirmationNumber || ''}
-              onChange={(e) => onUpdate({ confirmationNumber: e.target.value })}
-            />
-          </div>
-
-          {/* Supplier (duplicate for confirmation context) */}
-          <div className="space-y-2">
-            <Label className="text-sm font-medium text-gray-700">Supplier</Label>
-            <Input
-              placeholder="Supplier name..."
-              value={pricingData.supplier || ''}
-              onChange={(e) => onUpdate({ supplier: e.target.value })}
-            />
-          </div>
+        <div className="space-y-2">
+          <Label className="text-sm font-medium text-gray-700">Confirmation Number</Label>
+          <Input
+            placeholder="Enter confirmation number..."
+            value={pricingData.confirmationNumber || ''}
+            onChange={(e) => onUpdate({ confirmationNumber: e.target.value })}
+          />
         </div>
 
         {/* Upload Receipt Button */}
