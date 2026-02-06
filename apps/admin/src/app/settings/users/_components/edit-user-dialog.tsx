@@ -31,7 +31,7 @@ const editUserSchema = z.object({
   lastName: z.string().min(1, 'Last name is required').max(100),
   phone: z.string().max(20).optional().or(z.literal('')),
   role: z.enum(['admin', 'user']),
-  commissionSplitType: z.enum(['percentage', 'fixed']),
+  commissionSplitType: z.enum(['percentage', 'fixed', 'system_controlled']),
   commissionSplitValue: z.coerce.number().min(0),
 }).refine(
   (data) => data.commissionSplitType !== 'percentage' || data.commissionSplitValue <= 100,
@@ -203,12 +203,13 @@ export function EditUserDialog({ user, open, onOpenChange, isCurrentUser }: Edit
               <div className="grid grid-cols-2 gap-4">
                 <Select
                   value={commissionSplitType}
-                  onValueChange={(value) => setValue('commissionSplitType', value as 'percentage' | 'fixed')}
+                  onValueChange={(value) => setValue('commissionSplitType', value as 'percentage' | 'fixed' | 'system_controlled')}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="system_controlled">System Controlled</SelectItem>
                     <SelectItem value="percentage">Percentage</SelectItem>
                     <SelectItem value="fixed">Fixed Amount</SelectItem>
                   </SelectContent>

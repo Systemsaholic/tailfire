@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -29,7 +29,7 @@ interface AgentInfoFormData {
   }
   commissionSettings: {
     defaultRate: string
-    splitType: 'fixed' | 'percentage' | ''
+    splitType: 'fixed' | 'percentage' | 'system_controlled' | ''
     splitValue: string
   }
 }
@@ -90,19 +90,24 @@ export function AgentInfoTab() {
         : {}
 
       // Build commission settings - only include non-empty fields
+      // When splitType is 'system_controlled', omit splitValue as it's managed by the system
+      const isSystemControlled = data.commissionSettings.splitType === 'system_controlled'
       const hasCommissionSettings =
         data.commissionSettings.defaultRate ||
         data.commissionSettings.splitType ||
-        data.commissionSettings.splitValue
+        (!isSystemControlled && data.commissionSettings.splitValue)
       const commissionSettings = hasCommissionSettings
         ? {
             defaultRate: data.commissionSettings.defaultRate
               ? parseFloat(data.commissionSettings.defaultRate)
               : undefined,
             splitType: data.commissionSettings.splitType || undefined,
-            splitValue: data.commissionSettings.splitValue
-              ? parseFloat(data.commissionSettings.splitValue)
-              : undefined,
+            // Omit splitValue when system controlled
+            splitValue: isSystemControlled
+              ? undefined
+              : data.commissionSettings.splitValue
+                ? parseFloat(data.commissionSettings.splitValue)
+                : undefined,
           }
         : {}
 
@@ -252,20 +257,26 @@ export function AgentInfoTab() {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="splitType">Commission Split Type</Label>
-              <Select
-                value={form.watch('commissionSettings.splitType')}
-                onValueChange={(value) =>
-                  form.setValue('commissionSettings.splitType', value as 'fixed' | 'percentage')
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select split type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="percentage">Percentage</SelectItem>
-                  <SelectItem value="fixed">Fixed Amount</SelectItem>
-                </SelectContent>
-              </Select>
+              <Controller
+                name="commissionSettings.splitType"
+                control={form.control}
+                render={({ field }) => (
+                  <Select
+                    key={`splitType-${field.value}`}
+                    value={field.value || undefined}
+                    onValueChange={field.onChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select split type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="system_controlled">System Controlled</SelectItem>
+                      <SelectItem value="percentage">Percentage</SelectItem>
+                      <SelectItem value="fixed">Fixed Amount</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="splitValue">
@@ -279,7 +290,11 @@ export function AgentInfoTab() {
                 step="0.01"
                 {...form.register('commissionSettings.splitValue')}
                 placeholder={form.watch('commissionSettings.splitType') === 'percentage' ? '50' : '100'}
+                disabled={form.watch('commissionSettings.splitType') === 'system_controlled'}
               />
+              {form.watch('commissionSettings.splitType') === 'system_controlled' && (
+                <p className="text-xs text-muted-foreground">Split value is managed by the system</p>
+              )}
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
