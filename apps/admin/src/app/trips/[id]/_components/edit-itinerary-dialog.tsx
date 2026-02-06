@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Check, X, Upload, Search, Trash2, Pencil } from 'lucide-react'
-import type { ItineraryResponseDto } from '@tailfire/shared-types/api'
+import type { ItineraryResponseDto, BatchCreateDaysDto } from '@tailfire/shared-types/api'
+import { api } from '@/lib/api'
 import {
   Dialog,
   DialogContent,
@@ -20,6 +22,7 @@ import {
   useItineraryDays,
   useCreateItineraryDay,
   useDeleteItineraryDay,
+  itineraryDayKeys,
 } from '@/hooks/use-itinerary-days'
 import { UnsplashPicker } from '@/components/unsplash-picker'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
@@ -55,6 +58,7 @@ export function EditItineraryDialog({
   onSuccess,
 }: EditItineraryDialogProps) {
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const updateItinerary = useUpdateItinerary(tripId)
 
   // Fetch itinerary days to check for Pre-Travel day
@@ -222,6 +226,10 @@ export function EditItineraryDialog({
     }
 
     try {
+      // Capture original dates before update for comparison
+      const originalStartDate = itinerary.startDate
+      const originalEndDate = itinerary.endDate
+
       await updateItinerary.mutateAsync({
         id: itinerary.id,
         data: {
@@ -232,6 +240,120 @@ export function EditItineraryDialog({
           overview: formData.overview.trim() || undefined,
         },
       })
+
+      // Check if dates were extended and we need to add days
+      if (formData.startDate && formData.endDate) {
+        const newStart = new Date(`${formData.startDate}T00:00:00Z`)
+        const newEnd = new Date(`${formData.endDate}T00:00:00Z`)
+
+        // Get existing days with dates (excluding Day 0)
+        const datedDays = days
+          .filter((d): d is typeof d & { date: string } => !!d.date && d.dayNumber !== 0)
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+        // Calculate day coverage
+        let effectiveStart: Date | null = null
+        let effectiveEnd: Date | null = null
+
+        if (datedDays.length > 0) {
+          const firstDay = datedDays[0]!
+          const lastDay = datedDays[datedDays.length - 1]!
+          const firstDateStr = firstDay.date.split('T')[0] ?? firstDay.date
+          const lastDateStr = lastDay.date.split('T')[0] ?? lastDay.date
+          effectiveStart = new Date(`${firstDateStr}T00:00:00Z`)
+          effectiveEnd = new Date(`${lastDateStr}T00:00:00Z`)
+        } else if (originalStartDate && originalEndDate) {
+          const origStartStr = originalStartDate.split('T')[0] ?? originalStartDate
+          const origEndStr = originalEndDate.split('T')[0] ?? originalEndDate
+          effectiveStart = new Date(`${origStartStr}T00:00:00Z`)
+          effectiveEnd = new Date(`${origEndStr}T00:00:00Z`)
+        }
+
+        const daysToAddAtStart: string[] = []
+        const daysToAddAtEnd: string[] = []
+
+        // Helper to format date as YYYY-MM-DD
+        const formatDateISO = (d: Date): string => d.toISOString().split('T')[0] ?? ''
+
+        // Check if we need to add days at the start
+        if (effectiveStart && newStart < effectiveStart) {
+          const currentDate = new Date(newStart)
+          while (currentDate < effectiveStart) {
+            daysToAddAtStart.push(formatDateISO(currentDate))
+            currentDate.setUTCDate(currentDate.getUTCDate() + 1)
+          }
+        }
+
+        // Check if we need to add days at the end
+        if (effectiveEnd && newEnd > effectiveEnd) {
+          const currentDate = new Date(effectiveEnd)
+          currentDate.setUTCDate(currentDate.getUTCDate() + 1) // Start from day after last
+          while (currentDate <= newEnd) {
+            daysToAddAtEnd.push(formatDateISO(currentDate))
+            currentDate.setUTCDate(currentDate.getUTCDate() + 1)
+          }
+        }
+
+        // If no existing days, generate all days for the date range
+        if (!effectiveStart && !effectiveEnd && datedDays.length === 0) {
+          const currentDate = new Date(newStart)
+          while (currentDate <= newEnd) {
+            daysToAddAtEnd.push(formatDateISO(currentDate))
+            currentDate.setUTCDate(currentDate.getUTCDate() + 1)
+          }
+        }
+
+        // Add days at start if needed (must use count mode - date range not supported for 'start')
+        // Note: If Pre-Travel (Day 0) exists, adding at start will shift day numbers
+        if (daysToAddAtStart.length > 0 && !hasPreTravel) {
+          try {
+            // Chunk into batches of max 30 days to avoid API limit
+            const chunkSize = 30
+            for (let i = 0; i < daysToAddAtStart.length; i += chunkSize) {
+              const chunkCount = Math.min(chunkSize, daysToAddAtStart.length - i)
+              const batchData: BatchCreateDaysDto = {
+                count: chunkCount,
+                position: 'start',
+              }
+              await api.post(`/itineraries/${itinerary.id}/days/batch`, batchData)
+            }
+          } catch (e) {
+            console.warn('Failed to add days at start:', e)
+          }
+        } else if (daysToAddAtStart.length > 0 && hasPreTravel) {
+          // Skip start extension when Pre-Travel exists to preserve Day 0
+          console.warn('Skipping start extension: Pre-Travel Day (Day 0) exists and would be renumbered')
+        }
+
+        // Add days at end if needed (date range mode is supported for 'end')
+        if (daysToAddAtEnd.length > 0) {
+          try {
+            // Chunk into batches of max 30 days to avoid API limit
+            const chunkSize = 30
+            for (let i = 0; i < daysToAddAtEnd.length; i += chunkSize) {
+              const chunkEnd = Math.min(i + chunkSize - 1, daysToAddAtEnd.length - 1)
+              const startDateChunk = daysToAddAtEnd[i]
+              const endDateChunk = daysToAddAtEnd[chunkEnd]
+              if (startDateChunk && endDateChunk) {
+                const batchData: BatchCreateDaysDto = {
+                  startDate: startDateChunk,
+                  endDate: endDateChunk,
+                  position: 'end',
+                }
+                await api.post(`/itineraries/${itinerary.id}/days/batch`, batchData)
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to add days at end:', e)
+          }
+        }
+
+        // Invalidate day caches if any days were added
+        if (daysToAddAtStart.length > 0 || daysToAddAtEnd.length > 0) {
+          queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itinerary.id) })
+          queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itinerary.id) })
+        }
+      }
 
       toast({
         title: 'Itinerary updated',

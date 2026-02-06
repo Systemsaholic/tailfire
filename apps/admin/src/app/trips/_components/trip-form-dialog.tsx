@@ -4,11 +4,10 @@ import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Search, Trash2 } from 'lucide-react'
-import type { TripResponseDto, TripWithDetailsResponseDto } from '@tailfire/shared-types/api'
+import type { TripResponseDto, ItineraryResponseDto, ItineraryDayResponseDto } from '@tailfire/shared-types/api'
 import { useLoading } from '@/context/loading-context'
 import { itineraryDayKeys } from '@/hooks/use-itinerary-days'
 import { itineraryKeys } from '@/hooks/use-itineraries'
-import type { ItineraryDayResponseDto } from '@tailfire/shared-types/api'
 import {
   Dialog,
   DialogContent,
@@ -173,10 +172,12 @@ export function TripFormDialog({
 
         // Auto-extend itinerary days if trip dates were added or extended
         // Need to fetch full trip details since list view doesn't include itineraries
+        console.log('[DEBUG] Trip update complete. hasDates:', hasDates, 'hadDates:', hadDates)
         if (hasDates) {
           try {
-            const fullTrip = await api.get<TripWithDetailsResponseDto>(`/trips/${trip.id}`)
-            const itineraries = fullTrip.itineraries || []
+            console.log('[DEBUG] Fetching itineraries for trip...')
+            const itineraries = await api.get<ItineraryResponseDto[]>(`/trips/${trip.id}/itineraries`)
+            console.log('[DEBUG] Found itineraries:', itineraries.length, itineraries.map(i => ({ id: i.id, name: i.name, startDate: i.startDate, endDate: i.endDate })))
 
             for (const itinerary of itineraries) {
               // Case 1: Trip didn't have dates before, now it does → auto-generate
@@ -189,7 +190,7 @@ export function TripFormDialog({
                   )
 
                   // Update itinerary dates to match trip dates first
-                  await api.patch(`/itineraries/${itinerary.id}`, {
+                  await api.patch(`/trips/${trip.id}/itineraries/${itinerary.id}`, {
                     startDate: newStartDate,
                     endDate: newEndDate,
                   })
@@ -217,30 +218,81 @@ export function TripFormDialog({
                 continue
               }
 
-              // Case 2: Trip dates were extended → add days at start/end
-              const oldStart = new Date(oldStartDate!)
-              const newStart = new Date(newStartDate)
-              const startExtended = newStart < oldStart
-              const daysToAddAtStart = startExtended
-                ? Math.ceil((oldStart.getTime() - newStart.getTime()) / (1000 * 60 * 60 * 24))
-                : 0
+              // Case 2: Trip dates changed → sync itinerary dates and add days if needed
+              // Use UTC parsing to avoid timezone issues
+              const newTripStart = new Date(`${newStartDate}T00:00:00Z`)
+              const newTripEnd = new Date(`${newEndDate}T00:00:00Z`)
+              const itinStart = itinerary.startDate ? new Date(`${itinerary.startDate.split('T')[0]}T00:00:00Z`) : null
+              const itinEnd = itinerary.endDate ? new Date(`${itinerary.endDate.split('T')[0]}T00:00:00Z`) : null
 
-              const oldEnd = new Date(oldEndDate!)
-              const newEnd = new Date(newEndDate)
-              const endExtended = newEnd > oldEnd
-              const daysToAddAtEnd = endExtended
-                ? Math.ceil((newEnd.getTime() - oldEnd.getTime()) / (1000 * 60 * 60 * 24))
-                : 0
+              console.log('[DEBUG] Trip date sync:', {
+                newTripStart: newStartDate,
+                newTripEnd: newEndDate,
+                itinStart: itinerary.startDate,
+                itinEnd: itinerary.endDate,
+                itineraryId: itinerary.id,
+              })
 
-              // Update itinerary dates to match new trip dates
+              // Calculate if trip dates extend beyond itinerary dates
+              // If itinerary dates are null, treat as needing full sync
+              const startExtended = itinStart ? newTripStart < itinStart : true
+              const endExtended = itinEnd ? newTripEnd > itinEnd : true
+
+              // Fetch existing days to find actual date coverage
+              const existingDays = await api.get<ItineraryDayResponseDto[]>(
+                `/itineraries/${itinerary.id}/days`
+              )
+
+              // Find first and last dated days
+              const datedDays = existingDays.filter((d): d is ItineraryDayResponseDto & { date: string } => !!d.date)
+                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+              const firstDay = datedDays[0]
+              const lastDay = datedDays[datedDays.length - 1]
+              const firstDayDate = firstDay ? new Date(`${firstDay.date.split('T')[0]}T00:00:00Z`) : null
+              const lastDayDate = lastDay ? new Date(`${lastDay.date.split('T')[0]}T00:00:00Z`) : null
+
+              console.log('[DEBUG] Existing days coverage:', {
+                totalDays: existingDays.length,
+                datedDays: datedDays.length,
+                firstDayDate: firstDayDate?.toISOString(),
+                lastDayDate: lastDayDate?.toISOString(),
+              })
+
+              // Calculate days to add based on actual day coverage (not itinerary dates)
+              let daysToAddAtStart = 0
+              let daysToAddAtEnd = 0
+
+              // Use existing day dates to calculate gaps, fall back to itinerary dates
+              const effectiveStart = firstDayDate || itinStart
+              const effectiveEnd = lastDayDate || itinEnd
+
+              if (startExtended && effectiveStart) {
+                daysToAddAtStart = Math.round((effectiveStart.getTime() - newTripStart.getTime()) / (1000 * 60 * 60 * 24))
+              }
+
+              if (endExtended && effectiveEnd) {
+                daysToAddAtEnd = Math.round((newTripEnd.getTime() - effectiveEnd.getTime()) / (1000 * 60 * 60 * 24))
+              }
+
+              console.log('[DEBUG] Extension calc:', {
+                startExtended,
+                endExtended,
+                daysToAddAtStart,
+                daysToAddAtEnd,
+                itinStartNull: !itinStart,
+                itinEndNull: !itinEnd,
+              })
+
+              // Always sync itinerary dates to match trip dates when extended or missing
               if (startExtended || endExtended) {
                 try {
                   const newItinStart = startExtended ? newStartDate : itinerary.startDate
                   const newItinEnd = endExtended ? newEndDate : itinerary.endDate
-                  await api.patch(`/itineraries/${itinerary.id}`, {
+                  await api.patch(`/trips/${trip.id}/itineraries/${itinerary.id}`, {
                     startDate: newItinStart,
                     endDate: newItinEnd,
                   })
+                  console.log('[DEBUG] Patched itinerary dates:', { newItinStart, newItinEnd })
                   // Invalidate itinerary cache after date update
                   queryClient.invalidateQueries({
                     queryKey: itineraryKeys.list(trip.id),
@@ -273,6 +325,7 @@ export function TripFormDialog({
 
               // Add days at end if needed
               if (daysToAddAtEnd > 0) {
+                console.log('[DEBUG] Adding days at end:', { count: daysToAddAtEnd, itineraryId: itinerary.id })
                 try {
                   await api.post(`/itineraries/${itinerary.id}/days/batch`, {
                     count: daysToAddAtEnd,
