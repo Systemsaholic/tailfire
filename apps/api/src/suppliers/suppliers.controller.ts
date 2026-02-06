@@ -15,10 +15,13 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common'
 import { ApiTags } from '@nestjs/swagger'
 import { SuppliersService } from './suppliers.service'
 import { CreateSupplierDto, UpdateSupplierDto, ListSuppliersDto } from './dto'
+import { Roles } from '../auth/decorators/roles.decorator'
+import { RolesGuard } from '../auth/guards/roles.guard'
 import type { SupplierDto, SupplierListResponseDto } from '@tailfire/shared-types'
 
 @ApiTags('Suppliers')
@@ -36,10 +39,12 @@ export class SuppliersController {
   }
 
   /**
-   * Create a new supplier
+   * Create a new supplier (Admin only)
    * POST /suppliers
    */
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles('admin')
   @HttpCode(HttpStatus.CREATED)
   async create(@Body() createSupplierDto: CreateSupplierDto): Promise<SupplierDto> {
     return this.suppliersService.create(createSupplierDto)
@@ -67,10 +72,12 @@ export class SuppliersController {
   }
 
   /**
-   * Delete a supplier
+   * Delete a supplier (Admin only)
    * DELETE /suppliers/:id
    */
   @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id') id: string): Promise<void> {
     return this.suppliersService.remove(id)
