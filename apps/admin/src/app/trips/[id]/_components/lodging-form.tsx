@@ -35,8 +35,9 @@ import { useIsChildOfPackage } from '@/hooks/use-is-child-of-package'
 import { itineraryDayKeys } from '@/hooks/use-itinerary-days'
 import { EditTravelersDialog } from './edit-travelers-dialog'
 import { PaymentScheduleSection } from './payment-schedule-section'
-import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PricingSection, CommissionSection, BookingDetailsSection, type SupplierDefaults } from '@/components/pricing'
 import { buildInitialPricingState, type PricingData, type ValidationErrors } from '@/lib/pricing'
+import { useMyProfile } from '@/hooks/use-user-profile'
 import { dollarsToCents } from '@/lib/pricing/currency-helpers'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
 import { TimePicker } from '@/components/ui/time-picker'
@@ -215,6 +216,12 @@ export function LodgingForm({
 
   // Check if this activity is a child of a package (pricing controlled by parent)
   const { isChildOfPackage, parentPackageName, parentPackageId } = useIsChildOfPackage(activity)
+
+  // Fetch user profile for commission split settings
+  const { data: userProfile } = useMyProfile()
+
+  // Track supplier commission rate from selected supplier
+  const [supplierCommissionRate, setSupplierCommissionRate] = useState<number | null>(null)
 
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
@@ -638,11 +645,22 @@ export function LodgingForm({
   const handlePricingUpdate = useCallback(
     (updates: Partial<PricingData>) => {
       Object.entries(updates).forEach(([key, value]) => {
-        setValue(key as keyof LodgingFormData, value as any, { shouldDirty: true, shouldValidate: true })
+        // Convert commissionExpectedDate string back to Date (form stores Date objects)
+        if (key === 'commissionExpectedDate' && typeof value === 'string') {
+          setValue('commissionExpectedDate', stringToDate(value), { shouldDirty: true, shouldValidate: true })
+        } else {
+          setValue(key as keyof LodgingFormData, value as any, { shouldDirty: true, shouldValidate: true })
+        }
       })
     },
     [setValue]
   )
+
+  // Handle supplier defaults from BookingDetailsSection
+  const handleSupplierDefaultsApplied = useCallback((defaults: SupplierDefaults) => {
+    // Update supplier commission rate state for CommissionSection
+    setSupplierCommissionRate(defaults.commissionRate)
+  }, [])
 
   // Toggle amenity
   const toggleAmenity = (amenity: string) => {
@@ -1494,6 +1512,7 @@ export function LodgingForm({
           <BookingDetailsSection
             pricingData={pricingData}
             onUpdate={handlePricingUpdate}
+            onSupplierDefaultsApplied={handleSupplierDefaultsApplied}
           />
 
           <Separator />
@@ -1505,6 +1524,9 @@ export function LodgingForm({
             errors={pricingValidationErrors}
             isChildOfPackage={isChildOfPackage}
             parentPackageName={parentPackageName}
+            supplierCommissionRate={supplierCommissionRate}
+            userSplitValue={userProfile?.commissionSettings?.splitValue}
+            userSplitType={userProfile?.commissionSettings?.splitType}
           />
         </TabsContent>
       </Tabs>
