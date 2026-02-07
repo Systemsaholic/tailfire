@@ -39,7 +39,7 @@ export interface LicensingInfoDto {
 
 export interface CommissionSettingsDto {
   defaultRate?: number
-  splitType?: 'fixed' | 'percentage'
+  splitType?: 'fixed' | 'percentage' | 'system_controlled'
   splitValue?: number
 }
 
