@@ -87,7 +87,7 @@ export function AgentInfoTab() {
             hstNumber: data.licensingInfo.hstNumber || undefined,
             tlnAgentProfileUrl: data.licensingInfo.tlnAgentProfileUrl || undefined,
           }
-        : {}
+        : undefined
 
       // Build commission settings - only include non-empty fields
       // When splitType is 'system_controlled', omit splitValue as it's managed by the system
@@ -109,7 +109,7 @@ export function AgentInfoTab() {
                 ? parseFloat(data.commissionSettings.splitValue)
                 : undefined,
           }
-        : {}
+        : undefined
 
       const updateData: UpdateUserProfileDto = {
         emergencyContactName: data.emergencyContactName || undefined,
