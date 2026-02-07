@@ -6,6 +6,7 @@ import type {
   UpdateLodgingActivityDto,
 } from '@tailfire/shared-types/api'
 import { itineraryDayKeys } from './use-itinerary-days'
+import { bookingKeys } from './use-bookings'
 import { useToast } from './use-toast'
 
 // Query Keys
@@ -50,6 +51,8 @@ export function useCreateLodging(itineraryId: string, _dayId: string) {
       // Invalidate itinerary-specific day lists to refetch activities
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (new lodging affects unlinked activities list)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({
@@ -79,6 +82,8 @@ export function useUpdateLodging(itineraryId: string, _dayId: string) {
       // Invalidate itinerary-specific day lists to refetch activities
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (lodging pricing updates affect bookings tab)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({
@@ -108,6 +113,8 @@ export function useDeleteLodging(itineraryId: string, _dayId: string) {
       // Invalidate itinerary-specific day lists to refetch activities
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (deleted lodging affects unlinked activities list)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({

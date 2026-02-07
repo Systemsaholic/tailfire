@@ -10,6 +10,7 @@ import { api } from '@/lib/api'
 import type { ActivityResponseDto } from '@tailfire/shared-types/api'
 import { activityKeys } from './use-activities'
 import { itineraryDayKeys } from './use-itinerary-days'
+import { bookingKeys } from './use-bookings'
 import { useToast } from './use-toast'
 import type { TourFormData } from '@/lib/validation/tour-validation'
 import { toTourApiPayload } from '@/lib/validation/tour-validation'
@@ -59,6 +60,8 @@ export function useCreateTour(itineraryId: string, dayId: string) {
       void queryClient.invalidateQueries({ queryKey: activityKeys.byDay(dayId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (new tour affects unlinked activities list)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({
@@ -90,6 +93,8 @@ export function useUpdateTour(itineraryId: string, dayId: string) {
       void queryClient.invalidateQueries({ queryKey: activityKeys.byDay(dayId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (tour pricing updates affect bookings tab)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({
@@ -120,6 +125,8 @@ export function useDeleteTour(itineraryId: string, dayId: string) {
       void queryClient.invalidateQueries({ queryKey: activityKeys.byDay(dayId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (deleted tour affects unlinked activities list)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({

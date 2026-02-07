@@ -9,6 +9,7 @@ import type {
   NormalizedFlightStatus,
 } from '@tailfire/shared-types/api'
 import { itineraryDayKeys } from './use-itinerary-days'
+import { bookingKeys } from './use-bookings'
 import { useToast } from './use-toast'
 import { useDebounce } from './use-debounce'
 
@@ -96,6 +97,8 @@ export function useCreateFlight(itineraryId: string, _dayId: string) {
       // Invalidate itinerary-specific day lists to refetch activities
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (new flight affects unlinked activities list)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({
@@ -125,6 +128,8 @@ export function useUpdateFlight(itineraryId: string, _dayId: string) {
       // Invalidate itinerary-specific day lists to refetch activities
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (flight pricing updates affect bookings tab)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({
@@ -154,6 +159,8 @@ export function useDeleteFlight(itineraryId: string, _dayId: string) {
       // Invalidate itinerary-specific day lists to refetch activities
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.list(itineraryId) })
       void queryClient.invalidateQueries({ queryKey: itineraryDayKeys.withActivities(itineraryId) })
+      // Invalidate bookings cache (deleted flight affects unlinked activities list)
+      void queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error) => {
       toast({
