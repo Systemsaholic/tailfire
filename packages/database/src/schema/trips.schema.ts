@@ -29,7 +29,8 @@ export const tripStatusEnum = pgEnum('trip_status', [
   'booked',
   'in_progress',
   'completed',
-  'cancelled'
+  'cancelled',
+  'inbound'  // Incoming leads without assigned owner
 ])
 
 export const travelerTypeEnum = pgEnum('traveler_type', [
@@ -111,8 +112,8 @@ export const trips = pgTable('trips', {
   agencyId: uuid('agency_id').notNull(),
   branchId: uuid('branch_id'), // Phase 2 - Multi-branch support
 
-  // Ownership
-  ownerId: uuid('owner_id').notNull(), // Primary advisor (FK to users)
+  // Ownership (nullable for 'inbound' trips without assigned owner)
+  ownerId: uuid('owner_id'), // Primary advisor (FK to users) - NULL allowed for inbound leads
 
   // Basic Information
   name: varchar('name', { length: 255 }).notNull(), // "Paris Honeymoon 2026"

@@ -1,0 +1,200 @@
+# Next Steps: Contact & Trip Ownership Management
+
+## Implementation Status: Phase 1 Complete ✅
+
+The core Contact & Trip Ownership Management implementation is complete and ready for commit.
+
+### Completed Features:
+- ✅ Database migration with `inbound` status, nullable `owner_id`, `contact_shares` and `trip_shares` tables
+- ✅ Drizzle schemas for new tables
+- ✅ `ContactAccessService` with full access control logic
+- ✅ Contact sharing CRUD endpoints (`/contacts/:id/shares`)
+- ✅ Trip sharing CRUD endpoints (`/trips/:id/shares`)
+- ✅ `contacts.controller.ts` now uses `ContactAccessService` (shares affect visibility)
+- ✅ `trip-travelers.service.ts` validates contact access and filters snapshots
+- ✅ `inbound` status in all DTOs and filter options
+- ✅ Admin re-assignment endpoints for trips and contacts
+
+---
+
+## Phase 2: Trip Share Enforcement (High Priority)
+
+### Issue
+Trip shares are stored but not enforced. Users with `trip_shares` access don't gain read/write access to trips.
+
+### Tasks
+1. **Create `TripAccessService`** (similar to `ContactAccessService`)
+   - `canAccessTrip(tripId, auth)` → `{ canRead, canWrite, reason }`
+   - Check owner, admin, and `trip_shares.access_level`
+
+2. **Enforce in `trips.controller.ts`**
+   - `findOne()` - Check read access
+   - `update()` - Check write access (currently owner-only)
+   - `publish()`/`unpublish()` - Check write access
+
+3. **Enforce in `trip-travelers.controller.ts`**
+   - All endpoints should verify user has trip access
+
+4. **Enforce in related services**
+   - `itineraries.controller.ts`
+   - `activities.controller.ts`
+   - `trip-media.controller.ts`
+
+### Files to Modify
+- `apps/api/src/trips/trip-access.service.ts` (CREATE)
+- `apps/api/src/trips/trips.controller.ts`
+- `apps/api/src/trips/trip-travelers.controller.ts`
+- `apps/api/src/trips/trips.module.ts`
+
+---
+
+## Phase 3: Owner/Share Validation (High Priority)
+
+### Issue
+Owner reassignment and share creation don't validate that the target user exists or belongs to the same agency.
+
+### Tasks
+1. **Add user validation helper**
+   ```typescript
+   async validateUserInAgency(userId: string, agencyId: string): Promise<boolean>
+   ```
+
+2. **Update `trips.service.ts` `updateOwner()`**
+   - Validate new owner exists in `user_profiles`
+   - Validate new owner belongs to same agency
+
+3. **Update `contacts.service.ts` `updateOwner()`**
+   - Same validation as trips
+
+4. **Update `contact-shares.service.ts` `create()`**
+   - Validate `sharedWithUserId` exists and belongs to same agency
+
+5. **Update `trip-shares.service.ts` `create()`**
+   - Same validation as contact shares
+
+### Files to Modify
+- `apps/api/src/trips/trips.service.ts:504`
+- `apps/api/src/contacts/contacts.service.ts:356`
+- `apps/api/src/contacts/contact-shares.service.ts:31`
+- `apps/api/src/trips/trip-shares.service.ts:35`
+
+---
+
+## Phase 4: Share Endpoint Validation (Medium Priority)
+
+### Issue
+Share endpoints use shared-types DTOs without class-validator, causing 500 errors instead of 400s for invalid input.
+
+### Tasks
+1. **Create `CreateContactShareDto`** with class-validator
+   ```typescript
+   export class CreateContactShareDto {
+     @IsUUID()
+     sharedWithUserId: string
+
+     @IsIn(['basic', 'full'])
+     accessLevel: 'basic' | 'full'
+
+     @IsOptional()
+     @IsString()
+     notes?: string
+   }
+   ```
+
+2. **Create `CreateTripShareDto`** with class-validator
+   ```typescript
+   export class CreateTripShareDto {
+     @IsUUID()
+     sharedWithUserId: string
+
+     @IsIn(['read', 'write'])
+     accessLevel: 'read' | 'write'
+
+     @IsOptional()
+     @IsString()
+     notes?: string
+   }
+   ```
+
+3. **Update controllers to use new DTOs**
+
+### Files to Create/Modify
+- `apps/api/src/contacts/dto/create-contact-share.dto.ts` (CREATE)
+- `apps/api/src/trips/dto/create-trip-share.dto.ts` (CREATE)
+- `apps/api/src/contacts/contact-shares.controller.ts`
+- `apps/api/src/trips/trip-shares.controller.ts`
+
+---
+
+## Phase 5: Frontend Updates (Lower Priority)
+
+### Tasks
+1. **Contact sharing UI**
+   - Share dialog in contact detail view
+   - Share badge showing access level
+
+2. **Trip sharing UI**
+   - Share dialog in trip sidebar
+   - Collaborator list with access levels
+
+3. **Admin re-assignment UI**
+   - Re-assign owner dialog for admins
+   - Bulk ownership management view
+
+4. **Update status dropdowns**
+   - Add `inbound` to trip status selectors
+   - Handle inbound-specific UI (no owner badge)
+
+### Files to Create
+- `apps/admin/src/components/contacts/contact-sharing-dialog.tsx`
+- `apps/admin/src/components/trips/trip-sharing-dialog.tsx`
+- `apps/admin/src/components/admin/reassign-owner-dialog.tsx`
+- `apps/admin/src/hooks/use-contact-shares.ts`
+- `apps/admin/src/hooks/use-trip-shares.ts`
+
+---
+
+## Phase 6: Testing (Required Before Production)
+
+### Unit Tests
+- [ ] `ContactAccessService` - all access level scenarios
+- [ ] `contact-shares.service.ts` - CRUD operations
+- [ ] `trip-shares.service.ts` - CRUD operations
+- [ ] Snapshot filtering in `trip-travelers.service.ts`
+
+### Integration Tests
+- [ ] Contact visibility with shares
+- [ ] Trip access with shares (after Phase 2)
+- [ ] Owner reassignment validation (after Phase 3)
+- [ ] Cross-agency share prevention
+
+### E2E Tests
+- [ ] Agent A creates contact, Agent B sees basic fields only
+- [ ] Agent A shares with full access, Agent B sees all fields
+- [ ] Admin creates inbound trip with no owner
+- [ ] Admin re-assigns trip to different user
+
+---
+
+## Priority Order
+
+1. **Commit Current Implementation** - Phase 1 complete
+2. **Phase 2: Trip Share Enforcement** - Security critical
+3. **Phase 3: Owner/Share Validation** - Security critical
+4. **Phase 4: Share Endpoint Validation** - Reliability
+5. **Phase 6: Testing** - Before production
+6. **Phase 5: Frontend Updates** - User-facing features
+
+---
+
+## Technical Notes
+
+### RLS Bypass
+The API uses a service role that bypasses RLS. All access control must be enforced in the application layer.
+
+### Circular Dependencies
+`TripsModule` imports `ContactsModule` via `forwardRef`. No circular dependency issues.
+
+### Backwards Compatibility
+- Auth context is optional in `trip-travelers.service.ts` for backwards compatibility
+- Will be made required in future version

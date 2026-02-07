@@ -350,6 +350,27 @@ export class ContactsService {
   }
 
   /**
+   * Update contact ownership (Admin only)
+   * Can set to any user in the agency or null (agency-wide)
+   */
+  async updateOwner(id: string, ownerId: string | null, agencyId: string): Promise<ContactResponseDto> {
+    const [contact] = await this.db.client
+      .update(this.db.schema.contacts)
+      .set({
+        ownerId,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(this.db.schema.contacts.id, id), eq(this.db.schema.contacts.agencyId, agencyId)))
+      .returning()
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${id} not found`)
+    }
+
+    return this.mapToResponseDto(contact)
+  }
+
+  /**
    * Update marketing consent
    */
   async updateMarketingConsent(id: string, dto: any, agencyId: string): Promise<ContactResponseDto> {

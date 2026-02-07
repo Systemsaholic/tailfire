@@ -45,7 +45,7 @@ export interface CreateTripDto {
   bookingDate?: string // ISO date string
 
   // Optional status
-  status?: 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
+  status?: 'inbound' | 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
 
   // Optional associations
   primaryContactId?: string // UUID
@@ -176,7 +176,8 @@ export interface UpdateTripDto {
   startDate?: string
   endDate?: string
   bookingDate?: string
-  status?: 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
+  status?: 'inbound' | 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
+  ownerId?: string | null // Can set to null only if status is 'inbound'
   primaryContactId?: string
   referenceNumber?: string
   externalReference?: string
@@ -252,7 +253,7 @@ export interface TripFilterDto {
   search?: string // Full-text search across name, description, reference
 
   // Filters
-  status?: 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
+  status?: 'inbound' | 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
   tripType?: 'leisure' | 'business' | 'group' | 'honeymoon' | 'corporate' | 'custom'
   ownerId?: string // Filter by owner
   primaryContactId?: string // Filter by primary contact
@@ -308,7 +309,7 @@ export interface TripResponseDto {
   id: string
   agencyId: string | null // Nullable - single agency model
   branchId: string | null
-  ownerId: string
+  ownerId: string | null // Nullable for inbound trips
   owner?: UserSummaryDto // Populated when user data is available
   name: string
   description: string | null
@@ -507,7 +508,7 @@ export interface BulkArchiveTripsDto {
  */
 export interface BulkChangeStatusDto {
   tripIds: string[]
-  status: 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
+  status: 'inbound' | 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
 }
 
 /**
@@ -571,4 +572,68 @@ export interface TripGroupTripDto {
   name: string
   status: string
   startDate: string | null
+}
+
+// ============================================================================
+// TRIP SHARING DTOs
+// ============================================================================
+
+/**
+ * Access level for trip sharing
+ * - read: View trip details only
+ * - write: Can modify trip (add activities, update details)
+ */
+export type TripShareAccessLevel = 'read' | 'write'
+
+/**
+ * Create a trip share
+ * NOTE: This is separate from trip_collaborators which handles commission splits
+ */
+export interface CreateTripShareDto {
+  sharedWithUserId: string
+  accessLevel?: TripShareAccessLevel // Defaults to 'read'
+  notes?: string
+}
+
+/**
+ * Update a trip share
+ */
+export interface UpdateTripShareDto {
+  accessLevel?: TripShareAccessLevel
+  notes?: string
+}
+
+/**
+ * Response DTO for trip share
+ */
+export interface TripShareResponseDto {
+  id: string
+  tripId: string
+  sharedWithUserId: string
+  accessLevel: TripShareAccessLevel
+  sharedBy: string
+  sharedAt: string
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+  // Populated user data (when available)
+  sharedWithUser?: {
+    id: string
+    firstName: string | null
+    lastName: string | null
+    email: string
+  }
+  sharedByUser?: {
+    id: string
+    firstName: string | null
+    lastName: string | null
+    email: string
+  }
+}
+
+/**
+ * Re-assign trip ownership (Admin only)
+ */
+export interface UpdateTripOwnerDto {
+  ownerId: string | null // null = only valid for inbound trips
 }

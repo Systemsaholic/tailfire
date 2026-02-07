@@ -39,7 +39,7 @@
  * └───────────┘
  */
 
-export type TripStatus = 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
+export type TripStatus = 'inbound' | 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
 
 /**
  * Valid status transitions map
@@ -57,7 +57,8 @@ export type TripStatus = 'draft' | 'quoted' | 'booked' | 'in_progress' | 'comple
  * - Cancelled → [terminal state - no transitions allowed]
  */
 export const TRIP_STATUS_TRANSITIONS: Record<TripStatus, TripStatus[]> = {
-  draft: ['quoted', 'booked', 'cancelled'],
+  inbound: ['draft', 'quoted', 'booked', 'cancelled'], // Inbound can transition to any active status
+  draft: ['inbound', 'quoted', 'booked', 'cancelled'],
   quoted: ['draft', 'booked', 'cancelled'],
   booked: ['in_progress', 'completed', 'cancelled'],
   in_progress: ['completed', 'cancelled'],
@@ -145,6 +146,7 @@ export function getTransitionErrorMessage(from: TripStatus, to: TripStatus): str
  */
 export function formatStatusLabel(status: TripStatus): string {
   const labels: Record<TripStatus, string> = {
+    inbound: 'Inbound',
     draft: 'Draft',
     quoted: 'Quoted',
     booked: 'Booked',
@@ -190,7 +192,7 @@ export function isTerminalStatus(status: TripStatus): boolean {
  * - API: TripsService.remove() validates status before deletion
  * - Frontend: Shows delete vs cancel button based on status
  */
-export const DELETABLE_STATUSES: readonly TripStatus[] = ['draft', 'quoted'] as const
+export const DELETABLE_STATUSES: readonly TripStatus[] = ['inbound', 'draft', 'quoted'] as const
 
 /**
  * Check if a trip can be deleted based on its status

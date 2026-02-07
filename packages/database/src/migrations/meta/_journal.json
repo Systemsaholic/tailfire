@@ -645,6 +645,13 @@
       "when": 1770612458000,
       "tag": "20260207010738_drop_cabin_category_check",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1770638400000,
+      "tag": "20260207120000_add_contact_and_trip_shares",
+      "breakpoints": true
     }
   ]
 }

@@ -47,10 +47,10 @@ export class CreateTripDto {
   @IsDateString()
   bookingDate?: string
 
-  // Optional status
+  // Optional status (includes 'inbound' for incoming leads without assigned owner)
   @IsOptional()
-  @IsIn(['draft', 'quoted', 'booked', 'in_progress', 'completed', 'cancelled'])
-  status?: 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled'
+  @IsIn(['draft', 'quoted', 'booked', 'in_progress', 'completed', 'cancelled', 'inbound'])
+  status?: 'draft' | 'quoted' | 'booked' | 'in_progress' | 'completed' | 'cancelled' | 'inbound'
 
   // Optional associations
   @IsOptional()

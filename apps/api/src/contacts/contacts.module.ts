@@ -2,7 +2,7 @@
  * Contacts Module
  *
  * Provides CRUD operations for the Contact CRM system.
- * Includes contacts, relationships, and groups management.
+ * Includes contacts, relationships, groups management, and sharing.
  */
 
 import { Module } from '@nestjs/common'
@@ -12,22 +12,30 @@ import { ContactRelationshipsController } from './contact-relationships.controll
 import { ContactRelationshipsService } from './contact-relationships.service'
 import { ContactGroupsController } from './contact-groups.controller'
 import { ContactGroupsService } from './contact-groups.service'
+import { ContactSharesController } from './contact-shares.controller'
+import { ContactSharesService } from './contact-shares.service'
+import { ContactAccessService } from './contact-access.service'
 
 @Module({
   controllers: [
     ContactsController,
     ContactRelationshipsController,
     ContactGroupsController,
+    ContactSharesController,
   ],
   providers: [
     ContactsService,
     ContactRelationshipsService,
     ContactGroupsService,
+    ContactSharesService,
+    ContactAccessService,
   ],
   exports: [
     ContactsService,
     ContactRelationshipsService,
     ContactGroupsService,
+    ContactSharesService,
+    ContactAccessService,
   ],
 })
 export class ContactsModule {}

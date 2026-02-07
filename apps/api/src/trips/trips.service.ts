@@ -45,19 +45,38 @@ export class TripsService {
 
   /**
    * Create a new trip
+   * @param ownerId - Owner ID, can be null for inbound trips
+   * @param agencyId - Required when ownerId is null (inbound trips)
    */
   async create(
     dto: CreateTripDto,
-    ownerId: string,
+    ownerId: string | null,
+    agencyId?: string,
   ): Promise<TripResponseDto> {
-    const [ownerProfile] = await this.db.client
-      .select({ agencyId: this.db.schema.userProfiles.agencyId })
-      .from(this.db.schema.userProfiles)
-      .where(eq(this.db.schema.userProfiles.id, ownerId))
-      .limit(1)
+    const status = dto.status || 'draft'
 
-    if (!ownerProfile) {
-      throw new NotFoundException('User profile not found for trip owner')
+    // Validate: trips must have an owner unless they are inbound leads
+    if (!ownerId && status !== 'inbound') {
+      throw new BadRequestException('Trips must have an owner unless status is "inbound"')
+    }
+
+    // Determine agency ID
+    let resolvedAgencyId: string | null = agencyId || null
+    if (ownerId) {
+      const [ownerProfile] = await this.db.client
+        .select({ agencyId: this.db.schema.userProfiles.agencyId })
+        .from(this.db.schema.userProfiles)
+        .where(eq(this.db.schema.userProfiles.id, ownerId))
+        .limit(1)
+
+      if (!ownerProfile) {
+        throw new NotFoundException('User profile not found for trip owner')
+      }
+      resolvedAgencyId = ownerProfile.agencyId
+    }
+
+    if (!resolvedAgencyId) {
+      throw new BadRequestException('Agency ID is required for trips without an owner')
     }
 
     // Validate primaryContactId if provided
@@ -73,13 +92,12 @@ export class TripsService {
       }
     }
 
-    const status = dto.status || 'draft'
     const bookingDate = dto.bookingDate || (status === 'booked' ? new Date().toISOString().split('T')[0] : undefined)
 
     const [trip] = await this.db.client
       .insert(this.db.schema.trips)
       .values({
-        agencyId: ownerProfile.agencyId,
+        agencyId: resolvedAgencyId,
         ownerId,
         name: dto.name,
         description: dto.description,
@@ -361,6 +379,25 @@ export class TripsService {
         )
         throw new BadRequestException(errorMessage)
       }
+
+      // Validate: when transitioning FROM inbound, must have an owner
+      if (existingTrip.status === 'inbound' && dto.status !== 'inbound') {
+        const newOwnerId = dto.ownerId ?? existingTrip.ownerId
+        if (!newOwnerId) {
+          throw new BadRequestException('Cannot change status from "inbound" without assigning an owner')
+        }
+      }
+    }
+
+    // Validate ownerId changes
+    if ('ownerId' in dto) {
+      // Can only set ownerId to null if status is or will be 'inbound'
+      if (dto.ownerId === null) {
+        const finalStatus = dto.status ?? existingTrip.status
+        if (finalStatus !== 'inbound') {
+          throw new BadRequestException('Trips can only have no owner when status is "inbound"')
+        }
+      }
     }
 
     // Validate primaryContactId if provided
@@ -456,6 +493,48 @@ export class TripsService {
         new TripBookedEvent(trip.id, primaryContactId, bookingDate),
       )
     }
+
+    return this.mapToResponseDto(trip)
+  }
+
+  /**
+   * Update trip ownership (Admin only)
+   * Can set to any user in the agency or null (only if status is 'inbound')
+   */
+  async updateOwner(id: string, ownerId: string | null): Promise<TripResponseDto> {
+    const [existingTrip] = await this.db.client
+      .select()
+      .from(this.db.schema.trips)
+      .where(eq(this.db.schema.trips.id, id))
+      .limit(1)
+
+    if (!existingTrip) {
+      throw new NotFoundException(`Trip with ID ${id} not found`)
+    }
+
+    // Can only set ownerId to null if status is 'inbound'
+    if (ownerId === null && existingTrip.status !== 'inbound') {
+      throw new BadRequestException('Trips can only have no owner when status is "inbound"')
+    }
+
+    const [trip] = await this.db.client
+      .update(this.db.schema.trips)
+      .set({
+        ownerId,
+        updatedAt: new Date(),
+      })
+      .where(eq(this.db.schema.trips.id, id))
+      .returning()
+
+    if (!trip) {
+      throw new NotFoundException(`Trip with ID ${id} not found`)
+    }
+
+    // Emit trip updated event
+    this.eventEmitter.emit(
+      'trip.updated',
+      new TripUpdatedEvent(trip.id, trip.name, null, { ownerId }),
+    )
 
     return this.mapToResponseDto(trip)
   }
@@ -799,7 +878,7 @@ export class TripsService {
 
     // Return static options + dynamic tags + groups
     return {
-      statuses: ['draft', 'quoted', 'booked', 'in_progress', 'completed', 'cancelled'] as TripStatus[],
+      statuses: ['draft', 'quoted', 'booked', 'in_progress', 'completed', 'cancelled', 'inbound'] as TripStatus[],
       tripTypes: ['leisure', 'business', 'group', 'honeymoon', 'corporate', 'custom'],
       tags,
       groups: groupsResult,

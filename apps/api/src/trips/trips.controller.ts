@@ -44,6 +44,7 @@ import type {
   UnlinkedActivitiesResponseDto,
   TripExpectedPaymentDto,
   TripPaymentTransactionDto,
+  UpdateTripOwnerDto,
 } from '../../../../packages/shared-types/src/api'
 
 @ApiTags('Trips')
@@ -367,6 +368,25 @@ export class TripsController {
       }
     }
     return this.tripsService.remove(id)
+  }
+
+  /**
+   * Re-assign trip ownership (Admin only)
+   * PATCH /trips/:id/owner
+   *
+   * Only admins can change trip ownership.
+   * Can set to any user in the agency or null (only if status is 'inbound').
+   */
+  @Patch(':id/owner')
+  async updateOwner(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+    @Body() dto: UpdateTripOwnerDto,
+  ): Promise<TripResponseDto> {
+    if (auth.role !== 'admin') {
+      throw new ForbiddenException('Only admins can re-assign trip ownership')
+    }
+    return this.tripsService.updateOwner(id, dto.ownerId)
   }
 
   // ============================================================================

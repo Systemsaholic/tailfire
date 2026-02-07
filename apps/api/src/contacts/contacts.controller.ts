@@ -2,7 +2,7 @@
  * Contacts Controller
  *
  * REST API endpoints for Contact management.
- * Implements limited view for non-owner access per auth plan.
+ * Uses ContactAccessService for access control including contact shares.
  */
 
 import {
@@ -21,6 +21,7 @@ import {
 } from '@nestjs/common'
 import { ApiTags } from '@nestjs/swagger'
 import { ContactsService } from './contacts.service'
+import { ContactAccessService } from './contact-access.service'
 import {
   CreateContactDto,
   UpdateContactDto,
@@ -29,64 +30,18 @@ import {
 import type {
   ContactResponseDto,
   PaginatedContactsResponseDto,
+  UpdateContactOwnerDto,
 } from '../../../../packages/shared-types/src/api'
 import { GetAuthContext } from '../auth/decorators/auth-context.decorator'
 import type { AuthContext } from '../auth/auth.types'
 
-/**
- * Sensitive fields to strip for non-owner access.
- * Limited view = Name, Email, Phone, Address only.
- */
-const SENSITIVE_FIELDS = [
-  'passportNumber',
-  'passportExpiry',
-  'passportCountry',
-  'passportIssueDate',
-  'nationality',
-  'redressNumber',
-  'knownTravelerNumber',
-  'dateOfBirth',
-  'dietaryRequirements',
-  'mobilityRequirements',
-  'trustBalanceCad',
-  'trustBalanceUsd',
-  'marketingEmailOptIn',
-  'marketingEmailOptInAt',
-  'marketingSmsOptIn',
-  'marketingSmsOptInAt',
-  'marketingPhoneOptIn',
-  'marketingPhoneOptInAt',
-  'marketingOptInSource',
-  'marketingOptOutAt',
-  'marketingOptOutReason',
-] as const
-
-/**
- * Apply limited view filter - strips sensitive fields for non-owners
- */
-function applyLimitedView(
-  contact: ContactResponseDto,
-  auth: AuthContext
-): ContactResponseDto {
-  // Admins and owners get full access
-  if (auth.role === 'admin' || contact.ownerId === auth.userId) {
-    return contact
-  }
-
-  // Non-owners get limited view - strip sensitive fields
-  const filtered = { ...contact }
-  for (const field of SENSITIVE_FIELDS) {
-    if (field in filtered) {
-      ;(filtered as Record<string, unknown>)[field] = null
-    }
-  }
-  return filtered
-}
-
 @ApiTags('Contacts')
 @Controller('contacts')
 export class ContactsController {
-  constructor(private readonly contactsService: ContactsService) {}
+  constructor(
+    private readonly contactsService: ContactsService,
+    private readonly contactAccessService: ContactAccessService,
+  ) {}
 
   /**
    * Create a new contact
@@ -122,10 +77,11 @@ export class ContactsController {
     @Query() filters: ContactFilterDto
   ): Promise<PaginatedContactsResponseDto> {
     const result = await this.contactsService.findAll(filters, auth.agencyId)
-    // Apply limited view filter to each contact
+    // Apply access control filtering using ContactAccessService (includes shares)
+    const filteredData = await this.contactAccessService.applyAccessControlToMany(result.data, auth)
     return {
       ...result,
-      data: result.data.map((contact) => applyLimitedView(contact, auth)),
+      data: filteredData,
     }
   }
 
@@ -152,7 +108,8 @@ export class ContactsController {
     @Param('id') id: string
   ): Promise<ContactResponseDto> {
     const contact = await this.contactsService.findOne(id, auth.agencyId)
-    return applyLimitedView(contact, auth)
+    // Apply access control filtering using ContactAccessService (includes shares)
+    return this.contactAccessService.applyAccessControl(contact, auth)
   }
 
   /**
@@ -167,11 +124,11 @@ export class ContactsController {
     @Param('id') id: string,
     @Body() dto: UpdateContactDto,
   ): Promise<ContactResponseDto> {
-    // Check ownership for non-admins
+    // Check ownership or full share access for non-admins
     if (auth.role !== 'admin') {
-      const existing = await this.contactsService.findOne(id, auth.agencyId)
-      if (existing.ownerId !== auth.userId) {
-        throw new ForbiddenException('You can only update contacts you own')
+      const accessResult = await this.contactAccessService.canAccessSensitiveData(id, auth)
+      if (!accessResult.canAccessSensitive) {
+        throw new ForbiddenException('You can only update contacts you own or have full access to')
       }
     }
     return this.contactsService.update(id, dto, auth.agencyId)
@@ -224,18 +181,29 @@ export class ContactsController {
   /**
    * Promote a lead to client
    * POST /contacts/:id/promote-to-client
+   * - Admins can promote any contact
+   * - Users can only promote contacts they own or agency-wide contacts
    */
   @Post(':id/promote-to-client')
   async promoteToClient(
     @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
   ): Promise<ContactResponseDto> {
+    // Check ownership for non-admins
+    if (auth.role !== 'admin') {
+      const existing = await this.contactsService.findOne(id, auth.agencyId)
+      if (existing.ownerId !== null && existing.ownerId !== auth.userId) {
+        throw new ForbiddenException('You can only promote contacts you own')
+      }
+    }
     return this.contactsService.promoteToClient(id, auth.agencyId)
   }
 
   /**
    * Update contact status
    * PATCH /contacts/:id/status
+   * - Admins can update any contact's status
+   * - Users can only update status of contacts they own or agency-wide contacts
    */
   @Patch(':id/status')
   async updateStatus(
@@ -243,12 +211,21 @@ export class ContactsController {
     @Param('id') id: string,
     @Body() dto: { status: string },
   ): Promise<ContactResponseDto> {
+    // Check ownership for non-admins
+    if (auth.role !== 'admin') {
+      const existing = await this.contactsService.findOne(id, auth.agencyId)
+      if (existing.ownerId !== null && existing.ownerId !== auth.userId) {
+        throw new ForbiddenException('You can only update status of contacts you own')
+      }
+    }
     return this.contactsService.updateStatus(id, dto.status, auth.agencyId)
   }
 
   /**
    * Update marketing consent
    * PATCH /contacts/:id/marketing-consent
+   * - Admins can update any contact's marketing consent
+   * - Users can only update marketing consent of contacts they own or agency-wide contacts
    */
   @Patch(':id/marketing-consent')
   async updateMarketingConsent(
@@ -256,6 +233,31 @@ export class ContactsController {
     @Param('id') id: string,
     @Body() dto: any,
   ): Promise<ContactResponseDto> {
+    // Check ownership for non-admins
+    if (auth.role !== 'admin') {
+      const existing = await this.contactsService.findOne(id, auth.agencyId)
+      if (existing.ownerId !== null && existing.ownerId !== auth.userId) {
+        throw new ForbiddenException('You can only update marketing consent of contacts you own')
+      }
+    }
     return this.contactsService.updateMarketingConsent(id, dto, auth.agencyId)
+  }
+
+  /**
+   * Re-assign contact ownership (Admin only)
+   * PATCH /contacts/:id/owner
+   * - Only admins can change contact ownership
+   * - Can set to any user in the agency or null (agency-wide)
+   */
+  @Patch(':id/owner')
+  async updateOwner(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+    @Body() dto: UpdateContactOwnerDto,
+  ): Promise<ContactResponseDto> {
+    if (auth.role !== 'admin') {
+      throw new ForbiddenException('Only admins can re-assign contact ownership')
+    }
+    return this.contactsService.updateOwner(id, dto.ownerId, auth.agencyId)
   }
 }

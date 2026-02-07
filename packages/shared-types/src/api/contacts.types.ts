@@ -425,3 +425,66 @@ export interface PaginatedContactGroupsResponseDto {
     totalPages: number
   }
 }
+
+// ============================================================================
+// CONTACT SHARING DTOs
+// ============================================================================
+
+/**
+ * Access level for contact sharing
+ * - basic: Name, email, phone, address only (limited view)
+ * - full: All fields including sensitive data (passport, DOB, marketing, etc.)
+ */
+export type ContactShareAccessLevel = 'basic' | 'full'
+
+/**
+ * Create a contact share
+ */
+export interface CreateContactShareDto {
+  sharedWithUserId: string
+  accessLevel?: ContactShareAccessLevel // Defaults to 'basic'
+  notes?: string
+}
+
+/**
+ * Update a contact share
+ */
+export interface UpdateContactShareDto {
+  accessLevel?: ContactShareAccessLevel
+  notes?: string
+}
+
+/**
+ * Response DTO for contact share
+ */
+export interface ContactShareResponseDto {
+  id: string
+  contactId: string
+  sharedWithUserId: string
+  accessLevel: ContactShareAccessLevel
+  sharedBy: string
+  sharedAt: string
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+  // Populated user data (when available)
+  sharedWithUser?: {
+    id: string
+    firstName: string | null
+    lastName: string | null
+    email: string
+  }
+  sharedByUser?: {
+    id: string
+    firstName: string | null
+    lastName: string | null
+    email: string
+  }
+}
+
+/**
+ * Re-assign contact ownership (Admin only)
+ */
+export interface UpdateContactOwnerDto {
+  ownerId: string | null // null = agency-wide contact
+}

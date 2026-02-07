@@ -23,6 +23,8 @@ import {
   UpdateTripTravelerDto,
   TripTravelerFilterDto,
 } from './dto'
+import { GetAuthContext } from '../auth/decorators/auth-context.decorator'
+import type { AuthContext } from '../auth/auth.types'
 import type {
   TripTravelerResponseDto,
   CreateTripTravelerDto as CreateTripTravelerDtoInterface,
@@ -39,6 +41,7 @@ export class TripTravelersController {
    */
   @Post()
   async create(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Body() createTripTravelerDto: CreateTripTravelerDto,
   ): Promise<TripTravelerResponseDto> {
@@ -46,6 +49,7 @@ export class TripTravelersController {
     return this.tripTravelersService.create(
       tripId,
       createTripTravelerDto as CreateTripTravelerDtoInterface,
+      auth,
     )
   }
 
@@ -56,11 +60,12 @@ export class TripTravelersController {
    */
   @Get()
   async findAll(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Query() filters: TripTravelerFilterDto,
   ): Promise<TripTravelerResponseDto[]> {
     // Merge tripId from route param with query filters
-    return this.tripTravelersService.findAll({ ...filters, tripId })
+    return this.tripTravelersService.findAll({ ...filters, tripId }, auth)
   }
 
   /**
@@ -71,10 +76,11 @@ export class TripTravelersController {
    */
   @Get(':id/snapshot')
   async getSnapshot(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('id') id: string,
   ): Promise<any> {
-    return this.tripTravelersService.getSnapshot(id, tripId)
+    return this.tripTravelersService.getSnapshot(id, tripId, auth)
   }
 
   /**
@@ -85,10 +91,11 @@ export class TripTravelersController {
    */
   @Post(':id/snapshot/reset')
   async resetSnapshot(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('id') id: string,
   ): Promise<TripTravelerResponseDto> {
-    return this.tripTravelersService.resetSnapshot(id, tripId)
+    return this.tripTravelersService.resetSnapshot(id, tripId, auth)
   }
 
   /**
@@ -98,10 +105,11 @@ export class TripTravelersController {
    */
   @Get(':id')
   async findOne(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('id') id: string,
   ): Promise<TripTravelerResponseDto> {
-    return this.tripTravelersService.findOne(id, tripId)
+    return this.tripTravelersService.findOne(id, tripId, auth)
   }
 
   /**
@@ -111,11 +119,12 @@ export class TripTravelersController {
    */
   @Patch(':id')
   async update(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('id') id: string,
     @Body() updateTripTravelerDto: UpdateTripTravelerDto,
   ): Promise<TripTravelerResponseDto> {
-    return this.tripTravelersService.update(id, updateTripTravelerDto, tripId)
+    return this.tripTravelersService.update(id, updateTripTravelerDto, tripId, auth)
   }
 
   /**

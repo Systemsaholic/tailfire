@@ -7,16 +7,18 @@
  * - Itineraries
  * - Traveler Groups
  *
- * Note: ContactsModule is no longer imported here. Communication with ContactsService
- * happens via domain events (TripBookedEvent) to avoid circular dependencies.
+ * Note: ContactsModule is imported for ContactAccessService (access control).
+ * Communication with ContactsService for booking events still uses domain events
+ * (TripBookedEvent) to avoid circular dependencies.
  */
 
-import { Module } from '@nestjs/common'
+import { Module, forwardRef } from '@nestjs/common'
 import { DatabaseModule } from '../db/database.module'
 import { ActivityLogsModule } from '../activity-logs/activity-logs.module'
 import { ApiCredentialsModule } from '../api-credentials/api-credentials.module'
 import { UnsplashModule } from '../unsplash/unsplash.module'
 import { FinancialsModule } from '../financials/financials.module'
+import { ContactsModule } from '../contacts/contacts.module'
 
 // Services
 import { TripsService } from './trips.service'
@@ -72,12 +74,22 @@ import {
 } from './activity-media.controller'
 import { TripMediaController } from './trip-media.controller'
 import { ActivityBookingsController } from './activity-bookings.controller'
+import { TripSharesController } from './trip-shares.controller'
+import { TripSharesService } from './trip-shares.service'
 
 @Module({
-  imports: [DatabaseModule, ActivityLogsModule, ApiCredentialsModule, UnsplashModule, FinancialsModule],
+  imports: [
+    DatabaseModule,
+    ActivityLogsModule,
+    ApiCredentialsModule,
+    UnsplashModule,
+    FinancialsModule,
+    forwardRef(() => ContactsModule), // For ContactAccessService (access control)
+  ],
   controllers: [
     TripsController,
     TripTravelersController,
+    TripSharesController,
     ItinerariesController,
     TravelerGroupsController,
     ItineraryDaysController,
@@ -101,6 +113,7 @@ import { ActivityBookingsController } from './activity-bookings.controller'
     GeolocationCascadeService,
     TripsService,
     TripTravelersService,
+    TripSharesService,
     ItinerariesService,
     TravelerGroupsService,
     ItineraryDaysService,

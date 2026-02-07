@@ -4,18 +4,20 @@
  * Business logic for managing travelers on trips.
  */
 
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common'
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common'
 import { EventEmitter2 } from '@nestjs/event-emitter'
 import { eq, and } from 'drizzle-orm'
 import { DatabaseService } from '../db/database.service'
 import { TravellerSplitsService } from '../financials/traveller-splits.service'
 import { TripNotificationsService } from '../financials/trip-notifications.service'
+import { ContactAccessService, SENSITIVE_FIELDS } from '../contacts/contact-access.service'
 import {
   TravelerCreatedEvent,
   TravelerUpdatedEvent,
   TravelerDeletedEvent,
   AuditEvent,
 } from '../activity-logs/events'
+import type { AuthContext } from '../auth/auth.types'
 import type {
   CreateTripTravelerDto,
   UpdateTripTravelerDto,
@@ -32,14 +34,17 @@ export class TripTravelersService {
     private readonly eventEmitter: EventEmitter2,
     private readonly travellerSplitsService: TravellerSplitsService,
     private readonly tripNotificationsService: TripNotificationsService,
+    private readonly contactAccessService: ContactAccessService,
   ) {}
 
   /**
    * Add a traveler to a trip
+   * @param auth - Auth context for access control (optional for backwards compat, will be required)
    */
   async create(
     tripId: string,
     dto: CreateTripTravelerDto,
+    auth?: AuthContext,
   ): Promise<TripTravelerResponseDto> {
     // Validate trip exists
     const [trip] = await this.db.client
@@ -54,8 +59,21 @@ export class TripTravelersService {
 
     // Validate contactId if provided
     let contactSnapshotFromReference: Record<string, any> | undefined
+    let canAccessSensitive = true // Default to full access for backwards compatibility
 
     if ('contactId' in dto && dto.contactId) {
+      // Validate contact access before using
+      if (auth) {
+        const canUse = await this.contactAccessService.canUseContact(dto.contactId, auth)
+        if (!canUse) {
+          throw new ForbiddenException('You do not have access to use this contact')
+        }
+
+        // Check if user can access sensitive data for snapshot filtering
+        const accessResult = await this.contactAccessService.canAccessSensitiveData(dto.contactId, auth)
+        canAccessSensitive = accessResult.canAccessSensitive
+      }
+
       const contact = await this.db.client
         .select()
         .from(this.db.schema.contacts)
@@ -66,7 +84,8 @@ export class TripTravelersService {
         throw new NotFoundException('Contact not found')
       }
 
-      contactSnapshotFromReference = this.mapContactToSnapshot(contact[0])
+      // Filter snapshot based on access level
+      contactSnapshotFromReference = this.mapContactToSnapshot(contact[0], canAccessSensitive)
     }
 
     // Validate emergencyContactId if provided
@@ -91,6 +110,7 @@ export class TripTravelersService {
     }
 
     // Auto-create a CRM Contact when traveler is created inline (snapshot only, no contactId)
+    // Set owner to trip owner so the contact belongs to the agent working on the trip
     let autoCreatedContactId: string | undefined
     if (hasContactSnapshot && !hasContactId) {
       const snapshot = dto.contactSnapshot as Record<string, any>
@@ -98,6 +118,7 @@ export class TripTravelersService {
         .insert(this.db.schema.contacts)
         .values({
           agencyId: trip.agencyId,
+          ownerId: trip.ownerId, // Set owner to trip owner for proper access control
           firstName: snapshot.firstName || null,
           lastName: snapshot.lastName || null,
           email: snapshot.email || null,
@@ -208,9 +229,11 @@ export class TripTravelersService {
 
   /**
    * Find all travelers with optional filters
+   * @param auth - Optional auth context for access control filtering
    */
   async findAll(
     filters: TripTravelerFilterDto,
+    auth?: AuthContext,
   ): Promise<TripTravelerResponseDto[]> {
     const conditions = []
 
@@ -250,16 +273,18 @@ export class TripTravelersService {
       .from(this.db.schema.tripTravelers)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
 
-    return Promise.all(travelers.map((traveler) => this.mapToResponseDto(traveler)))
+    return Promise.all(travelers.map((traveler) => this.mapToResponseDto(traveler, auth)))
   }
 
   /**
    * Find one traveler by ID
    * Optionally validates the traveler belongs to a specific trip
+   * @param auth - Optional auth context for access control filtering
    */
   async findOne(
     id: string,
     tripId?: string,
+    auth?: AuthContext,
   ): Promise<TripTravelerResponseDto> {
     // First get the traveler
     const [traveler] = await this.db.client
@@ -290,24 +315,39 @@ export class TripTravelersService {
       )
     }
 
-    return this.mapToResponseDto(traveler)
+    return this.mapToResponseDto(traveler, auth)
   }
 
   /**
    * Update a traveler
    * Optionally validates the traveler belongs to a specific trip
+   * @param auth - Optional auth context for access control filtering
    */
   async update(
     id: string,
     dto: UpdateTripTravelerDto,
     tripId?: string,
+    auth?: AuthContext,
   ): Promise<TripTravelerResponseDto> {
     // First get the traveler to validate it exists and belongs to the trip
-    const existingTraveler = await this.findOne(id, tripId)
+    const existingTraveler = await this.findOne(id, tripId, auth)
 
-    // Validate contactId if provided
+    // Validate contactId if provided (including access check when changing contactId)
     let contactSnapshotFromReference: Record<string, any> | undefined
+    let canAccessSensitive = true // Default for backwards compatibility
     if (dto.contactId) {
+      // Validate contact access if changing contactId and auth is provided
+      if (auth && dto.contactId !== existingTraveler.contactId) {
+        const canUse = await this.contactAccessService.canUseContact(dto.contactId, auth)
+        if (!canUse) {
+          throw new ForbiddenException('You do not have access to use this contact')
+        }
+
+        // Check sensitive access for snapshot filtering
+        const accessResult = await this.contactAccessService.canAccessSensitiveData(dto.contactId, auth)
+        canAccessSensitive = accessResult.canAccessSensitive
+      }
+
       const contact = await this.db.client
         .select()
         .from(this.db.schema.contacts)
@@ -318,7 +358,8 @@ export class TripTravelersService {
         throw new NotFoundException('Contact not found')
       }
 
-      contactSnapshotFromReference = this.mapContactToSnapshot(contact[0])
+      // Filter snapshot based on access level
+      contactSnapshotFromReference = this.mapContactToSnapshot(contact[0], canAccessSensitive)
     }
 
     // Validate emergencyContactId if provided
@@ -367,7 +408,21 @@ export class TripTravelersService {
     }
 
     if (dto.contactSnapshot) {
-      updateData.contactSnapshot = dto.contactSnapshot
+      // Check access level for the contact associated with this traveler
+      // This prevents users from injecting sensitive data into snapshots they shouldn't have access to
+      let snapshotCanAccessSensitive = canAccessSensitive
+      if (auth && !dto.contactId && existingTraveler.contactId) {
+        // contactId not changing but snapshot provided - check access for existing contact
+        const accessResult = await this.contactAccessService.canAccessSensitiveData(existingTraveler.contactId, auth)
+        snapshotCanAccessSensitive = accessResult.canAccessSensitive
+      }
+
+      // Filter user-provided contactSnapshot based on access level to prevent storing unauthorized sensitive data
+      if (auth && !snapshotCanAccessSensitive) {
+        updateData.contactSnapshot = this.contactAccessService.filterSnapshotFields(dto.contactSnapshot, false)
+      } else {
+        updateData.contactSnapshot = dto.contactSnapshot
+      }
       updateData.snapshotUpdatedAt = new Date()
     } else if (contactSnapshotFromReference) {
       updateData.contactSnapshot = contactSnapshotFromReference
@@ -416,7 +471,7 @@ export class TripTravelersService {
       new TravelerUpdatedEvent(traveler.id, traveler.tripId, travelerName, null, dto),
     )
 
-    return this.mapToResponseDto(traveler)
+    return this.mapToResponseDto(traveler, auth)
   }
 
   /**
@@ -531,8 +586,9 @@ export class TripTravelersService {
   /**
    * Get traveler snapshot (contact data as it was when added to trip)
    * Returns 404 if no snapshot exists
+   * @param auth - Optional auth context for access control filtering
    */
-  async getSnapshot(id: string, tripId: string) {
+  async getSnapshot(id: string, tripId: string, auth?: AuthContext) {
     const [traveler] = await this.db.client
       .select()
       .from(this.db.schema.tripTravelers)
@@ -552,9 +608,18 @@ export class TripTravelersService {
       throw new NotFoundException('No snapshot available for this traveler')
     }
 
-    // Return snapshot with timestamp
+    // Filter snapshot based on access level if contactId exists
+    let filteredSnapshot = traveler.contactSnapshot as Record<string, any>
+    if (auth && traveler.contactId) {
+      const accessResult = await this.contactAccessService.canAccessSensitiveData(traveler.contactId, auth)
+      if (!accessResult.canAccessSensitive) {
+        filteredSnapshot = this.contactAccessService.filterSnapshotFields(filteredSnapshot, false) as Record<string, any>
+      }
+    }
+
+    // Return filtered snapshot with timestamp
     return {
-      ...traveler.contactSnapshot,
+      ...filteredSnapshot,
       snapshotAt: typeof traveler.updatedAt === 'string' ? traveler.updatedAt : traveler.updatedAt.toISOString(),
     }
   }
@@ -562,14 +627,22 @@ export class TripTravelersService {
   /**
    * Reset traveler snapshot (update snapshot to current contact data)
    * Updates the contactSnapshot to match the current contact information
+   * @param auth - Optional auth context for access control filtering
    */
-  async resetSnapshot(id: string, tripId: string): Promise<TripTravelerResponseDto> {
+  async resetSnapshot(id: string, tripId: string, auth?: AuthContext): Promise<TripTravelerResponseDto> {
     // First get the traveler to validate it exists and belongs to the trip
-    const existingTraveler = await this.findOne(id, tripId)
+    const existingTraveler = await this.findOne(id, tripId, auth)
 
     // Validate that the traveler has a contactId
     if (!existingTraveler.contactId) {
       throw new BadRequestException('Cannot reset snapshot: traveler has no associated contact')
+    }
+
+    // Check access level for snapshot filtering
+    let canAccessSensitive = true
+    if (auth) {
+      const accessResult = await this.contactAccessService.canAccessSensitiveData(existingTraveler.contactId, auth)
+      canAccessSensitive = accessResult.canAccessSensitive
     }
 
     // Get the current contact data
@@ -583,8 +656,8 @@ export class TripTravelersService {
       throw new NotFoundException('Contact not found')
     }
 
-    // Create new snapshot from current contact data
-    const newSnapshot = this.mapContactToSnapshot(contact)
+    // Create new snapshot from current contact data (filtered based on access)
+    const newSnapshot = this.mapContactToSnapshot(contact, canAccessSensitive)
 
     // Update the traveler with the new snapshot
     const [traveler] = await this.db.client
@@ -617,14 +690,25 @@ export class TripTravelersService {
       ),
     )
 
-    return this.mapToResponseDto(traveler)
+    return this.mapToResponseDto(traveler, auth)
   }
 
-  private async mapToResponseDto(traveler: any): Promise<TripTravelerResponseDto> {
+  /**
+   * Map database entity to response DTO
+   * @param auth - Optional auth context for access control filtering
+   */
+  private async mapToResponseDto(traveler: any, auth?: AuthContext): Promise<TripTravelerResponseDto> {
     let contact = undefined
+    let canAccessSensitive = true // Default to full access for backwards compatibility
 
     // Populate contact if contactId exists
     if (traveler.contactId) {
+      // Check access level if auth is provided
+      if (auth) {
+        const accessResult = await this.contactAccessService.canAccessSensitiveData(traveler.contactId, auth)
+        canAccessSensitive = accessResult.canAccessSensitive
+      }
+
       const [foundContact] = await this.db.client
         .select()
         .from(this.db.schema.contacts)
@@ -642,11 +726,22 @@ export class TripTravelersService {
           foundContact.suffix
         ].filter(Boolean).join(' ') || null
 
-        contact = {
+        let contactData = {
           ...foundContact,
           displayName,
           legalFullName,
         } as any
+
+        // Filter sensitive fields if user doesn't have access
+        if (!canAccessSensitive) {
+          for (const field of SENSITIVE_FIELDS) {
+            if (field in contactData) {
+              contactData[field] = null
+            }
+          }
+        }
+
+        contact = contactData
       }
     }
 
@@ -664,6 +759,12 @@ export class TripTravelersService {
       }
     }
 
+    // Filter snapshot based on access level
+    let filteredSnapshot = traveler.contactSnapshot
+    if (!canAccessSensitive && filteredSnapshot) {
+      filteredSnapshot = this.contactAccessService.filterSnapshotFields(filteredSnapshot, false)
+    }
+
     const formatTs = (ts: any) => ts ? (typeof ts === 'string' ? ts : ts.toISOString()) : null
 
     return {
@@ -674,7 +775,7 @@ export class TripTravelersService {
       role: traveler.role,
       isPrimaryTraveler: traveler.isPrimaryTraveler,
       travelerType: traveler.travelerType,
-      contactSnapshot: traveler.contactSnapshot,
+      contactSnapshot: filteredSnapshot,
       emergencyContactId: traveler.emergencyContactId,
       emergencyContactInline: traveler.emergencyContactInline,
       specialRequirements: traveler.specialRequirements,
@@ -687,8 +788,13 @@ export class TripTravelersService {
     }
   }
 
+  /**
+   * Map contact to snapshot format
+   * @param canAccessSensitive - Whether to include sensitive fields in snapshot
+   */
   private mapContactToSnapshot(
     contact: typeof this.db.schema.contacts.$inferSelect,
+    canAccessSensitive = true,
   ): Record<string, any> {
     const firstName =
       contact.firstName ??
@@ -701,7 +807,8 @@ export class TripTravelersService {
       contact.preferredName ??
       'Contact'
 
-    return {
+    // Basic fields always included
+    const snapshot: Record<string, any> = {
       // Basic name fields
       firstName,
       lastName,
@@ -716,36 +823,43 @@ export class TripTravelersService {
       email: contact.email ?? undefined,
       phone: contact.phone ?? undefined,
 
-      // Personal details
-      dateOfBirth: contact.dateOfBirth
-        ? contact.dateOfBirth.split('T')[0]
-        : undefined,
+      // Non-sensitive personal details
       gender: contact.gender ?? undefined,
       pronouns: contact.pronouns ?? undefined,
-
-      // Passport information
-      passportNumber: contact.passportNumber ?? undefined,
-      passportExpiry: contact.passportExpiry
-        ? contact.passportExpiry.split('T')[0]
-        : undefined,
-      passportCountry: contact.passportCountry ?? undefined,
-      passportIssueDate: contact.passportIssueDate
-        ? contact.passportIssueDate.split('T')[0]
-        : undefined,
-      nationality: contact.nationality ?? undefined,
-
-      // TSA Credentials
-      redressNumber: contact.redressNumber ?? undefined,
-      knownTravelerNumber: contact.knownTravelerNumber ?? undefined,
-
-      // Special requirements
-      dietaryRequirements: contact.dietaryRequirements ?? undefined,
-      mobilityRequirements: contact.mobilityRequirements ?? undefined,
-
-      // Travel preferences
-      seatPreference: contact.seatPreference ?? undefined,
-      cabinPreference: contact.cabinPreference ?? undefined,
-      floorPreference: contact.floorPreference ?? undefined,
     }
+
+    // Sensitive fields only included if user has access
+    if (canAccessSensitive) {
+      // Personal details (sensitive)
+      snapshot.dateOfBirth = contact.dateOfBirth
+        ? contact.dateOfBirth.split('T')[0]
+        : undefined
+
+      // Passport information (sensitive)
+      snapshot.passportNumber = contact.passportNumber ?? undefined
+      snapshot.passportExpiry = contact.passportExpiry
+        ? contact.passportExpiry.split('T')[0]
+        : undefined
+      snapshot.passportCountry = contact.passportCountry ?? undefined
+      snapshot.passportIssueDate = contact.passportIssueDate
+        ? contact.passportIssueDate.split('T')[0]
+        : undefined
+      snapshot.nationality = contact.nationality ?? undefined
+
+      // TSA Credentials (sensitive)
+      snapshot.redressNumber = contact.redressNumber ?? undefined
+      snapshot.knownTravelerNumber = contact.knownTravelerNumber ?? undefined
+
+      // Special requirements (sensitive)
+      snapshot.dietaryRequirements = contact.dietaryRequirements ?? undefined
+      snapshot.mobilityRequirements = contact.mobilityRequirements ?? undefined
+    }
+
+    // Travel preferences (not sensitive, always included)
+    snapshot.seatPreference = contact.seatPreference ?? undefined
+    snapshot.cabinPreference = contact.cabinPreference ?? undefined
+    snapshot.floorPreference = contact.floorPreference ?? undefined
+
+    return snapshot
   }
 }

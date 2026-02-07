@@ -65,9 +65,9 @@ export class BulkArchiveTripsDto {
 }
 
 /**
- * Valid trip statuses for bulk status change
+ * Valid trip statuses for bulk status change (includes inbound for incoming leads)
  */
-const VALID_TRIP_STATUSES = ['draft', 'quoted', 'booked', 'in_progress', 'completed', 'cancelled'] as const
+const VALID_TRIP_STATUSES = ['draft', 'quoted', 'booked', 'in_progress', 'completed', 'cancelled', 'inbound'] as const
 
 /**
  * DTO for bulk status change operation
@@ -86,7 +86,7 @@ export class BulkChangeStatusDto {
   @IsString()
   @IsNotEmpty({ message: 'status is required' })
   @IsEnum(VALID_TRIP_STATUSES, {
-    message: 'status must be one of: draft, quoted, booked, in_progress, completed, cancelled',
+    message: 'status must be one of: draft, quoted, booked, in_progress, completed, cancelled, inbound',
   })
   status!: TripStatus
 }
