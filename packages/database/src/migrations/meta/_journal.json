@@ -638,6 +638,13 @@
       "when": 1770530911000,
       "tag": "20260206222831_backfill_lodging_spanning_datetimes",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1770612458000,
+      "tag": "20260207010738_drop_cabin_category_check",
+      "breakpoints": true
     }
   ]
 }
