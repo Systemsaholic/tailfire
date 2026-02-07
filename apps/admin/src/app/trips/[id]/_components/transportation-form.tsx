@@ -68,9 +68,10 @@ import { ChildOfPackageBookingSection } from '@/components/activities/child-of-p
 import { useToast } from '@/hooks/use-toast'
 import { DocumentUploader } from '@/components/document-uploader'
 import { ComponentMediaTab } from '@/components/tern/shared'
-import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PricingSection, CommissionSection, BookingDetailsSection, type SupplierDefaults } from '@/components/pricing'
 import { PaymentScheduleSection } from './payment-schedule-section'
 import { type PricingData } from '@/lib/pricing'
+import { useMyProfile } from '@/hooks/use-user-profile'
 import { Separator } from '@/components/ui/separator'
 import {
   transportationFormSchema,
@@ -256,6 +257,12 @@ export function TransportationForm({
 
   // Check if this activity is a child of a package (pricing controlled by parent)
   const { isChildOfPackage, parentPackageName, parentPackageId } = useIsChildOfPackage(activity)
+
+  // Fetch user profile for commission split settings
+  const { data: userProfile } = useMyProfile()
+
+  // Track supplier commission rate from selected supplier
+  const [supplierCommissionRate, setSupplierCommissionRate] = useState<number | null>(null)
 
   // Auto-save status tracking (with date validation)
   const { saveStatus, setSaveStatus, lastSavedAt, setLastSavedAt } = useSaveStatus({
@@ -456,6 +463,11 @@ export function TransportationForm({
       setValue(key as keyof TransportationFormData, value as any, { shouldDirty: true, shouldValidate: true })
     })
   }, [setValue])
+
+  // Handle supplier defaults from BookingDetailsSection
+  const handleSupplierDefaultsApplied = useCallback((defaults: SupplierDefaults) => {
+    setSupplierCommissionRate(defaults.commissionRate)
+  }, [])
 
   // Ref to track loaded transportation ID (prevents re-seeding on every render)
   const transportationIdRef = useRef<string | null>(null)
@@ -1402,6 +1414,7 @@ export function TransportationForm({
           <BookingDetailsSection
             pricingData={pricingData}
             onUpdate={handlePricingUpdate}
+            onSupplierDefaultsApplied={handleSupplierDefaultsApplied}
           />
 
           <Separator />
@@ -1413,6 +1426,9 @@ export function TransportationForm({
             errors={{}}
             isChildOfPackage={isChildOfPackage}
             parentPackageName={parentPackageName}
+            supplierCommissionRate={supplierCommissionRate}
+            userSplitValue={userProfile?.commissionSettings?.splitValue}
+            userSplitType={userProfile?.commissionSettings?.splitType}
           />
         </TabsContent>
       </Tabs>

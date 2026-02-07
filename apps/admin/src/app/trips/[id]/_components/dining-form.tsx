@@ -33,8 +33,9 @@ import { MarkActivityBookedModal, BookingStatusBadge } from '@/components/activi
 import { ChildOfPackageBookingSection } from '@/components/activities/child-of-package-booking-section'
 import { EditTravelersDialog } from './edit-travelers-dialog'
 import { PaymentScheduleSection } from './payment-schedule-section'
-import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PricingSection, CommissionSection, BookingDetailsSection, type SupplierDefaults } from '@/components/pricing'
 import { buildInitialPricingState, type PricingData } from '@/lib/pricing'
+import { useMyProfile } from '@/hooks/use-user-profile'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
 import { TimePicker } from '@/components/ui/time-picker'
 import { Badge } from '@/components/ui/badge'
@@ -155,6 +156,12 @@ export function DiningForm({
 
   // Check if this activity is a child of a package (pricing controlled by parent)
   const { isChildOfPackage, parentPackageName, parentPackageId } = useIsChildOfPackage(activity)
+
+  // Fetch user profile for commission split settings
+  const { data: userProfile } = useMyProfile()
+
+  // Track supplier commission rate from selected supplier
+  const [supplierCommissionRate, setSupplierCommissionRate] = useState<number | null>(null)
 
   // Auto-save state (with date validation)
   const {
@@ -1042,6 +1049,9 @@ export function DiningForm({
                 setValue(key as keyof DiningFormData, value as any, { shouldDirty: true, shouldValidate: true })
               })
             }}
+            onSupplierDefaultsApplied={(defaults: SupplierDefaults) => {
+              setSupplierCommissionRate(defaults.commissionRate)
+            }}
           />
 
           <Separator />
@@ -1057,6 +1067,9 @@ export function DiningForm({
             errors={{}}
             isChildOfPackage={isChildOfPackage}
             parentPackageName={parentPackageName}
+            supplierCommissionRate={supplierCommissionRate}
+            userSplitValue={userProfile?.commissionSettings?.splitValue}
+            userSplitType={userProfile?.commissionSettings?.splitType}
           />
         </TabsContent>
       </Tabs>

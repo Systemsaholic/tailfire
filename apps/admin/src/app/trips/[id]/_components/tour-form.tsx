@@ -35,8 +35,9 @@ import { api } from '@/lib/api'
 import { useIsChildOfPackage } from '@/hooks/use-is-child-of-package'
 import { EditTravelersDialog } from './edit-travelers-dialog'
 import { PaymentScheduleSection } from './payment-schedule-section'
-import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PricingSection, CommissionSection, BookingDetailsSection, type SupplierDefaults } from '@/components/pricing'
 import { buildInitialPricingState, type PricingData } from '@/lib/pricing'
+import { useMyProfile } from '@/hooks/use-user-profile'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
 import { TimePicker } from '@/components/ui/time-picker'
 import { DocumentUploader } from '@/components/document-uploader'
@@ -175,6 +176,12 @@ export function TourForm({
 
   // Child of package guard - disables pricing/booking when activity is linked to a package
   const { isChildOfPackage, parentPackageName, parentPackageId } = useIsChildOfPackage(activity)
+
+  // Fetch user profile for commission split settings
+  const { data: userProfile } = useMyProfile()
+
+  // Track supplier commission rate from selected supplier
+  const [supplierCommissionRate, setSupplierCommissionRate] = useState<number | null>(null)
 
   // Auto-save state
   const {
@@ -1373,6 +1380,9 @@ export function TourForm({
                 setValue(key as keyof TourFormData, value as any, { shouldDirty: true, shouldValidate: true })
               })
             }}
+            onSupplierDefaultsApplied={(defaults: SupplierDefaults) => {
+              setSupplierCommissionRate(defaults.commissionRate)
+            }}
           />
 
           <Separator />
@@ -1388,6 +1398,9 @@ export function TourForm({
             errors={{}}
             isChildOfPackage={isChildOfPackage}
             parentPackageName={parentPackageName}
+            supplierCommissionRate={supplierCommissionRate}
+            userSplitValue={userProfile?.commissionSettings?.splitValue}
+            userSplitType={userProfile?.commissionSettings?.splitType}
           />
         </TabsContent>
       </Tabs>

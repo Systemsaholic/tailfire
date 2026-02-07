@@ -5,6 +5,9 @@
  *
  * Handles supplier, terms & conditions, cancellation policy, and confirmation details.
  * Reusable across all activity forms.
+ *
+ * When a supplier is selected, auto-fills T&C and cancellation policy from supplier defaults
+ * (only if fields are empty) and notifies parent of supplier defaults via callback.
  */
 
 import { type PricingData } from '@/lib/pricing'
@@ -15,13 +18,80 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { SupplierCombobox } from '@/components/suppliers/supplier-combobox'
+import type { SupplierDto } from '@tailfire/shared-types'
+
+/**
+ * Supplier defaults passed to parent form for commission calculation
+ */
+export interface SupplierDefaults {
+  /** Commission rate parsed from "10.00" string to number (e.g., 10.00) */
+  commissionRate: number | null
+  /** Default terms and conditions text */
+  termsAndConditions: string | null
+  /** Default cancellation policy text */
+  cancellationPolicy: string | null
+}
 
 interface BookingDetailsSectionProps {
   pricingData: PricingData
   onUpdate: (updates: Partial<PricingData>) => void
+  /** Callback when supplier defaults are applied (for commission rate) */
+  onSupplierDefaultsApplied?: (defaults: SupplierDefaults) => void
 }
 
-export function BookingDetailsSection({ pricingData, onUpdate }: BookingDetailsSectionProps) {
+export function BookingDetailsSection({
+  pricingData,
+  onUpdate,
+  onSupplierDefaultsApplied,
+}: BookingDetailsSectionProps) {
+  /**
+   * Handle supplier selection with defaults application
+   * - Updates supplier name
+   * - Auto-fills T&C and cancellation policy if empty
+   * - Notifies parent of supplier defaults for commission calculation
+   */
+  const handleSupplierSelect = (supplier: SupplierDto | null) => {
+    if (!supplier) {
+      // Clearing selection - notify parent with null defaults
+      onSupplierDefaultsApplied?.({
+        commissionRate: null,
+        termsAndConditions: null,
+        cancellationPolicy: null,
+      })
+      return
+    }
+
+    // Build updates object - only apply defaults if fields are empty
+    const updates: Partial<PricingData> = {}
+
+    // Auto-fill Terms & Conditions if empty
+    if (!pricingData.termsAndConditions?.trim() && supplier.defaultTermsAndConditions) {
+      updates.termsAndConditions = supplier.defaultTermsAndConditions
+    }
+
+    // Auto-fill Cancellation Policy if empty
+    if (!pricingData.cancellationPolicy?.trim() && supplier.defaultCancellationPolicy) {
+      updates.cancellationPolicy = supplier.defaultCancellationPolicy
+    }
+
+    // Apply updates if any defaults were filled
+    if (Object.keys(updates).length > 0) {
+      onUpdate(updates)
+    }
+
+    // Parse commission rate from string "10.00" to number 10.00
+    const commissionRate = supplier.defaultCommissionRate
+      ? parseFloat(supplier.defaultCommissionRate)
+      : null
+
+    // Notify parent of supplier defaults
+    onSupplierDefaultsApplied?.({
+      commissionRate: commissionRate && !isNaN(commissionRate) ? commissionRate : null,
+      termsAndConditions: supplier.defaultTermsAndConditions,
+      cancellationPolicy: supplier.defaultCancellationPolicy,
+    })
+  }
+
   return (
     <Card className="p-6 space-y-6">
       <h3 className="text-lg font-semibold">Booking Details</h3>
@@ -32,6 +102,7 @@ export function BookingDetailsSection({ pricingData, onUpdate }: BookingDetailsS
         <SupplierCombobox
           value={pricingData.supplier || null}
           onValueChange={(value) => onUpdate({ supplier: value || '' })}
+          onSupplierSelect={handleSupplierSelect}
           placeholder="Search for supplier..."
           allowCreate
         />

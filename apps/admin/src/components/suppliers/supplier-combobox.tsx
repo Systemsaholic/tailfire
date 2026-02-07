@@ -28,12 +28,15 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { useSuppliers, useCreateSupplier } from '@/hooks/use-suppliers'
+import type { SupplierDto } from '@tailfire/shared-types'
 
 interface SupplierComboboxProps {
   /** Current supplier name value */
   value?: string | null
-  /** Callback when supplier selection changes */
+  /** Callback when supplier selection changes (name only for backward compatibility) */
   onValueChange: (value: string | null) => void
+  /** Callback when supplier is selected with full supplier data */
+  onSupplierSelect?: (supplier: SupplierDto | null) => void
   /** Placeholder text when no value is selected */
   placeholder?: string
   /** Whether the combobox is disabled */
@@ -44,16 +47,20 @@ interface SupplierComboboxProps {
   allowCreate?: boolean
   /** Filter by supplier type */
   supplierType?: string
+  /** Filter to show only active suppliers (default: true) */
+  showOnlyActive?: boolean
 }
 
 export function SupplierCombobox({
   value,
   onValueChange,
+  onSupplierSelect,
   placeholder = 'Search suppliers...',
   disabled = false,
   className,
   allowCreate = true,
   supplierType,
+  showOnlyActive = true,
 }: SupplierComboboxProps) {
   const [open, setOpen] = React.useState(false)
   const [searchValue, setSearchValue] = React.useState('')
@@ -64,10 +71,11 @@ export function SupplierCombobox({
     setDebouncedSearch(value)
   }, 300)
 
-  // Fetch suppliers based on search
+  // Fetch suppliers based on search - filter by isActive when showOnlyActive is true
   const { data: suppliersData, isLoading } = useSuppliers({
     search: debouncedSearch || undefined,
     supplierType,
+    isActive: showOnlyActive ? true : undefined,
     limit: 20,
   })
 
@@ -85,9 +93,14 @@ export function SupplierCombobox({
   // Handle supplier selection
   const handleSelect = (supplierName: string) => {
     if (supplierName === value) {
+      // Clearing selection
       onValueChange(null)
+      onSupplierSelect?.(null)
     } else {
+      // Find the full supplier object
+      const selectedSupplier = suppliers.find((s) => s.name === supplierName)
       onValueChange(supplierName)
+      onSupplierSelect?.(selectedSupplier ?? null)
     }
     setOpen(false)
     setSearchValue('')
@@ -104,6 +117,7 @@ export function SupplierCombobox({
         supplierType: supplierType || undefined,
       })
       onValueChange(newSupplier.name)
+      onSupplierSelect?.(newSupplier)
       setOpen(false)
       setSearchValue('')
       setDebouncedSearch('')

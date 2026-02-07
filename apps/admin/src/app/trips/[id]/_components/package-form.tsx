@@ -43,7 +43,8 @@ import {
   useUnlinkActivities,
   useUnlinkedActivities,
 } from '@/hooks/use-bookings'
-import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PricingSection, CommissionSection, BookingDetailsSection, type SupplierDefaults } from '@/components/pricing'
+import { useMyProfile } from '@/hooks/use-user-profile'
 import { DocumentUploader } from '@/components/document-uploader'
 import { PaymentScheduleSection } from './payment-schedule-section'
 import type { PricingData } from '@/lib/pricing'
@@ -101,6 +102,12 @@ export function PackageForm({
   const [activeTab, setActiveTab] = useState<PackageTab>(defaultTab)
   const [currentPackageId, setCurrentPackageId] = useState<string | null>(packageId || null)
   const [activityPricingId, setActivityPricingId] = useState<string | null>(null)
+
+  // User profile for commission split settings
+  const { data: userProfile } = useMyProfile()
+
+  // Track supplier commission rate from selected supplier
+  const [supplierCommissionRate, setSupplierCommissionRate] = useState<number | null>(null)
 
   // Safety net ref to prevent duplicate creation race condition
   const createInProgressRef = useRef(false)
@@ -428,6 +435,11 @@ export function PackageForm({
     })
   }, [setValue])
 
+  // Handler for when supplier defaults are applied from SupplierCombobox
+  const handleSupplierDefaultsApplied = useCallback((defaults: SupplierDefaults) => {
+    setSupplierCommissionRate(defaults.commissionRate)
+  }, [])
+
   return (
     <div className="max-w-5xl">
       {/* Header */}
@@ -720,6 +732,7 @@ export function PackageForm({
           <BookingDetailsSection
             pricingData={pricingData}
             onUpdate={handlePricingUpdate}
+            onSupplierDefaultsApplied={handleSupplierDefaultsApplied}
           />
 
           <Separator />
@@ -729,6 +742,9 @@ export function PackageForm({
             pricingData={pricingData}
             onUpdate={handlePricingUpdate}
             errors={{}}
+            supplierCommissionRate={supplierCommissionRate}
+            userSplitValue={userProfile?.commissionSettings?.splitValue ?? null}
+            userSplitType={userProfile?.commissionSettings?.splitType ?? null}
           />
         </TabsContent>
       </Tabs>

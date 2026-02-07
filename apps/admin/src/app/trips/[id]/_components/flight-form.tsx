@@ -50,8 +50,9 @@ import { EditTravelersDialog } from './edit-travelers-dialog'
 import { PaymentScheduleSection } from './payment-schedule-section'
 import { ComponentMediaTab } from '@/components/tern/shared'
 import { DocumentUploader } from '@/components/document-uploader'
-import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PricingSection, CommissionSection, BookingDetailsSection, type SupplierDefaults } from '@/components/pricing'
 import { buildInitialPricingState, type PricingData } from '@/lib/pricing'
+import { useMyProfile } from '@/hooks/use-user-profile'
 import { DateRangeInput } from '@/components/ui/date-range-input'
 import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
 import { TimePicker } from '@/components/ui/time-picker'
@@ -234,6 +235,12 @@ export function FlightForm({
 
   // Child of package guard - disables pricing when activity is linked to a package
   const { isChildOfPackage, parentPackageName, parentPackageId } = useIsChildOfPackage(activity)
+
+  // Fetch user profile for commission split settings
+  const { data: userProfile } = useMyProfile()
+
+  // Track supplier commission rate from selected supplier
+  const [supplierCommissionRate, setSupplierCommissionRate] = useState<number | null>(null)
 
   // Track activity ID (for create->update transition)
   const [activityId, setActivityId] = useState<string | null>(activity?.id || null)
@@ -1031,6 +1038,12 @@ export function FlightForm({
     if ('cancellationPolicy' in updates) setValue('cancellationPolicy', updates.cancellationPolicy ?? '')
     if ('supplier' in updates) setValue('supplier', updates.supplier ?? '')
   }, [setValue])
+
+  // Handle supplier defaults from BookingDetailsSection
+  const handleSupplierDefaultsApplied = useCallback((defaults: SupplierDefaults) => {
+    // Update supplier commission rate state for CommissionSection
+    setSupplierCommissionRate(defaults.commissionRate)
+  }, [])
 
   // Get travelers from trip data
   const travelers: Array<{ id: string; name: string; initials: string }> = trip?.travelers || []
@@ -2024,6 +2037,7 @@ export function FlightForm({
           <BookingDetailsSection
             pricingData={pricingData}
             onUpdate={handlePricingUpdate}
+            onSupplierDefaultsApplied={handleSupplierDefaultsApplied}
           />
 
           <Separator />
@@ -2035,6 +2049,9 @@ export function FlightForm({
             errors={{}}
             isChildOfPackage={isChildOfPackage}
             parentPackageName={parentPackageName}
+            supplierCommissionRate={supplierCommissionRate}
+            userSplitValue={userProfile?.commissionSettings?.splitValue}
+            userSplitType={userProfile?.commissionSettings?.splitType}
           />
         </TabsContent>
       </Tabs>

@@ -134,8 +134,8 @@ export class CommissionSettingsDto {
   defaultRate?: number
 
   @IsOptional()
-  @IsIn(['fixed', 'percentage'])
-  splitType?: 'fixed' | 'percentage'
+  @IsIn(['fixed', 'percentage', 'system_controlled'])
+  splitType?: 'fixed' | 'percentage' | 'system_controlled'
 
   @IsOptional()
   @IsNumber()

@@ -42,6 +42,7 @@ export function useSuppliers(params: ListSuppliersParamsDto = {}) {
       const queryParams = new URLSearchParams()
       if (params.search) queryParams.set('search', params.search)
       if (params.supplierType) queryParams.set('supplierType', params.supplierType)
+      if (params.isActive !== undefined) queryParams.set('isActive', String(params.isActive))
       if (params.page) queryParams.set('page', String(params.page))
       if (params.limit) queryParams.set('limit', String(params.limit))
 

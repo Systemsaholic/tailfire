@@ -35,7 +35,8 @@ import { TimePicker } from '@/components/ui/time-picker'
 import { Combobox } from '@/components/ui/combobox'
 import { DocumentUploader } from '@/components/document-uploader'
 import { ComponentMediaTab } from '@/components/tern/shared'
-import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PricingSection, CommissionSection, BookingDetailsSection, type SupplierDefaults } from '@/components/pricing'
+import { useMyProfile } from '@/hooks/use-user-profile'
 import { PaymentScheduleSection } from './payment-schedule-section'
 import { type PricingData } from '@/lib/pricing'
 import { Separator } from '@/components/ui/separator'
@@ -182,6 +183,12 @@ export function CustomCruiseForm({
 
   // Check if this activity is a child of a package (pricing controlled by parent)
   const { isChildOfPackage, parentPackageName, parentPackageId } = useIsChildOfPackage(activity)
+
+  // User profile for commission split settings
+  const { data: userProfile } = useMyProfile()
+
+  // Track supplier commission rate from selected supplier
+  const [supplierCommissionRate, setSupplierCommissionRate] = useState<number | null>(null)
 
   // Booking status state
   const [showBookingModal, setShowBookingModal] = useState(false)
@@ -884,6 +891,11 @@ export function CustomCruiseForm({
       setValue(key as keyof CustomCruiseFormData, value as any, { shouldDirty: true, shouldValidate: true })
     })
   }, [setValue])
+
+  // Handler for when supplier defaults are applied from SupplierCombobox
+  const handleSupplierDefaultsApplied = useCallback((defaults: SupplierDefaults) => {
+    setSupplierCommissionRate(defaults.commissionRate)
+  }, [])
 
   return (
     <div className="relative max-w-5xl">
@@ -1815,6 +1827,7 @@ export function CustomCruiseForm({
           <BookingDetailsSection
             pricingData={pricingData}
             onUpdate={handlePricingUpdate}
+            onSupplierDefaultsApplied={handleSupplierDefaultsApplied}
           />
 
           <Separator />
@@ -1826,6 +1839,9 @@ export function CustomCruiseForm({
             errors={{}}
             isChildOfPackage={isChildOfPackage}
             parentPackageName={parentPackageName}
+            supplierCommissionRate={supplierCommissionRate}
+            userSplitValue={userProfile?.commissionSettings?.splitValue ?? null}
+            userSplitType={userProfile?.commissionSettings?.splitType ?? null}
           />
 
           <Separator />

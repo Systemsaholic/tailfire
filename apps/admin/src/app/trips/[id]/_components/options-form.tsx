@@ -36,9 +36,10 @@ import { DatePickerEnhanced } from '@/components/ui/date-picker-enhanced'
 import { TimePicker } from '@/components/ui/time-picker'
 import { DocumentUploader } from '@/components/document-uploader'
 import { ComponentMediaTab } from '@/components/tern/shared'
-import { PricingSection, CommissionSection, BookingDetailsSection } from '@/components/pricing'
+import { PricingSection, CommissionSection, BookingDetailsSection, type SupplierDefaults } from '@/components/pricing'
 import { PaymentScheduleSection } from './payment-schedule-section'
 import { type PricingData } from '@/lib/pricing'
+import { useMyProfile } from '@/hooks/use-user-profile'
 import { Separator } from '@/components/ui/separator'
 import {
   optionsFormSchema,
@@ -181,6 +182,12 @@ export function OptionsForm({
 
   // Check if this activity is a child of a package (pricing controlled by parent)
   const { isChildOfPackage, parentPackageName, parentPackageId } = useIsChildOfPackage(activity)
+
+  // User profile for commission split settings
+  const { data: userProfile } = useMyProfile()
+
+  // Track supplier commission rate from selected supplier
+  const [supplierCommissionRate, setSupplierCommissionRate] = useState<number | null>(null)
 
   // Auto-save status tracking (with date validation)
   const { saveStatus, setSaveStatus, lastSavedAt, setLastSavedAt } = useSaveStatus({
@@ -336,6 +343,11 @@ export function OptionsForm({
       setValue(key as keyof OptionsFormData, value as any, { shouldDirty: true, shouldValidate: true })
     })
   }, [setValue])
+
+  // Handler for when supplier defaults are applied from SupplierCombobox
+  const handleSupplierDefaultsApplied = useCallback((defaults: SupplierDefaults) => {
+    setSupplierCommissionRate(defaults.commissionRate)
+  }, [])
 
   // Ref to track loaded options ID
   const optionsIdRef = useRef<string | null>(null)
@@ -1222,6 +1234,7 @@ Water bottle"
           <BookingDetailsSection
             pricingData={pricingData}
             onUpdate={handlePricingUpdate}
+            onSupplierDefaultsApplied={handleSupplierDefaultsApplied}
           />
 
           <Separator />
@@ -1233,6 +1246,9 @@ Water bottle"
             errors={{}}
             isChildOfPackage={isChildOfPackage}
             parentPackageName={parentPackageName}
+            supplierCommissionRate={supplierCommissionRate}
+            userSplitValue={userProfile?.commissionSettings?.splitValue ?? null}
+            userSplitType={userProfile?.commissionSettings?.splitType ?? null}
           />
         </TabsContent>
       </Tabs>
