@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
     ignoreDuringBuilds: true,
   },
 
-  // External image domains (cruise ship images and logos from Traveltek, R2 storage)
+  // External image domains (cruise ship images and logos from Traveltek, R2 storage, Supabase)
   images: {
     qualities: [75, 85, 100],
     remotePatterns: [
@@ -23,6 +23,24 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'pub-0ab7614dd4094206aa5c733bea70d570.r2.dev',
         pathname: '/**',
+      },
+      // Supabase Storage - Dev
+      {
+        protocol: 'https',
+        hostname: 'hplioumsywqgtnhwcivw.supabase.co',
+        pathname: '/storage/**',
+      },
+      // Supabase Storage - Preview
+      {
+        protocol: 'https',
+        hostname: 'gaqacfstpnmwphekjzae.supabase.co',
+        pathname: '/storage/**',
+      },
+      // Supabase Storage - Prod
+      {
+        protocol: 'https',
+        hostname: 'cmktvanwglszgadjrorm.supabase.co',
+        pathname: '/storage/**',
       },
     ],
   },

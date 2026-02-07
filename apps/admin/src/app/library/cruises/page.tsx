@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useState, useCallback, useEffect, useRef } from 'react'
+import { Suspense, useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Ship, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -103,8 +103,16 @@ function CruiseLibraryContent() {
     }
   }, [hasTripContext, itinerary])
 
-  // Flatten all pages into a single array
-  const allSailings = data?.pages.flatMap((page) => page.items) ?? []
+  // Flatten all pages into a single array, deduplicating by ID
+  const allSailings = useMemo(() => {
+    const items = data?.pages.flatMap((page) => page.items) ?? []
+    const seen = new Set<string>()
+    return items.filter((sailing) => {
+      if (seen.has(sailing.id)) return false
+      seen.add(sailing.id)
+      return true
+    })
+  }, [data?.pages])
   const totalItems = data?.pages[0]?.pagination.totalItems ?? 0
   const syncStatus = data?.pages[0]?.sync
 
