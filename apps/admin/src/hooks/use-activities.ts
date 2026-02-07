@@ -9,6 +9,7 @@ import type {
   ActivityFilterDto,
 } from '@tailfire/shared-types/api'
 import { itineraryDayKeys } from './use-itinerary-days'
+import { bookingKeys } from './use-bookings'
 import { useToast } from './use-toast'
 
 // Query Keys
@@ -296,6 +297,8 @@ export function useDeleteActivity(itineraryId: string) {
       queryClient.removeQueries({
         queryKey: activityKeys.detail(variables.dayId, variables.activityId),
       })
+      // Invalidate bookings cache (deleted activity may appear in bookings/packages tab)
+      queryClient.invalidateQueries({ queryKey: bookingKeys.all })
     },
     onError: (_error, _variables, context) => {
       // Rollback to previous state on error
