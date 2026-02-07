@@ -18,6 +18,7 @@ import {
 } from '@nestjs/common'
 import { ApiTags } from '@nestjs/swagger'
 import { TripTravelersService } from './trip-travelers.service'
+import { TripAccessService } from './trip-access.service'
 import {
   CreateTripTravelerDto,
   UpdateTripTravelerDto,
@@ -33,11 +34,16 @@ import type {
 @ApiTags('Trip Travelers')
 @Controller('trips/:tripId/travelers')
 export class TripTravelersController {
-  constructor(private readonly tripTravelersService: TripTravelersService) {}
+  constructor(
+    private readonly tripTravelersService: TripTravelersService,
+    private readonly tripAccessService: TripAccessService,
+  ) {}
 
   /**
    * Add a traveler to a trip
    * POST /trips/:tripId/travelers
+   *
+   * Access check: User must have write access to the trip.
    */
   @Post()
   async create(
@@ -45,6 +51,7 @@ export class TripTravelersController {
     @Param('tripId') tripId: string,
     @Body() createTripTravelerDto: CreateTripTravelerDto,
   ): Promise<TripTravelerResponseDto> {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     // Cast to interface type - runtime validation ensures discriminated union is correct
     return this.tripTravelersService.create(
       tripId,
@@ -57,6 +64,8 @@ export class TripTravelersController {
    * Get all travelers (optionally filtered)
    * GET /trips/:tripId/travelers
    * GET /travelers?tripId=xxx&contactId=yyy
+   *
+   * Access check: User must have read access to the trip.
    */
   @Get()
   async findAll(
@@ -64,6 +73,7 @@ export class TripTravelersController {
     @Param('tripId') tripId: string,
     @Query() filters: TripTravelerFilterDto,
   ): Promise<TripTravelerResponseDto[]> {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     // Merge tripId from route param with query filters
     return this.tripTravelersService.findAll({ ...filters, tripId }, auth)
   }
@@ -73,6 +83,8 @@ export class TripTravelersController {
    * GET /trips/:tripId/travelers/:id/snapshot
    * Returns the contactSnapshot stored when the traveler was added
    * NOTE: This must be defined BEFORE the generic :id route
+   *
+   * Access check: User must have read access to the trip.
    */
   @Get(':id/snapshot')
   async getSnapshot(
@@ -80,6 +92,7 @@ export class TripTravelersController {
     @Param('tripId') tripId: string,
     @Param('id') id: string,
   ): Promise<any> {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     return this.tripTravelersService.getSnapshot(id, tripId, auth)
   }
 
@@ -88,6 +101,8 @@ export class TripTravelersController {
    * POST /trips/:tripId/travelers/:id/snapshot/reset
    * Updates the snapshot to match the current contact information
    * NOTE: This must be defined BEFORE the generic :id route
+   *
+   * Access check: User must have write access to the trip.
    */
   @Post(':id/snapshot/reset')
   async resetSnapshot(
@@ -95,6 +110,7 @@ export class TripTravelersController {
     @Param('tripId') tripId: string,
     @Param('id') id: string,
   ): Promise<TripTravelerResponseDto> {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     return this.tripTravelersService.resetSnapshot(id, tripId, auth)
   }
 
@@ -102,6 +118,8 @@ export class TripTravelersController {
    * Get a single traveler by ID
    * GET /trips/:tripId/travelers/:id
    * Validates the traveler belongs to the specified trip
+   *
+   * Access check: User must have read access to the trip.
    */
   @Get(':id')
   async findOne(
@@ -109,6 +127,7 @@ export class TripTravelersController {
     @Param('tripId') tripId: string,
     @Param('id') id: string,
   ): Promise<TripTravelerResponseDto> {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     return this.tripTravelersService.findOne(id, tripId, auth)
   }
 
@@ -116,6 +135,8 @@ export class TripTravelersController {
    * Update a traveler
    * PATCH /trips/:tripId/travelers/:id
    * Validates the traveler belongs to the specified trip
+   *
+   * Access check: User must have write access to the trip.
    */
   @Patch(':id')
   async update(
@@ -124,6 +145,7 @@ export class TripTravelersController {
     @Param('id') id: string,
     @Body() updateTripTravelerDto: UpdateTripTravelerDto,
   ): Promise<TripTravelerResponseDto> {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     return this.tripTravelersService.update(id, updateTripTravelerDto, tripId, auth)
   }
 
@@ -131,13 +153,17 @@ export class TripTravelersController {
    * Remove a traveler from a trip
    * DELETE /trips/:tripId/travelers/:id
    * Validates the traveler belongs to the specified trip
+   *
+   * Access check: User must have write access to the trip.
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('id') id: string,
   ): Promise<void> {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     return this.tripTravelersService.remove(id, tripId)
   }
 }

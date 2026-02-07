@@ -1,10 +1,8 @@
 # Next Steps: Contact & Trip Ownership Management
 
-## Implementation Status: Phase 1 Complete ✅
+## Implementation Status: Phase 1 & 2 Complete ✅
 
-The core Contact & Trip Ownership Management implementation is complete and ready for commit.
-
-### Completed Features:
+### Phase 1 - Completed Features:
 - ✅ Database migration with `inbound` status, nullable `owner_id`, `contact_shares` and `trip_shares` tables
 - ✅ Drizzle schemas for new tables
 - ✅ `ContactAccessService` with full access control logic
@@ -15,36 +13,14 @@ The core Contact & Trip Ownership Management implementation is complete and read
 - ✅ `inbound` status in all DTOs and filter options
 - ✅ Admin re-assignment endpoints for trips and contacts
 
----
-
-## Phase 2: Trip Share Enforcement (High Priority)
-
-### Issue
-Trip shares are stored but not enforced. Users with `trip_shares` access don't gain read/write access to trips.
-
-### Tasks
-1. **Create `TripAccessService`** (similar to `ContactAccessService`)
-   - `canAccessTrip(tripId, auth)` → `{ canRead, canWrite, reason }`
-   - Check owner, admin, and `trip_shares.access_level`
-
-2. **Enforce in `trips.controller.ts`**
-   - `findOne()` - Check read access
-   - `update()` - Check write access (currently owner-only)
-   - `publish()`/`unpublish()` - Check write access
-
-3. **Enforce in `trip-travelers.controller.ts`**
-   - All endpoints should verify user has trip access
-
-4. **Enforce in related services**
-   - `itineraries.controller.ts`
-   - `activities.controller.ts`
-   - `trip-media.controller.ts`
-
-### Files to Modify
-- `apps/api/src/trips/trip-access.service.ts` (CREATE)
-- `apps/api/src/trips/trips.controller.ts`
-- `apps/api/src/trips/trip-travelers.controller.ts`
-- `apps/api/src/trips/trips.module.ts`
+### Phase 2 - Trip Share Enforcement (Complete ✅):
+- ✅ Created `TripAccessService` with `canAccessTrip()`, `verifyReadAccess()`, `verifyWriteAccess()`
+- ✅ `trips.controller.ts` enforces read/write access on all trip endpoints
+- ✅ `trip-travelers.controller.ts` enforces trip access on all traveler endpoints
+- ✅ `itineraries.controller.ts` enforces trip access on all itinerary endpoints
+- ✅ `trip-media.controller.ts` enforces trip access on all media endpoints
+- ✅ Bulk operations now use proper auth context and access checks
+- ✅ Inbound trips (no owner) are read-only for agency users
 
 ---
 

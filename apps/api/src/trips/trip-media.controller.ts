@@ -21,8 +21,11 @@ import {
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { TripMediaService, MAX_FILE_SIZE } from './trip-media.service'
+import { TripAccessService } from './trip-access.service'
 import { StorageService } from './storage.service'
 import { UnsplashService } from '../unsplash/unsplash.service'
+import { GetAuthContext } from '../auth/decorators/auth-context.decorator'
+import type { AuthContext } from '../auth/auth.types'
 import { MediaType } from '@tailfire/database'
 import type {
   CreateTripMediaDto,
@@ -58,6 +61,7 @@ export class TripMediaController {
 
   constructor(
     private readonly mediaService: TripMediaService,
+    private readonly tripAccessService: TripAccessService,
     private readonly storageService: StorageService,
     private readonly unsplashService: UnsplashService
   ) {}
@@ -65,9 +69,15 @@ export class TripMediaController {
   /**
    * List all media for a trip
    * GET /trips/:tripId/media
+   *
+   * Access check: User must have read access to the trip.
    */
   @Get()
-  async list(@Param('tripId') tripId: string) {
+  async list(
+    @GetAuthContext() auth: AuthContext,
+    @Param('tripId') tripId: string,
+  ) {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     const media = await this.mediaService.findByTripId(tripId)
     return { media }
   }
@@ -75,9 +85,15 @@ export class TripMediaController {
   /**
    * Get the cover photo for a trip
    * GET /trips/:tripId/media/cover
+   *
+   * Access check: User must have read access to the trip.
    */
   @Get('cover')
-  async getCover(@Param('tripId') tripId: string) {
+  async getCover(
+    @GetAuthContext() auth: AuthContext,
+    @Param('tripId') tripId: string,
+  ) {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     const cover = await this.mediaService.getCoverPhoto(tripId)
     return { cover }
   }
@@ -85,12 +101,16 @@ export class TripMediaController {
   /**
    * Get a single media item
    * GET /trips/:tripId/media/:mediaId
+   *
+   * Access check: User must have read access to the trip.
    */
   @Get(':mediaId')
   async get(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('mediaId') mediaId: string
   ) {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     return this.mediaService.findById(mediaId, tripId)
   }
 
@@ -99,15 +119,19 @@ export class TripMediaController {
    * POST /trips/:tripId/media
    * Content-Type: multipart/form-data
    * Body: file (required), caption (optional), isCoverPhoto (optional)
+   *
+   * Access check: User must have write access to the trip.
    */
   @Post()
   @UseInterceptors(FileInterceptor('file'))
   async upload(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('caption') caption?: string,
     @Body('isCoverPhoto') isCoverPhotoStr?: string
   ) {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     const isCoverPhoto = isCoverPhotoStr === 'true'
 
     // Validate file presence
@@ -171,12 +195,16 @@ export class TripMediaController {
    * Add external media from Unsplash
    * POST /trips/:tripId/media/external
    * Body: { unsplashPhotoId, downloadLocation, caption?, isCoverPhoto? }
+   *
+   * Access check: User must have write access to the trip.
    */
   @Post('external')
   async addExternalMedia(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Body() body: AddExternalTripMediaRequest
   ) {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     // Validate required fields
     if (!body.unsplashPhotoId) {
       throw new BadRequestException('unsplashPhotoId is required')
@@ -251,49 +279,65 @@ export class TripMediaController {
   /**
    * Update media metadata (caption, orderIndex)
    * PATCH /trips/:tripId/media/:mediaId
+   *
+   * Access check: User must have write access to the trip.
    */
   @Patch(':mediaId')
   async update(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('mediaId') mediaId: string,
     @Body() body: UpdateTripMediaDto
   ) {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     return this.mediaService.update(mediaId, tripId, body)
   }
 
   /**
    * Set media as cover photo
    * PATCH /trips/:tripId/media/:mediaId/set-cover
+   *
+   * Access check: User must have write access to the trip.
    */
   @Patch(':mediaId/set-cover')
   async setCoverPhoto(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('mediaId') mediaId: string
   ) {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     return this.mediaService.setCoverPhoto(mediaId, tripId)
   }
 
   /**
    * Remove cover photo designation
    * PATCH /trips/:tripId/media/:mediaId/remove-cover
+   *
+   * Access check: User must have write access to the trip.
    */
   @Patch(':mediaId/remove-cover')
   async removeCoverPhoto(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('mediaId') mediaId: string
   ) {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     return this.mediaService.removeCoverPhoto(mediaId, tripId)
   }
 
   /**
    * Delete a media item
    * DELETE /trips/:tripId/media/:mediaId
+   *
+   * Access check: User must have write access to the trip.
    */
   @Delete(':mediaId')
   async delete(
+    @GetAuthContext() auth: AuthContext,
     @Param('tripId') tripId: string,
     @Param('mediaId') mediaId: string
   ) {
+    await this.tripAccessService.verifyWriteAccess(tripId, auth)
     // Get media to get file URL for storage deletion
     const media = await this.mediaService.findById(mediaId, tripId)
 

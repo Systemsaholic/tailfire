@@ -34,6 +34,8 @@ import {
   canDeleteTrip,
   getDeleteErrorMessage,
 } from '@tailfire/shared-types'
+import type { AuthContext } from '../auth/auth.types'
+import type { TripAccessService } from './trip-access.service'
 
 @Injectable()
 export class TripsService {
@@ -604,6 +606,8 @@ export class TripsService {
   async bulkDelete(
     tripIds: string[],
     ownerId: string,
+    auth?: AuthContext,
+    tripAccessService?: TripAccessService,
   ): Promise<{ success: string[]; failed: Array<{ id: string; reason: string }> }> {
     const success: string[] = []
     const failed: Array<{ id: string; reason: string }> = []
@@ -626,13 +630,21 @@ export class TripsService {
     for (const tripId of tripIds) {
       const trip = tripMap.get(tripId)
 
-      // Check existence and ownership
+      // Check existence
       if (!trip) {
         failed.push({ id: tripId, reason: 'Trip not found or access denied' })
         continue
       }
 
-      if (trip.ownerId !== ownerId) {
+      // Check write access using TripAccessService if available
+      if (auth && tripAccessService) {
+        const canWrite = await tripAccessService.canWrite(tripId, auth)
+        if (!canWrite) {
+          failed.push({ id: tripId, reason: 'Trip not found or access denied' })
+          continue
+        }
+      } else if (trip.ownerId !== ownerId) {
+        // Fallback to legacy owner check
         failed.push({ id: tripId, reason: 'Trip not found or access denied' })
         continue
       }
@@ -678,6 +690,8 @@ export class TripsService {
     tripIds: string[],
     archive: boolean,
     ownerId: string,
+    auth?: AuthContext,
+    tripAccessService?: TripAccessService,
   ): Promise<{ success: string[]; failed: Array<{ id: string; reason: string }> }> {
     const success: string[] = []
     const failed: Array<{ id: string; reason: string }> = []
@@ -700,13 +714,21 @@ export class TripsService {
     for (const tripId of tripIds) {
       const trip = tripMap.get(tripId)
 
-      // Check existence and ownership
+      // Check existence
       if (!trip) {
         failed.push({ id: tripId, reason: 'Trip not found or access denied' })
         continue
       }
 
-      if (trip.ownerId !== ownerId) {
+      // Check write access using TripAccessService if available
+      if (auth && tripAccessService) {
+        const canWrite = await tripAccessService.canWrite(tripId, auth)
+        if (!canWrite) {
+          failed.push({ id: tripId, reason: 'Trip not found or access denied' })
+          continue
+        }
+      } else if (trip.ownerId !== ownerId) {
+        // Fallback to legacy owner check
         failed.push({ id: tripId, reason: 'Trip not found or access denied' })
         continue
       }
@@ -753,6 +775,8 @@ export class TripsService {
     tripIds: string[],
     newStatus: TripStatus,
     ownerId: string,
+    auth?: AuthContext,
+    tripAccessService?: TripAccessService,
   ): Promise<{ success: string[]; failed: Array<{ id: string; reason: string }> }> {
     const success: string[] = []
     const failed: Array<{ id: string; reason: string }> = []
@@ -776,13 +800,21 @@ export class TripsService {
     for (const tripId of tripIds) {
       const trip = tripMap.get(tripId)
 
-      // Check existence and ownership
+      // Check existence
       if (!trip) {
         failed.push({ id: tripId, reason: 'Trip not found or access denied' })
         continue
       }
 
-      if (trip.ownerId !== ownerId) {
+      // Check write access using TripAccessService if available
+      if (auth && tripAccessService) {
+        const canWrite = await tripAccessService.canWrite(tripId, auth)
+        if (!canWrite) {
+          failed.push({ id: tripId, reason: 'Trip not found or access denied' })
+          continue
+        }
+      } else if (trip.ownerId !== ownerId) {
+        // Fallback to legacy owner check
         failed.push({ id: tripId, reason: 'Trip not found or access denied' })
         continue
       }

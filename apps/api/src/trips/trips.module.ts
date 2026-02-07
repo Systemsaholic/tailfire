@@ -22,6 +22,7 @@ import { ContactsModule } from '../contacts/contacts.module'
 
 // Services
 import { TripsService } from './trips.service'
+import { TripAccessService } from './trip-access.service'
 import { TripTravelersService } from './trip-travelers.service'
 import { ItinerariesService } from './itineraries.service'
 import { TravelerGroupsService } from './traveler-groups.service'
@@ -112,6 +113,7 @@ import { TripSharesService } from './trip-shares.service'
     GeocodingService,
     GeolocationCascadeService,
     TripsService,
+    TripAccessService,
     TripTravelersService,
     TripSharesService,
     ItinerariesService,
@@ -144,6 +146,7 @@ import { TripSharesService } from './trip-shares.service'
   ],
   exports: [
     TripsService,
+    TripAccessService,
     TripTravelersService,
     ItinerariesService,
     TravelerGroupsService,

@@ -20,6 +20,7 @@ import {
 import { Public } from '../auth/decorators/public.decorator'
 import { ApiTags } from '@nestjs/swagger'
 import { TripsService } from './trips.service'
+import { TripAccessService } from './trip-access.service'
 import { GetAuthContext } from '../auth/decorators/auth-context.decorator'
 import type { AuthContext } from '../auth/auth.types'
 import { ActivitiesService } from './activities.service'
@@ -52,6 +53,7 @@ import type {
 export class TripsController {
   constructor(
     private readonly tripsService: TripsService,
+    private readonly tripAccessService: TripAccessService,
     private readonly activitiesService: ActivitiesService,
     private readonly activityLogsService: ActivityLogsService,
     private readonly paymentSchedulesService: PaymentSchedulesService,
@@ -100,14 +102,16 @@ export class TripsController {
    *
    * Deletes multiple trips with per-item validation.
    * Only trips in 'draft' or 'quoted' status can be deleted.
+   * User must have write access to each trip.
    *
    * @returns Per-item success/failure with reasons
    */
   @Post('bulk-delete')
-  async bulkDelete(@Body() dto: BulkDeleteTripsDto): Promise<BulkTripOperationResult> {
-    // Phase 4 TODO: Extract from JWT when auth is implemented
-    const ownerId = '00000000-0000-0000-0000-000000000001'
-    return this.tripsService.bulkDelete(dto.tripIds, ownerId)
+  async bulkDelete(
+    @GetAuthContext() auth: AuthContext,
+    @Body() dto: BulkDeleteTripsDto,
+  ): Promise<BulkTripOperationResult> {
+    return this.tripsService.bulkDelete(dto.tripIds, auth.userId, auth, this.tripAccessService)
   }
 
   /**
@@ -116,14 +120,16 @@ export class TripsController {
    *
    * Archives or unarchives multiple trips.
    * No status restriction - any trip can be archived.
+   * User must have write access to each trip.
    *
    * @returns Per-item success/failure with reasons
    */
   @Post('bulk-archive')
-  async bulkArchive(@Body() dto: BulkArchiveTripsDto): Promise<BulkTripOperationResult> {
-    // Phase 4 TODO: Extract from JWT when auth is implemented
-    const ownerId = '00000000-0000-0000-0000-000000000001'
-    return this.tripsService.bulkArchive(dto.tripIds, dto.archive, ownerId)
+  async bulkArchive(
+    @GetAuthContext() auth: AuthContext,
+    @Body() dto: BulkArchiveTripsDto,
+  ): Promise<BulkTripOperationResult> {
+    return this.tripsService.bulkArchive(dto.tripIds, dto.archive, auth.userId, auth, this.tripAccessService)
   }
 
   /**
@@ -132,14 +138,16 @@ export class TripsController {
    *
    * Changes status of multiple trips with transition validation.
    * Each trip's current status must allow the target transition.
+   * User must have write access to each trip.
    *
    * @returns Per-item success/failure with reasons
    */
   @Post('bulk-status')
-  async bulkChangeStatus(@Body() dto: BulkChangeStatusDto): Promise<BulkTripOperationResult> {
-    // Phase 4 TODO: Extract from JWT when auth is implemented
-    const ownerId = '00000000-0000-0000-0000-000000000001'
-    return this.tripsService.bulkChangeStatus(dto.tripIds, dto.status, ownerId)
+  async bulkChangeStatus(
+    @GetAuthContext() auth: AuthContext,
+    @Body() dto: BulkChangeStatusDto,
+  ): Promise<BulkTripOperationResult> {
+    return this.tripsService.bulkChangeStatus(dto.tripIds, dto.status, auth.userId, auth, this.tripAccessService)
   }
 
   // ============================================================================
@@ -218,48 +226,45 @@ export class TripsController {
   /**
    * Publish a trip (generate share token)
    * PATCH /trips/:id/publish
+   *
+   * Access check: User must have write access.
    */
   @Patch(':id/publish')
   async publishTrip(
     @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
   ) {
-    if (auth.role !== 'admin') {
-      const existing = await this.tripsService.findOne(id)
-      if (existing.ownerId !== auth.userId) {
-        throw new ForbiddenException('You can only publish trips you own')
-      }
-    }
+    await this.tripAccessService.verifyWriteAccess(id, auth)
     return this.tripsService.publishTrip(id, auth.userId)
   }
 
   /**
    * Unpublish a trip (clear share token)
    * PATCH /trips/:id/unpublish
+   *
+   * Access check: User must have write access.
    */
   @Patch(':id/unpublish')
   async unpublishTrip(
     @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
   ) {
-    if (auth.role !== 'admin') {
-      const existing = await this.tripsService.findOne(id)
-      if (existing.ownerId !== auth.userId) {
-        throw new ForbiddenException('You can only unpublish trips you own')
-      }
-    }
+    await this.tripAccessService.verifyWriteAccess(id, auth)
     return this.tripsService.unpublishTrip(id, auth.userId)
   }
 
   /**
    * Duplicate a trip
    * POST /trips/:id/duplicate
+   *
+   * Access check: User must have read access to duplicate.
    */
   @Post(':id/duplicate')
   async duplicateTrip(
     @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
   ) {
+    await this.tripAccessService.verifyReadAccess(id, auth)
     return this.tripsService.duplicateTrip(id, auth.userId)
   }
 
@@ -269,35 +274,44 @@ export class TripsController {
    * IMPORTANT: Must come before @Get(':id') to avoid route conflicts
    *
    * Returns aggregated payment and commission status for the Bookings tab.
+   * Access check: User must have read access.
    */
   @Get(':id/booking-status')
   async getBookingStatus(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
   ): Promise<TripBookingStatusResponseDto> {
+    await this.tripAccessService.verifyReadAccess(id, auth)
     return this.tripsService.getBookingStatus(id)
   }
 
   /**
    * Get expected payment items for a trip (with activity context)
    * GET /trips/:id/expected-payments
+   *
+   * Access check: User must have read access.
    */
   @Get(':id/expected-payments')
   async getExpectedPayments(
     @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
   ): Promise<TripExpectedPaymentDto[]> {
+    await this.tripAccessService.verifyReadAccess(id, auth)
     return this.paymentSchedulesService.getExpectedPaymentsByTripId(id, auth.agencyId)
   }
 
   /**
    * Get payment transactions for a trip (with activity context)
    * GET /trips/:id/payment-transactions
+   *
+   * Access check: User must have read access.
    */
   @Get(':id/payment-transactions')
   async getPaymentTransactions(
     @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
   ): Promise<TripPaymentTransactionDto[]> {
+    await this.tripAccessService.verifyReadAccess(id, auth)
     return this.paymentSchedulesService.getTransactionsByTripId(id, auth.agencyId)
   }
 
@@ -305,13 +319,17 @@ export class TripsController {
    * Get activity log for a trip
    * GET /trips/:id/activity?limit=50&offset=0
    * IMPORTANT: Must come before @Get(':id') to avoid route conflicts
+   *
+   * Access check: User must have read access.
    */
   @Get(':id/activity')
   async getActivity(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
   ) {
+    await this.tripAccessService.verifyReadAccess(id, auth)
     const parsedLimit = limit ? Number(limit) : 50
     const parsedOffset = offset ? Number(offset) : 0
     return this.activityLogsService.getActivityForTrip(id, parsedLimit, parsedOffset)
@@ -320,9 +338,15 @@ export class TripsController {
   /**
    * Get a single trip by ID
    * GET /trips/:id
+   *
+   * Access check: User must have read access (owner, admin, or shared).
    */
   @Get(':id')
-  async findOne(@Param('id') id: string): Promise<TripResponseDto> {
+  async findOne(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') id: string,
+  ): Promise<TripResponseDto> {
+    await this.tripAccessService.verifyReadAccess(id, auth)
     return this.tripsService.findOne(id)
   }
 
@@ -330,7 +354,7 @@ export class TripsController {
    * Update a trip
    * PATCH /trips/:id
    *
-   * Ownership check: Admins can update any trip, users can only update their own.
+   * Access check: User must have write access (owner, admin, or write share).
    */
   @Patch(':id')
   async update(
@@ -338,13 +362,7 @@ export class TripsController {
     @Param('id') id: string,
     @Body() updateTripDto: UpdateTripDto,
   ): Promise<TripResponseDto> {
-    // Check ownership for non-admins
-    if (auth.role !== 'admin') {
-      const existing = await this.tripsService.findOne(id)
-      if (existing.ownerId !== auth.userId) {
-        throw new ForbiddenException('You can only update trips you own')
-      }
-    }
+    await this.tripAccessService.verifyWriteAccess(id, auth)
     return this.tripsService.update(id, updateTripDto)
   }
 
@@ -352,7 +370,7 @@ export class TripsController {
    * Delete a trip
    * DELETE /trips/:id
    *
-   * Ownership check: Admins can delete any trip, users can only delete their own.
+   * Access check: User must have write access (owner, admin, or write share).
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -360,13 +378,7 @@ export class TripsController {
     @GetAuthContext() auth: AuthContext,
     @Param('id') id: string,
   ): Promise<void> {
-    // Check ownership for non-admins
-    if (auth.role !== 'admin') {
-      const existing = await this.tripsService.findOne(id)
-      if (existing.ownerId !== auth.userId) {
-        throw new ForbiddenException('You can only delete trips you own')
-      }
-    }
+    await this.tripAccessService.verifyWriteAccess(id, auth)
     return this.tripsService.remove(id)
   }
 
@@ -397,9 +409,15 @@ export class TripsController {
    * Get all packages for a trip
    * GET /trips/:id/packages
    * Returns enriched package data including activityCount for expandable rows
+   *
+   * Access check: User must have read access.
    */
   @Get(':id/packages')
-  async getPackages(@Param('id') tripId: string): Promise<PackageResponseDto[]> {
+  async getPackages(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') tripId: string,
+  ): Promise<PackageResponseDto[]> {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     return this.activitiesService.findPackagesByTrip(tripId)
   }
 
@@ -408,9 +426,14 @@ export class TripsController {
    * GET /trips/:id/packages/totals
    *
    * IMPORTANT: Must come after @Get(':id/packages') to avoid route conflicts
+   * Access check: User must have read access.
    */
   @Get(':id/packages/totals')
-  async getPackageTotals(@Param('id') tripId: string): Promise<TripPackageTotalsDto> {
+  async getPackageTotals(
+    @GetAuthContext() auth: AuthContext,
+    @Param('id') tripId: string,
+  ): Promise<TripPackageTotalsDto> {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     return this.activitiesService.getTripPackageTotals(tripId)
   }
 
@@ -418,12 +441,16 @@ export class TripsController {
    * Get all unlinked activities for a trip (activities not in any package)
    * GET /trips/:id/unlinked-activities
    * @param itineraryId - Optional filter to get activities for a specific itinerary
+   *
+   * Access check: User must have read access.
    */
   @Get(':id/unlinked-activities')
   async getUnlinkedActivities(
+    @GetAuthContext() auth: AuthContext,
     @Param('id') tripId: string,
     @Query('itineraryId') itineraryId?: string
   ): Promise<UnlinkedActivitiesResponseDto> {
+    await this.tripAccessService.verifyReadAccess(tripId, auth)
     const activities = await this.activitiesService.findUnlinkedByTrip(tripId, itineraryId)
     return {
       activities: activities.map((a) => ({
